@@ -23,6 +23,29 @@
 
 ---
 
+## Desktop Workbench Preview
+
+![Desktop Main View](docs/screenshots/desktop-main.png)
+
+<details>
+<summary><b>Click to view more screenshots (PST Builder, Forensics, MAPI Inspector, Thread Splitter)</b></summary>
+
+| Direct PST Generation (Zero Outlook) | eDiscovery Forensics & Bates Stamping |
+| :---: | :---: |
+| ![Direct PST Builder](docs/screenshots/direct-pst-modal.png) | ![Forensics Modal](docs/screenshots/forensics-modal.png) |
+
+| Multi-Volume Thread Auto-Splitter | Raw MAPI & Hex Stream Inspector |
+| :---: | :---: |
+| ![Thread Splitter](docs/screenshots/auto-split-modal.png) | ![MAPI Inspector](docs/screenshots/mapi-inspector.png) |
+
+| Multi-Cloud Migration Studio | Rust Workspace Code Viewer |
+| :---: | :---: |
+| ![Cloud Migration](docs/screenshots/cloud-migration-modal.png) | ![Rust Codebase](docs/screenshots/rust-codebase-modal.png) |
+
+</details>
+
+---
+
 ## Workspace Architecture
 
 ```text

@@ -1,0 +1,18 @@
+# Changelog
+
+All notable changes to `mail2rust` are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [3.2.0] - 2026-11-07
+
+### Added
+- **Multi-Crate Rust Workspace**: Architected 8 specialized crates (`mail2rust-core`, `mail2rust-pst`, `mail2rust-eml`, `mail2rust-mbox`, `mail2rust-filter`, `mail2rust-forensics`, `mail2rust-sync`, `mail2rust-cli`).
+- **Pure-Rust MS-PST Writer**: Complete `[MS-PST]` Unicode 64-bit container generator with NDB header, CRC-32 partial checksum, B-Trees (NBT/BBT), and `NDB_CRYPT_PERMUTE` compressible encryption with zero Outlook dependencies.
+- **MS-PST Container Validator**: Validates header magic (`!BDN`), version, CRC-32 checksums, and BREF roots.
+- **Universal Format Parsers**: Native streaming readers for MBOX (RFC 4155), Maildir/Maildir++, Apple Mail EMLX, Outlook MSG (MS-CFB / OLE2), Outlook for Mac OLM (ZIP), MH / Sylpheed / Claws Mail, MMDF, and Emacs Babyl.
+- **Conversation Thread Clustering Auto-Splitter**: Splits mailboxes at custom size boundaries (e.g. 20 GB / 45 GB) while maintaining thread integrity across volumes.
+- **Forensic eDiscovery Suite**: Bates stamping engine, SHA-256 and MD5 cryptographic hashing, legal hold flagging, and export of CSV/JSON chain-of-custody manifests.
+- **Resumable Delta Sync Checkpointing**: Incremental checkpointing engine with folder high-watermark UID tracking.
+- **Comprehensive Test Suite**: Unit and end-to-end integration tests with 100% pass rate.

@@ -1,6 +1,8 @@
 {
-  "name": "Mail2Mail Studio Desktop",
-  "description": "Enterprise email migration, independent PST generator without Outlook, forensic eDiscovery, and multi-cloud sync suite.",
+  "name": "Mail2Rust Studio Desktop",
+  "description": "Universal offline email and mailbox migration suite in pure Rust with zero-Outlook PST generation, forensic eDiscovery, and multi-format conversion.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
