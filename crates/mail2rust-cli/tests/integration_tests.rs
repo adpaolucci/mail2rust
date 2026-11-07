@@ -454,3 +454,139 @@ fn test_cli_subcommands_end_to_end() {
     assert_eq!(read_msgs.len(), 3);
     assert!(read_msgs.iter().any(|m| m.subject.contains("Quarterly Report")));
 }
+
+#[test]
+fn test_validate_all_sample_files() {
+    let samples_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("samples");
+    assert!(samples_dir.exists(), "samples directory must exist");
+
+    // 1. Standard Unicode PST Validation
+    let p_unicode = samples_dir.join("pst").join("sample_unicode.pst");
+    assert!(p_unicode.exists());
+    let r_unicode = File::open(&p_unicode).expect("open unicode pst");
+    let val_unicode = PstValidator::validate(r_unicode).expect("validate unicode pst");
+    assert!(val_unicode.is_valid);
+    assert!(val_unicode.crc_match);
+    let msgs_unicode = mail2rust_pst::PstReader::read_path(&p_unicode).expect("read unicode pst");
+    assert_eq!(msgs_unicode.len(), 3);
+
+    // 2. Encrypted PST with Password Protection
+    let p_cyclic = samples_dir.join("pst").join("sample_encrypted_password.pst");
+    assert!(p_cyclic.exists());
+    let r_cyclic = File::open(&p_cyclic).expect("open cyclic pst");
+    let val_cyclic = PstValidator::validate(r_cyclic).expect("validate cyclic pst");
+    assert!(val_cyclic.is_valid);
+    assert!(val_cyclic.crc_match);
+    assert!(val_cyclic.encryption_method.contains("High Encryption"));
+
+    let f_cyclic = File::open(&p_cyclic).expect("open cyclic pst for password check");
+    let mut pst_reader = mail2rust_pst::PstReader::open(f_cyclic).expect("open cyclic pst reader");
+    assert!(pst_reader.is_password_protected());
+    assert!(pst_reader.verify_password("SecretPass123!"));
+    assert!(!pst_reader.verify_password("WrongPassword"));
+
+    let msgs_cyclic = mail2rust_pst::PstReader::read_path(&p_cyclic).expect("read cyclic pst");
+    assert_eq!(msgs_cyclic.len(), 1);
+
+    // 3. Multi-Format Sniffing, Universal Ingestion, and PST Re-export
+    let test_cases = vec![
+        (
+            samples_dir.join("mbox").join("sample_mailbox.mbox"),
+            MailboxFormat::Mbox,
+            3,
+        ),
+        (
+            samples_dir.join("mbox").join("sample_mailbox.mbox.gz"),
+            MailboxFormat::Gz,
+            3,
+        ),
+        (
+            samples_dir.join("eml").join("standalone_message.eml"),
+            MailboxFormat::Eml,
+            1,
+        ),
+        (samples_dir.join("eml").join("thread"), MailboxFormat::Eml, 3),
+        (
+            samples_dir.join("emlx").join("sample_apple_mail.emlx"),
+            MailboxFormat::Emlx,
+            1,
+        ),
+        (samples_dir.join("maildir"), MailboxFormat::Maildir, 2),
+        (
+            samples_dir.join("contacts").join("sample_contacts.vcf"),
+            MailboxFormat::Vcard,
+            2,
+        ),
+        (
+            samples_dir.join("calendar").join("sample_calendar.ics"),
+            MailboxFormat::Icalendar,
+            1,
+        ),
+        (
+            samples_dir.join("msg").join("sample_outlook.msg"),
+            MailboxFormat::Msg,
+            1,
+        ),
+        (
+            samples_dir.join("olm").join("sample_mac_archive.olm"),
+            MailboxFormat::Olm,
+            1,
+        ),
+        (
+            samples_dir.join("takeout").join("sample_google_takeout.zip"),
+            MailboxFormat::Zip,
+            3,
+        ),
+        (samples_dir.join("mh"), MailboxFormat::Mh, 2),
+        (samples_dir.join("mmdf").join("sample_mmdf.txt"), MailboxFormat::Mmdf, 2),
+        (
+            samples_dir.join("babyl").join("sample_babyl.txt"),
+            MailboxFormat::Babyl,
+            1,
+        ),
+    ];
+
+    let temp = tempdir().expect("tempdir");
+    for (path, expected_format, expected_count) in test_cases {
+        assert!(path.exists(), "Path {:?} must exist", path);
+        let sniffed = FormatSniffer::sniff_path(&path);
+        assert_eq!(sniffed, expected_format, "Sniff mismatch for {:?}", path);
+
+        let msgs = mail2rust_core::ingest_path(&path).unwrap_or_else(|e| panic!("Failed to ingest {:?}: {}", path, e));
+        assert_eq!(msgs.len(), expected_count, "Message count mismatch for {:?}", path);
+
+        // Convert ingested messages to a temporary PST and validate specification compliance
+        let out_pst_path = temp
+            .path()
+            .join(format!("{}.pst", sniffed.name().replace([' ', '/', '(', ')'], "_")));
+        let mut out_file = File::create(&out_pst_path).expect("create test pst");
+        let mut writer = PstWriter::new(&mut out_file, true).expect("create pst writer");
+        let folder_id = writer.add_folder("SampleFolder", None).expect("add folder");
+        for m in &msgs {
+            writer.add_message(m, folder_id).expect("add message");
+        }
+        writer.finalize().expect("finalize pst");
+
+        let r = File::open(&out_pst_path).expect("open generated pst");
+        let val = PstValidator::validate(r).expect("validate generated pst");
+        assert!(val.is_valid);
+        assert!(val.crc_match);
+    }
+
+    // 4. Forensics Manifest and Sync Checkpoint Validation
+    let manifest_path = samples_dir.join("forensics").join("sample_manifest.json");
+    assert!(manifest_path.exists());
+    let manifest_content = std::fs::read_to_string(&manifest_path).expect("read manifest");
+    assert!(manifest_content.contains("CASE-2026-SEC-TITAN"));
+    assert!(manifest_content.contains("EVIDENCE-2026-0001000"));
+
+    let checkpoint_path = samples_dir.join("sync").join("sample_checkpoint.json");
+    assert!(checkpoint_path.exists());
+    let checkpoint = CheckpointManager::load(&checkpoint_path).expect("load checkpoint");
+    assert_eq!(checkpoint.migrated_message_ids.len(), 3);
+}

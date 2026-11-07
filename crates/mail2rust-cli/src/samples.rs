@@ -167,6 +167,9 @@ fn generate_mbox_samples(base_dir: &Path, msgs: &[EmailMessage]) -> Result<(), B
 
 fn generate_eml_samples(base_dir: &Path, msgs: &[EmailMessage]) -> Result<(), Box<dyn std::error::Error>> {
     let dir = base_dir.join("eml");
+    if dir.exists() {
+        let _ = fs::remove_dir_all(&dir);
+    }
     fs::create_dir_all(&dir)?;
 
     // Standalone EML
@@ -323,8 +326,18 @@ fn generate_olm_samples(base_dir: &Path) -> Result<(), Box<dyn std::error::Error
 
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
-    zip.start_file("message_001.mime", options)?;
-    zip.write_all(b"From: mac-user@apple.corp\r\nTo: team@apple.corp\r\nSubject: Outlook for Mac OLM Message\r\nDate: Fri, 06 Nov 2026 12:00:00 +0000\r\n\r\nContent extracted from OLM archive.")?;
+    let olm_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<email>
+    <OP:messageSubject>Outlook for Mac OLM Message</OP:messageSubject>
+    <OP:messageSenderName>Mac User</OP:messageSenderName>
+    <OP:messageSenderAddress>mac-user@apple.corp</OP:messageSenderAddress>
+    <OP:messageBody>Content extracted from OLM archive.</OP:messageBody>
+    <OP:messageSentTime>2026-11-06T12:00:00Z</OP:messageSentTime>
+    <OP:messageIsRead>1</OP:messageIsRead>
+</email>"#;
+
+    zip.start_file("com.microsoft.__Messages/message_001.xml", options)?;
+    zip.write_all(olm_xml.as_bytes())?;
     zip.finish()?;
 
     Ok(())
