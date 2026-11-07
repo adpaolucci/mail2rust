@@ -129,6 +129,15 @@ pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
                 });
 
                 ui.menu_button("Help", |ui| {
+                    if ui.button("Load Sample / Evaluation Data...").clicked() {
+                        state.load_sample_data();
+                        ui.close_menu();
+                    }
+                    if ui.button("Clear Loaded Messages").clicked() {
+                        state.clear_data();
+                        ui.close_menu();
+                    }
+                    ui.separator();
                     if ui.button("About Mail2Rust Studio...").clicked() {
                         state.active_modal = ActiveModal::About;
                         ui.close_menu();

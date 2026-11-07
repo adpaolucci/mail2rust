@@ -137,14 +137,11 @@ pub struct AppState {
 
 impl Default for AppState {
     fn default() -> Self {
-        let (folders, messages) = generate_seed_data();
-        let selected = messages.first().map(|m| m.id.clone());
-
         Self {
-            folders,
-            active_folder: "Inbox".to_string(),
-            messages,
-            selected_message_id: selected,
+            folders: Vec::new(),
+            active_folder: "All Mail".to_string(),
+            messages: Vec::new(),
+            selected_message_id: None,
             selected_message_ids: std::collections::HashSet::new(),
             search_query: String::new(),
             active_tab: ActiveTab::Preview,
@@ -168,8 +165,8 @@ impl Default for AppState {
             imap_max_per_folder: String::new(),
             imap_status: None,
 
-            pst_source_path: "C:\\Migration\\Takeout.zip".to_string(),
-            pst_dest_path: "C:\\Migration\\Exported_Archive.pst".to_string(),
+            pst_source_path: String::new(),
+            pst_dest_path: String::new(),
             pst_max_gb: 20,
             pst_cluster_threads: true,
             pst_encryption: mail2rust_pst::PstEncryption::Permute,
@@ -185,11 +182,11 @@ impl Default for AppState {
             filter_exclude_folder: "*Trash*;*Spam*".to_string(),
             filter_include_deleted: false,
 
-            bates_prefix: "CASE-2026".to_string(),
+            bates_prefix: "CASE".to_string(),
             bates_start: 1000,
-            case_number: "SEC-TITAN-2026".to_string(),
-            examiner: "Senior Forensic Investigator".to_string(),
-            manifest_csv_path: "C:\\Migration\\audit_manifest.csv".to_string(),
+            case_number: String::new(),
+            examiner: String::new(),
+            manifest_csv_path: String::new(),
             forensics_result: None,
 
             validate_pst_path: String::new(),
@@ -202,6 +199,22 @@ impl Default for AppState {
 }
 
 impl AppState {
+    pub fn load_sample_data(&mut self) {
+        let (folders, messages) = generate_seed_data();
+        self.selected_message_id = messages.first().map(|m| m.id.clone());
+        self.folders = folders;
+        self.messages = messages;
+        self.active_folder = "Inbox".to_string();
+    }
+
+    pub fn clear_data(&mut self) {
+        self.folders.clear();
+        self.messages.clear();
+        self.selected_message_id = None;
+        self.selected_message_ids.clear();
+        self.active_folder = "All Mail".to_string();
+    }
+
     pub fn get_selected_message(&self) -> Option<&EmailMessage> {
         let id = self.selected_message_id.as_ref()?;
         self.messages.iter().find(|m| &m.id == id)

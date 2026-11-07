@@ -68,6 +68,13 @@ pub fn render_folder_tree(ui: &mut egui::Ui, state: &mut AppState) {
                     }
 
                     // Folder Nodes
+                    if state.folders.is_empty() {
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            ui.label(RichText::new("(No archive loaded)").italics().size(11.0).color(Color32::from_rgb(130, 130, 130)));
+                        });
+                    }
+
                     for folder in &mut state.folders {
                         let is_active = state.active_folder == folder.name;
                         let bg = if is_active {

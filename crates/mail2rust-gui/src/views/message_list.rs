@@ -102,6 +102,28 @@ pub fn render_message_list(ui: &mut egui::Ui, state: &mut AppState) {
                 ScrollArea::vertical().show(ui, |ui| {
                     ui.set_width(ui.available_width());
 
+                    if filtered.is_empty() {
+                        ui.add_space(40.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(RichText::new("No mailbox archive or messages loaded.").size(13.0).strong().color(Color32::from_rgb(90, 90, 90)));
+                            ui.add_space(6.0);
+                            ui.label(RichText::new("Open an archive (PST, OST, MBOX, Maildir, EML) or connect to an IMAP server to begin.").size(11.0).color(Color32::from_rgb(120, 120, 120)));
+                            ui.add_space(14.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space((ui.available_width() - 320.0).max(0.0) / 2.0);
+                                if ui.button(RichText::new("Open Archive...  (Ctrl+O)").size(11.0)).clicked() {
+                                    state.active_modal = crate::state::ActiveModal::OpenMailbox;
+                                }
+                                if ui.button(RichText::new("Connect to IMAP...  (Ctrl+M)").size(11.0)).clicked() {
+                                    state.active_modal = crate::state::ActiveModal::ImapConnect;
+                                }
+                                if ui.button(RichText::new("Load Sample Data").size(11.0)).clicked() {
+                                    state.load_sample_data();
+                                }
+                            });
+                        });
+                    }
+
                     for (idx, msg) in filtered.iter().enumerate() {
                         let is_active_preview = state.selected_message_id.as_deref() == Some(&msg.id);
                         let is_checked = state.is_message_selected(&msg.id);
