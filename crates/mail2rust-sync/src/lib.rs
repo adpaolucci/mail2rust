@@ -84,10 +84,7 @@ impl CheckpointManager {
         (new_messages, already_migrated_count)
     }
 
-    pub fn commit_run(
-        checkpoint: &mut SyncCheckpoint,
-        migrated: &[EmailMessage],
-    ) {
+    pub fn commit_run(checkpoint: &mut SyncCheckpoint, migrated: &[EmailMessage]) {
         for m in migrated {
             let key = if !m.message_id.is_empty() {
                 m.message_id.clone()

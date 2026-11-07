@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
+use md5::Md5;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use md5::Md5;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmailAddress {
@@ -24,7 +24,11 @@ impl EmailAddress {
                 let name = trimmed[..start].trim().trim_matches('"').trim();
                 let email = trimmed[start + 1..end].trim();
                 return Self {
-                    name: if name.is_empty() { email.to_string() } else { name.to_string() },
+                    name: if name.is_empty() {
+                        email.to_string()
+                    } else {
+                        name.to_string()
+                    },
                     email: email.to_string(),
                 };
             }

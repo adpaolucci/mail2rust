@@ -84,7 +84,10 @@ impl ArchiveReader {
         let mut decompressed = Vec::new();
         decoder.read_to_end(&mut decompressed)?;
 
-        let folder = vec![original_name.trim_end_matches(".gz").trim_end_matches(".mbox").to_string()];
+        let folder = vec![original_name
+            .trim_end_matches(".gz")
+            .trim_end_matches(".mbox")
+            .to_string()];
         if original_name.to_lowercase().ends_with(".mbox.gz")
             || decompressed.starts_with(b"From ")
             || original_name.to_lowercase().ends_with(".mbox")

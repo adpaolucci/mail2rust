@@ -1,8 +1,5 @@
 use chrono::Utc;
-use mail2rust_core::{
-    Attachment, EmailAddress, EmailMessage, FormatSniffer, Importance, MailboxFormat,
-    MessageFlags,
-};
+use mail2rust_core::{Attachment, EmailAddress, EmailMessage, FormatSniffer, Importance, MailboxFormat, MessageFlags};
 use mail2rust_eml::{EmlExporter, EmlLayout};
 use mail2rust_filter::{SplitConfig, VolumeSplitter};
 use mail2rust_forensics::ForensicEngine;
@@ -63,9 +60,24 @@ fn test_end_to_end_conversion_lifecycle() {
     let base_path = temp.path();
 
     // 1. Create a suite of threaded email messages
-    let msg1 = create_sample_message("001", "conv_titan_01", "Project Titan Architecture Spec", "Initial blueprint for pure-Rust PST migration.");
-    let msg2 = create_sample_message("002", "conv_titan_01", "Re: Project Titan Architecture Spec", "Approved by the review board. Proceed with execution.");
-    let msg3 = create_sample_message("003", "conv_secops_99", "Security Review & Audit Notice", "Cryptographic chain of custody verified.");
+    let msg1 = create_sample_message(
+        "001",
+        "conv_titan_01",
+        "Project Titan Architecture Spec",
+        "Initial blueprint for pure-Rust PST migration.",
+    );
+    let msg2 = create_sample_message(
+        "002",
+        "conv_titan_01",
+        "Re: Project Titan Architecture Spec",
+        "Approved by the review board. Proceed with execution.",
+    );
+    let msg3 = create_sample_message(
+        "003",
+        "conv_secops_99",
+        "Security Review & Audit Notice",
+        "Cryptographic chain of custody verified.",
+    );
 
     let original_messages = vec![msg1.clone(), msg2.clone(), msg3.clone()];
 
@@ -138,16 +150,157 @@ fn test_end_to_end_conversion_lifecycle() {
     let volumes = VolumeSplitter::split(&original_messages, &split_cfg);
     assert!(volumes.len() >= 2, "Should split into multiple volumes");
     // Ensure msg1 and msg2 (conv_titan_01) stay in the same volume together
-    let vol_with_msg1 = volumes.iter().find(|v| v.messages.iter().any(|m| m.id == "001")).unwrap();
-    assert!(vol_with_msg1.messages.iter().any(|m| m.id == "002"), "Threaded replies must stay together in the same volume");
+    let vol_with_msg1 = volumes
+        .iter()
+        .find(|v| v.messages.iter().any(|m| m.id == "001"))
+        .unwrap();
+    assert!(
+        vol_with_msg1.messages.iter().any(|m| m.id == "002"),
+        "Threaded replies must stay together in the same volume"
+    );
 
     // 8. Test Delta Sync & Checkpointing
     let mut checkpoint = CheckpointManager::new_checkpoint("source_repo", "target_pst");
-    CheckpointManager::commit_run(&mut checkpoint, &[original_messages[0].clone(), original_messages[1].clone()]);
+    CheckpointManager::commit_run(
+        &mut checkpoint,
+        &[original_messages[0].clone(), original_messages[1].clone()],
+    );
     assert_eq!(checkpoint.total_messages_migrated, 2);
 
     let (delta, already_done) = CheckpointManager::calculate_delta(&original_messages, &checkpoint);
     assert_eq!(already_done, 2);
     assert_eq!(delta.len(), 1);
     assert_eq!(delta[0].id, "003");
+
+    // 9. Test Universal Ingestion round-trip via mail2rust_core::ingest_path
+    let ingested_mbox = mail2rust_core::ingest_path(&mbox_file).expect("Failed to ingest MBOX");
+    assert_eq!(ingested_mbox.len(), 3);
+    assert_eq!(ingested_mbox[0].subject, "Project Titan Architecture Spec");
+
+    let ingested_eml_tree = mail2rust_core::ingest_path(&eml_dir).expect("Failed to ingest EML directory");
+    assert_eq!(ingested_eml_tree.len(), 3);
+}
+
+#[test]
+fn test_cli_subcommands_end_to_end() {
+    use std::process::Command;
+
+    let temp = tempdir().expect("Failed to create tempdir");
+    let base = temp.path();
+
+    // 1. Prepare sample MBOX file
+    let mbox_path = base.join("source.mbox");
+    let sample_emails = vec![
+        create_sample_message("c01", "conv_1", "Quarterly Report", "Financial Q3 numbers."),
+        create_sample_message("c02", "conv_1", "Re: Quarterly Report", "Approved without changes."),
+        create_sample_message("c03", "conv_2", "Spam / Ads", "Buy now for 50% discount."),
+    ];
+    MboxFileExporter::export_to_file(&sample_emails, &mbox_path, false).expect("Failed to export source mbox");
+
+    let bin_path = env!("CARGO_BIN_EXE_mail2rust");
+
+    // Test: mail2rust sniff
+    let sniff_out = Command::new(bin_path)
+        .args(["sniff", mbox_path.to_str().unwrap()])
+        .output()
+        .expect("sniff failed to execute");
+    assert!(sniff_out.status.success());
+    let sniff_stdout = String::from_utf8_lossy(&sniff_out.stdout);
+    assert!(sniff_stdout.contains("Standard MBOX Archive"));
+
+    // Test: mail2rust convert (MBOX -> PST)
+    let out_pst = base.join("converted.pst");
+    let conv_out = Command::new(bin_path)
+        .args([
+            "convert",
+            mbox_path.to_str().unwrap(),
+            out_pst.to_str().unwrap(),
+            "--pst-root",
+            "RootArchive",
+        ])
+        .output()
+        .expect("convert failed to execute");
+    assert!(conv_out.status.success());
+    assert!(out_pst.exists());
+
+    // Test: mail2rust validate-pst
+    let val_out = Command::new(bin_path)
+        .args(["validate-pst", out_pst.to_str().unwrap()])
+        .output()
+        .expect("validate-pst failed to execute");
+    assert!(val_out.status.success());
+    let val_stdout = String::from_utf8_lossy(&val_out.stdout);
+    assert!(val_stdout.contains("Specification Valid: true"));
+    assert!(val_stdout.contains("CRC Match: true"));
+
+    // Test: mail2rust --dry-run convert
+    let dry_out = Command::new(bin_path)
+        .args([
+            "--dry-run",
+            "convert",
+            mbox_path.to_str().unwrap(),
+            out_pst.to_str().unwrap(),
+        ])
+        .output()
+        .expect("dry-run failed to execute");
+    assert!(dry_out.status.success());
+    let dry_stdout = String::from_utf8_lossy(&dry_out.stdout);
+    assert!(dry_stdout.contains("PRE-FLIGHT DRY-RUN AUDIT REPORT"));
+    assert!(dry_stdout.contains("Total Messages:        3"));
+
+    // Test: mail2rust audit
+    let audit_csv = base.join("audit.csv");
+    let audit_json = base.join("audit.json");
+    let audit_out = Command::new(bin_path)
+        .args([
+            "audit",
+            mbox_path.to_str().unwrap(),
+            "--output-csv",
+            audit_csv.to_str().unwrap(),
+            "--output-json",
+            audit_json.to_str().unwrap(),
+            "--bates-prefix",
+            "CASE-LEGAL",
+            "--bates-start",
+            "100",
+        ])
+        .output()
+        .expect("audit failed to execute");
+    assert!(audit_out.status.success());
+    assert!(audit_csv.exists());
+    assert!(audit_json.exists());
+    let audit_stdout = String::from_utf8_lossy(&audit_out.stdout);
+    assert!(audit_stdout.contains("Root SHA-256 Digest:"));
+
+    // Test: mail2rust eml with max_per_dir
+    let eml_dir = base.join("eml_split");
+    let eml_out = Command::new(bin_path)
+        .args([
+            "eml",
+            mbox_path.to_str().unwrap(),
+            eml_dir.to_str().unwrap(),
+            "--naming",
+            "index",
+            "--max-per-dir",
+            "1",
+        ])
+        .output()
+        .expect("eml failed to execute");
+    assert!(eml_out.status.success());
+    assert!(eml_dir.exists());
+
+    // Test: mail2rust convert with filtering (--exclude-folder, --dedup)
+    let filtered_pst = base.join("filtered.pst");
+    let filt_out = Command::new(bin_path)
+        .args([
+            "--dedup",
+            "sha256",
+            "convert",
+            mbox_path.to_str().unwrap(),
+            filtered_pst.to_str().unwrap(),
+        ])
+        .output()
+        .expect("filtered convert failed to execute");
+    assert!(filt_out.status.success());
+    assert!(filtered_pst.exists());
 }

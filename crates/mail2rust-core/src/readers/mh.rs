@@ -29,11 +29,7 @@ impl MhReader {
                         msg.source_format = "MH".to_string();
                         // Apply flags from sequences
                         if let Some(seq_set) = sequences.get("unseen") {
-                            if seq_set.contains(&msg_num) {
-                                msg.flags.read = false;
-                            } else {
-                                msg.flags.read = true;
-                            }
+                            msg.flags.read = !seq_set.contains(&msg_num);
                         }
                         if let Some(seq_set) = sequences.get("flagged") {
                             if seq_set.contains(&msg_num) {
@@ -66,7 +62,9 @@ impl MhReader {
                     let mut set = HashSet::new();
                     for token in nums_part.split_whitespace() {
                         if let Some(dash) = token.find('-') {
-                            if let (Ok(start), Ok(end)) = (token[..dash].parse::<u32>(), token[dash + 1..].parse::<u32>()) {
+                            if let (Ok(start), Ok(end)) =
+                                (token[..dash].parse::<u32>(), token[dash + 1..].parse::<u32>())
+                            {
                                 for n in start..=end {
                                     set.insert(n);
                                 }

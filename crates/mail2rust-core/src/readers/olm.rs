@@ -36,17 +36,15 @@ impl OlmReader {
     }
 
     fn parse_olm_xml(xml: &str, _file_name: &str, mut folder_path: Vec<String>) -> Option<EmailMessage> {
-        let subject = Self::extract_tag(xml, "OP:messageSubject")
-            .unwrap_or_else(|| "(No Subject)".to_string());
+        let subject = Self::extract_tag(xml, "OP:messageSubject").unwrap_or_else(|| "(No Subject)".to_string());
 
-        let sender_email = Self::extract_tag(xml, "OP:messageSenderAddress")
-            .unwrap_or_else(|| "sender@olm.local".to_string());
-        let sender_name = Self::extract_tag(xml, "OP:messageSenderName")
-            .unwrap_or_else(|| sender_email.clone());
+        let sender_email =
+            Self::extract_tag(xml, "OP:messageSenderAddress").unwrap_or_else(|| "sender@olm.local".to_string());
+        let sender_name = Self::extract_tag(xml, "OP:messageSenderName").unwrap_or_else(|| sender_email.clone());
 
         let body_html = Self::extract_tag(xml, "OP:messageHtmlBody");
-        let body_text = Self::extract_tag(xml, "OP:messageBody")
-            .unwrap_or_else(|| body_html.clone().unwrap_or_default());
+        let body_text =
+            Self::extract_tag(xml, "OP:messageBody").unwrap_or_else(|| body_html.clone().unwrap_or_default());
 
         let date_str = Self::extract_tag(xml, "OP:messageSentTime");
         let date = date_str
@@ -80,7 +78,10 @@ impl OlmReader {
             raw_mime: xml.as_bytes().to_vec(),
             attachments: Vec::new(),
             mapi_properties: Vec::new(),
-            flags: MessageFlags { read: is_read, ..Default::default() },
+            flags: MessageFlags {
+                read: is_read,
+                ..Default::default()
+            },
             importance: Importance::Normal,
             sha256,
             md5,

@@ -92,10 +92,7 @@ impl MboxFileExporter {
     ) -> io::Result<usize> {
         info!(path = ?file_path, compress = compress_gzip, append = append, items = messages.len(), "Writing MBOX file");
         let file = if append && !compress_gzip {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(file_path)?
+            std::fs::OpenOptions::new().create(true).append(true).open(file_path)?
         } else {
             File::create(file_path)?
         };

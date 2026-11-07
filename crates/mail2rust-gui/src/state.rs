@@ -1,7 +1,5 @@
 use chrono::{TimeZone, Utc};
-use mail2rust_core::{
-    Attachment, EmailAddress, EmailMessage, Importance, MessageFlags,
-};
+use mail2rust_core::{Attachment, EmailAddress, EmailMessage, Importance, MessageFlags};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -25,6 +23,7 @@ pub enum ActiveTab {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveModal {
     None,
+    OpenMailbox,
     DirectPst,
     AutoSplit,
     FilterCriteria,
@@ -42,6 +41,10 @@ pub struct AppState {
     pub search_query: String,
     pub active_tab: ActiveTab,
     pub active_modal: ActiveModal,
+
+    // Open Mailbox States
+    pub open_mailbox_path: String,
+    pub open_mailbox_status: Option<String>,
 
     // Modal Form States
     pub pst_source_path: String,
@@ -90,6 +93,9 @@ impl Default for AppState {
             active_tab: ActiveTab::Preview,
             active_modal: ActiveModal::None,
 
+            open_mailbox_path: String::new(),
+            open_mailbox_status: None,
+
             pst_source_path: "C:\\Migration\\Takeout.zip".to_string(),
             pst_dest_path: "C:\\Migration\\Exported_Archive.pst".to_string(),
             pst_max_gb: 20,
@@ -125,6 +131,39 @@ impl AppState {
         self.messages.iter().find(|m| &m.id == id)
     }
 
+    pub fn rebuild_folders_from_messages(&mut self) {
+        let mut map: std::collections::BTreeMap<String, (usize, usize)> = std::collections::BTreeMap::new();
+        for m in &self.messages {
+            let fname = m.folder_path.last().cloned().unwrap_or_else(|| "Inbox".to_string());
+            let entry = map.entry(fname).or_insert((0, 0));
+            entry.0 += 1;
+            if !m.flags.read {
+                entry.1 += 1;
+            }
+        }
+
+        if map.is_empty() {
+            map.insert("Inbox".to_string(), (0, 0));
+        }
+
+        self.folders = map
+            .into_iter()
+            .map(|(name, (count, unread))| GuiFolder {
+                id: format!("fld_{}", name.to_lowercase().replace(' ', "_")),
+                name: name.clone(),
+                path: vec![name],
+                message_count: count,
+                unread_count: unread,
+                selected: true,
+            })
+            .collect();
+
+        if let Some(first_folder) = self.folders.first().map(|f| f.name.clone()) {
+            self.active_folder = first_folder;
+        }
+        self.selected_message_id = self.messages.first().map(|m| m.id.clone());
+    }
+
     pub fn filtered_messages(&self) -> Vec<&EmailMessage> {
         let q = self.search_query.to_lowercase();
         self.messages
@@ -136,10 +175,34 @@ impl AppState {
                     return false;
                 }
 
+                // Deleted messages filter
+                if m.flags.deleted && !self.filter_include_deleted {
+                    return false;
+                }
+
+                // Since date filter
+                if !self.filter_since.is_empty() {
+                    if let Ok(since_dt) = mail2rust_filter::parse_cli_datetime(&self.filter_since, false) {
+                        if m.date < since_dt {
+                            return false;
+                        }
+                    }
+                }
+
+                // Until date filter
+                if !self.filter_until.is_empty() {
+                    if let Ok(until_dt) = mail2rust_filter::parse_cli_datetime(&self.filter_until, true) {
+                        if m.date > until_dt {
+                            return false;
+                        }
+                    }
+                }
+
                 // Search query match
                 if !q.is_empty() {
                     let matches_subj = m.subject.to_lowercase().contains(&q);
-                    let matches_from = m.from.name.to_lowercase().contains(&q) || m.from.email.to_lowercase().contains(&q);
+                    let matches_from =
+                        m.from.name.to_lowercase().contains(&q) || m.from.email.to_lowercase().contains(&q);
                     let matches_body = m.body_text.to_lowercase().contains(&q);
                     if !matches_subj && !matches_from && !matches_body {
                         return false;
@@ -260,7 +323,7 @@ fn generate_seed_data() -> (Vec<GuiFolder>, Vec<EmailMessage>) {
             to: vec![EmailAddress::new("Auditor Vance", "vance@forensics.org")],
             cc: vec![],
             bcc: vec![],
-            date: Utc.with_ymd_and_hms(2026, 11, 7, 02, 10, 0).unwrap(),
+            date: Utc.with_ymd_and_hms(2026, 11, 7, 2, 10, 0).unwrap(),
             size_bytes: 88_900,
             body_text: "Cryptographic hash verification completed across 14,800 migrated items.\n\nMerkle Root: 7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069\nBates Range: CASE-2026-0001000 through CASE-2026-0015800\n\nNo discrepancies found.".to_string(),
             body_html: None,

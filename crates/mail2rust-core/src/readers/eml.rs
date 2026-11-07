@@ -15,35 +15,42 @@ impl EmlReader {
         let header_str = String::from_utf8_lossy(header_bytes);
         let headers = Self::parse_headers(&header_str);
 
-        let subject = headers.get("subject")
+        let subject = headers
+            .get("subject")
             .map(|s| Self::decode_rfc2047(s))
             .unwrap_or_else(|| "(No Subject)".to_string());
 
-        let message_id = headers.get("message-id")
+        let message_id = headers
+            .get("message-id")
             .cloned()
             .unwrap_or_else(|| format!("<auto_{}@mail2rust.local>", &sha256[..16]));
 
         let in_reply_to = headers.get("in-reply-to").map(|s| s.as_str());
 
-        let from = headers.get("from")
+        let from = headers
+            .get("from")
             .map(|s| EmailAddress::parse(&Self::decode_rfc2047(s)))
             .unwrap_or_else(|| EmailAddress::new("Unknown Sender", "unknown@mail2rust.local"));
 
-        let to = headers.get("to")
+        let to = headers
+            .get("to")
             .map(|s| Self::parse_address_list(&Self::decode_rfc2047(s)))
             .unwrap_or_default();
 
-        let cc = headers.get("cc")
+        let cc = headers
+            .get("cc")
             .map(|s| Self::parse_address_list(&Self::decode_rfc2047(s)))
             .unwrap_or_default();
 
-        let bcc = headers.get("bcc")
+        let bcc = headers
+            .get("bcc")
             .map(|s| Self::parse_address_list(&Self::decode_rfc2047(s)))
             .unwrap_or_default();
 
         let mut final_folder = folder_path;
 
-        let date = headers.get("date")
+        let date = headers
+            .get("date")
             .and_then(|d| DateTime::parse_from_rfc2822(d.trim()).ok())
             .map(|dt| dt.with_timezone(&Utc))
             .or_else(|| {
@@ -55,7 +62,9 @@ impl EmlReader {
                         } else {
                             date_part
                         };
-                        DateTime::parse_from_rfc2822(clean_date).ok().map(|dt| dt.with_timezone(&Utc))
+                        DateTime::parse_from_rfc2822(clean_date)
+                            .ok()
+                            .map(|dt| dt.with_timezone(&Utc))
                     } else {
                         None
                     }
@@ -104,11 +113,7 @@ impl EmlReader {
                     final_folder = gf;
                 }
             }
-            if !g_flags.read {
-                flags.read = false;
-            } else {
-                flags.read = true;
-            }
+            flags.read = g_flags.read;
             if g_flags.flagged {
                 flags.flagged = true;
             }
@@ -310,7 +315,7 @@ impl EmlReader {
 
     fn parse_address_list(raw: &str) -> Vec<EmailAddress> {
         raw.split(',')
-            .map(|s| EmailAddress::parse(s))
+            .map(EmailAddress::parse)
             .filter(|a| !a.email.is_empty())
             .collect()
     }
@@ -334,7 +339,10 @@ impl EmlReader {
                     let sub_header_str = String::from_utf8_lossy(sub_headers_bytes);
                     let sub_headers = Self::parse_headers(&sub_header_str);
                     let sub_ct = sub_headers.get("content-type").cloned().unwrap_or_default();
-                    let sub_te = sub_headers.get("content-transfer-encoding").cloned().unwrap_or_default();
+                    let sub_te = sub_headers
+                        .get("content-transfer-encoding")
+                        .cloned()
+                        .unwrap_or_default();
 
                     Self::parse_mime_part(
                         sub_body_bytes,
@@ -364,10 +372,16 @@ impl EmlReader {
         let filename = Self::extract_filename(&disposition, content_type_header);
 
         if let Some(fname) = filename {
-            let cid = part_headers.get("content-id").map(|s| s.trim_matches(|c| c == '<' || c == '>').to_string());
+            let cid = part_headers
+                .get("content-id")
+                .map(|s| s.trim_matches(|c| c == '<' || c == '>').to_string());
             let att = Attachment::new(
                 fname,
-                if ct_lower.is_empty() { "application/octet-stream".to_string() } else { ct_lower.split(';').next().unwrap_or("").trim().to_string() },
+                if ct_lower.is_empty() {
+                    "application/octet-stream".to_string()
+                } else {
+                    ct_lower.split(';').next().unwrap_or("").trim().to_string()
+                },
                 decoded,
                 cid,
             );
@@ -461,9 +475,13 @@ impl EmlReader {
 
         let has_unread = parts.iter().any(|&p| p.eq_ignore_ascii_case("unread"));
         let has_starred = parts.iter().any(|&p| p.eq_ignore_ascii_case("starred"));
-        let has_trash = parts.iter().any(|&p| p.eq_ignore_ascii_case("trash") || p.eq_ignore_ascii_case("bin"));
+        let has_trash = parts
+            .iter()
+            .any(|&p| p.eq_ignore_ascii_case("trash") || p.eq_ignore_ascii_case("bin"));
         let has_sent = parts.iter().any(|&p| p.eq_ignore_ascii_case("sent"));
-        let has_draft = parts.iter().any(|&p| p.eq_ignore_ascii_case("draft") || p.eq_ignore_ascii_case("drafts"));
+        let has_draft = parts
+            .iter()
+            .any(|&p| p.eq_ignore_ascii_case("draft") || p.eq_ignore_ascii_case("drafts"));
 
         flags.read = !has_unread;
         flags.flagged = has_starred;

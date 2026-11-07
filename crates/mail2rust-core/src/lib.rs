@@ -17,6 +17,104 @@ pub use readers::msg::MsgReader;
 pub use readers::olm::OlmReader;
 pub use sniffer::{FormatSniffer, MailboxFormat};
 
+use std::fs::File;
+use std::path::Path;
+use tracing::info;
+use walkdir::WalkDir;
+
+/// Universally ingests messages from any file, folder, archive, or mailbox format
+pub fn ingest_path(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::error::Error>> {
+    let mut messages = Vec::new();
+    let format = FormatSniffer::sniff_path(source);
+    info!(source = ?source, format = format.name(), "Ingesting mailbox source");
+
+    match format {
+        MailboxFormat::Zip => {
+            let file = File::open(source)?;
+            messages = ArchiveReader::read_zip(file)?;
+        }
+        MailboxFormat::Gz => {
+            let file = File::open(source)?;
+            let fname = source.file_name().and_then(|s| s.to_str()).unwrap_or("archive.gz");
+            messages = ArchiveReader::read_gz(file, fname)?;
+        }
+        MailboxFormat::Mbox => {
+            let file = File::open(source)?;
+            let folder = vec![source
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Inbox")
+                .to_string()];
+            messages = MboxReader::read_all(file, folder)?;
+        }
+        MailboxFormat::Maildir => {
+            messages = MaildirReader::read_dir(source)?;
+        }
+        MailboxFormat::Olm => {
+            let file = File::open(source)?;
+            messages = OlmReader::parse(file, vec!["OLM".to_string()])?;
+        }
+        MailboxFormat::Mh => {
+            messages = MhReader::read_dir(source)?;
+        }
+        MailboxFormat::Mmdf => {
+            let file = File::open(source)?;
+            messages = MmdfReader::parse(file, vec!["MMDF".to_string()])?;
+        }
+        MailboxFormat::Babyl => {
+            let file = File::open(source)?;
+            messages = BabylReader::parse(file, vec!["Babyl".to_string()])?;
+        }
+        _ => {
+            if source.is_file() {
+                let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                let bytes = std::fs::read(source)?;
+                if ext == "emlx" {
+                    messages.push(EmlxReader::parse(&bytes, vec!["Import".to_string()])?);
+                } else if ext == "msg" {
+                    messages.push(MsgReader::parse(&bytes, vec!["Import".to_string()])?);
+                } else {
+                    messages.push(EmlReader::parse(&bytes, vec!["Import".to_string()])?);
+                }
+            } else if source.is_dir() {
+                for entry in WalkDir::new(source).into_iter().filter_map(|e| e.ok()) {
+                    let path = entry.path();
+                    if !path.is_file() {
+                        continue;
+                    }
+                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                    let folder = match path.strip_prefix(source) {
+                        Ok(rel) => rel
+                            .parent()
+                            .map(|p| p.iter().filter_map(|s| s.to_str().map(|x| x.to_string())).collect())
+                            .unwrap_or_default(),
+                        Err(_) => vec!["Inbox".to_string()],
+                    };
+
+                    if let Ok(bytes) = std::fs::read(path) {
+                        if ext == "emlx" {
+                            if let Ok(m) = EmlxReader::parse(&bytes, folder) {
+                                messages.push(m);
+                            }
+                        } else if ext == "msg" {
+                            if let Ok(m) = MsgReader::parse(&bytes, folder) {
+                                messages.push(m);
+                            }
+                        } else if ext == "eml" || ext.is_empty() {
+                            if let Ok(m) = EmlReader::parse(&bytes, folder) {
+                                messages.push(m);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    info!(count = messages.len(), "Source ingestion complete");
+    Ok(messages)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,8 +172,7 @@ Subject: Message 2\r\n\
 \r\n\
 >From unescaped line\r\n";
 
-        let msgs = MboxReader::read_all(&mbox_data[..], vec!["Archive".to_string()])
-            .expect("Mbox parse failed");
+        let msgs = MboxReader::read_all(&mbox_data[..], vec!["Archive".to_string()]).expect("Mbox parse failed");
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].subject, "Message 1");
         assert_eq!(msgs[1].subject, "Message 2");
@@ -86,10 +183,22 @@ Subject: Message 2\r\n\
     fn test_format_sniffer() {
         assert_eq!(FormatSniffer::sniff_bytes(b"!BDN\x00\x00", "pst"), MailboxFormat::Pst);
         assert_eq!(FormatSniffer::sniff_bytes(b"!BDO\x00\x00", "ost"), MailboxFormat::Ost);
-        assert_eq!(FormatSniffer::sniff_bytes(&[0xCF, 0xAD, 0x12, 0xFE], "dbx"), MailboxFormat::Dbx);
-        assert_eq!(FormatSniffer::sniff_bytes(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1], "msg"), MailboxFormat::Msg);
-        assert_eq!(FormatSniffer::sniff_bytes(b"From user@host", "mbox"), MailboxFormat::Mbox);
-        assert_eq!(FormatSniffer::sniff_bytes(&[0x50, 0x4B, 0x03, 0x04], "zip"), MailboxFormat::Zip);
+        assert_eq!(
+            FormatSniffer::sniff_bytes(&[0xCF, 0xAD, 0x12, 0xFE], "dbx"),
+            MailboxFormat::Dbx
+        );
+        assert_eq!(
+            FormatSniffer::sniff_bytes(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1], "msg"),
+            MailboxFormat::Msg
+        );
+        assert_eq!(
+            FormatSniffer::sniff_bytes(b"From user@host", "mbox"),
+            MailboxFormat::Mbox
+        );
+        assert_eq!(
+            FormatSniffer::sniff_bytes(&[0x50, 0x4B, 0x03, 0x04], "zip"),
+            MailboxFormat::Zip
+        );
         assert_eq!(FormatSniffer::sniff_bytes(&[0x1F, 0x8B], "gz"), MailboxFormat::Gz);
     }
 

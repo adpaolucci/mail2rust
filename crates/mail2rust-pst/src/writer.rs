@@ -1,5 +1,12 @@
-use crate::ltp::{PropertyContext, PR_BODY_HTML_W, PR_BODY_W, PR_CONTENT_COUNT, PR_CONTENT_UNREAD, PR_DISPLAY_NAME_W, PR_IMPORTANCE, PR_MESSAGE_CLASS_W, PR_MESSAGE_FLAGS, PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_W, PR_SUBJECT_W, PR_SUBFOLDERS};
-use crate::ndb::{calculate_partial_header_crc, permute_bytes, NID_ROOT_FOLDER, PST_CLIENT_MAGIC, PST_CLIENT_VER, PST_HEADER_SIZE, PST_UNICODE_MAGIC, PST_UNICODE_VER};
+use crate::ltp::{
+    PropertyContext, PR_BODY_HTML_W, PR_BODY_W, PR_CONTENT_COUNT, PR_CONTENT_UNREAD, PR_DISPLAY_NAME_W, PR_HASATTACH,
+    PR_IMPORTANCE, PR_INTERNET_MESSAGE_ID_W, PR_MESSAGE_CLASS_W, PR_MESSAGE_FLAGS, PR_SENDER_EMAIL_ADDRESS_W,
+    PR_SENDER_NAME_W, PR_SUBFOLDERS, PR_SUBJECT_W,
+};
+use crate::ndb::{
+    calculate_partial_header_crc, permute_bytes, NID_ROOT_FOLDER, PST_CLIENT_MAGIC, PST_CLIENT_VER, PST_HEADER_SIZE,
+    PST_UNICODE_MAGIC, PST_UNICODE_VER,
+};
 use byteorder::{LittleEndian, WriteBytesExt};
 use mail2rust_core::EmailMessage;
 use std::collections::HashMap;
@@ -108,12 +115,21 @@ impl<W: Write + Seek> PstWriter<W> {
         }
         pc.add_string_w(PR_SENDER_NAME_W, &msg.from.name);
         pc.add_string_w(PR_SENDER_EMAIL_ADDRESS_W, &msg.from.email);
+        if !msg.message_id.is_empty() {
+            pc.add_string_w(PR_INTERNET_MESSAGE_ID_W, &msg.message_id);
+        }
         pc.add_u32(PR_MESSAGE_FLAGS, if msg.flags.read { 1 } else { 0 });
-        pc.add_u32(PR_IMPORTANCE, match msg.importance {
-            mail2rust_core::Importance::High => 2,
-            mail2rust_core::Importance::Low => 0,
-            mail2rust_core::Importance::Normal => 1,
-        });
+        if !msg.attachments.is_empty() {
+            pc.add_bool(PR_HASATTACH, true);
+        }
+        pc.add_u32(
+            PR_IMPORTANCE,
+            match msg.importance {
+                mail2rust_core::Importance::High => 2,
+                mail2rust_core::Importance::Low => 0,
+                mail2rust_core::Importance::Normal => 1,
+            },
+        );
 
         let data = pc.serialize()?;
         let bid = self.write_block(data)?;

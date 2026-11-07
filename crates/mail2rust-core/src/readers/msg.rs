@@ -21,29 +21,30 @@ impl MsgReader {
         let (sha256, md5) = EmailMessage::compute_hashes(raw_bytes);
         let streams = Self::scan_cfb_streams(raw_bytes);
 
-        let subject = streams.get("__substg1.0_0037")
+        let subject = streams
+            .get("__substg1.0_0037")
             .cloned()
             .unwrap_or_else(|| "(No Subject)".to_string());
 
-        let body_text = streams.get("__substg1.0_1000")
-            .cloned()
-            .unwrap_or_default();
+        let body_text = streams.get("__substg1.0_1000").cloned().unwrap_or_default();
 
-        let body_html = streams.get("__substg1.0_1013")
-            .cloned();
+        let body_html = streams.get("__substg1.0_1013").cloned();
 
-        let sender_email = streams.get("__substg1.0_0C1F")
+        let sender_email = streams
+            .get("__substg1.0_0C1F")
             .cloned()
             .unwrap_or_else(|| "sender@msg.local".to_string());
 
-        let sender_name = streams.get("__substg1.0_0C1A")
+        let sender_name = streams
+            .get("__substg1.0_0C1A")
             .cloned()
             .unwrap_or_else(|| sender_email.clone());
 
         let from = EmailAddress::new(sender_name, sender_email);
         let to = vec![EmailAddress::new("Recipient", "recipient@msg.local")];
 
-        let message_id = streams.get("__substg1.0_1035")
+        let message_id = streams
+            .get("__substg1.0_1035")
             .cloned()
             .unwrap_or_else(|| format!("<msg_{}@mail2rust.local>", &sha256[..16]));
 
@@ -77,7 +78,10 @@ impl MsgReader {
             raw_mime: Vec::new(),
             attachments,
             mapi_properties: Vec::new(),
-            flags: MessageFlags { read: true, ..Default::default() },
+            flags: MessageFlags {
+                read: true,
+                ..Default::default()
+            },
             importance: Importance::Normal,
             sha256,
             md5,
@@ -135,12 +139,12 @@ impl MsgReader {
 
     fn extract_utf16le_string(slice: &[u8]) -> String {
         let mut u16s = Vec::new();
-        for chunk in slice.chunks_exact(2) {
+        for chunk in slice.as_chunks::<2>().0 {
             let val = u16::from_le_bytes([chunk[0], chunk[1]]);
             if val == 0 {
                 break;
             }
-            if val >= 32 && val <= 0xD7FF {
+            if (32..=0xD7FF).contains(&val) {
                 u16s.push(val);
             }
         }

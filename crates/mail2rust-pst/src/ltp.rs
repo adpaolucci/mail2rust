@@ -12,6 +12,7 @@ pub const PR_SENDER_EMAIL_ADDRESS_W: u32 = 0x0C1F001F;
 pub const PR_MESSAGE_DELIVERY_TIME: u32 = 0x0E060040;
 pub const PR_MESSAGE_FLAGS: u32 = 0x0E070003;
 pub const PR_MESSAGE_SIZE: u32 = 0x0E080003;
+pub const PR_HASATTACH: u32 = 0x0E1B000B;
 pub const PR_BODY_W: u32 = 0x1000001F;
 pub const PR_BODY_HTML_W: u32 = 0x10130102;
 pub const PR_INTERNET_MESSAGE_ID_W: u32 = 0x1035001F;
@@ -43,10 +44,7 @@ impl PropertyContext {
             u16_bytes.extend_from_slice(&u.to_le_bytes());
         }
         u16_bytes.extend_from_slice(&[0, 0]); // null terminate
-        self.entries.push(PropertyContextEntry {
-            tag,
-            data: u16_bytes,
-        });
+        self.entries.push(PropertyContextEntry { tag, data: u16_bytes });
     }
 
     pub fn add_u32(&mut self, tag: u32, val: u32) {
@@ -58,10 +56,7 @@ impl PropertyContext {
 
     pub fn add_bool(&mut self, tag: u32, val: bool) {
         let b = if val { 1u8 } else { 0u8 };
-        self.entries.push(PropertyContextEntry {
-            tag,
-            data: vec![b],
-        });
+        self.entries.push(PropertyContextEntry { tag, data: vec![b] });
     }
 
     pub fn add_binary(&mut self, tag: u32, bytes: &[u8]) {
@@ -109,5 +104,11 @@ impl PropertyContext {
 
         buf.extend_from_slice(&data_pool);
         Ok(buf)
+    }
+}
+
+impl Default for PropertyContext {
+    fn default() -> Self {
+        Self::new()
     }
 }

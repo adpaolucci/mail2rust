@@ -6,6 +6,7 @@ pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
                 if ui.button("📂  Open Mailbox Archive...").clicked() {
+                    state.active_modal = ActiveModal::OpenMailbox;
                     ui.close_menu();
                 }
                 if ui.button("💾  Direct PST Export...").clicked() {
@@ -61,7 +62,11 @@ pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
     });
 
     egui::TopBottomPanel::top("ribbon_toolbar")
-        .frame(egui::Frame::none().fill(Color32::from_rgb(24, 28, 36)).inner_margin(8.0))
+        .frame(
+            egui::Frame::none()
+                .fill(Color32::from_rgb(24, 28, 36))
+                .inner_margin(8.0),
+        )
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);

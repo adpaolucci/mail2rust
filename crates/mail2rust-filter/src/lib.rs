@@ -301,8 +301,14 @@ impl FilterEngine {
         }
         if let Some(ref recip) = criteria.recipient_search {
             let q = recip.to_lowercase();
-            let matches_recip = msg.to.iter().any(|r| r.name.to_lowercase().contains(&q) || r.email.to_lowercase().contains(&q))
-                || msg.cc.iter().any(|r| r.name.to_lowercase().contains(&q) || r.email.to_lowercase().contains(&q));
+            let matches_recip = msg
+                .to
+                .iter()
+                .any(|r| r.name.to_lowercase().contains(&q) || r.email.to_lowercase().contains(&q))
+                || msg
+                    .cc
+                    .iter()
+                    .any(|r| r.name.to_lowercase().contains(&q) || r.email.to_lowercase().contains(&q));
             if !matches_recip {
                 return false;
             }
@@ -357,7 +363,11 @@ impl FilterEngine {
     }
 
     pub fn filter_messages(messages: &[EmailMessage], criteria: &FilterCriteria) -> Vec<EmailMessage> {
-        messages.iter().filter(|m| Self::matches(m, criteria)).cloned().collect()
+        messages
+            .iter()
+            .filter(|m| Self::matches(m, criteria))
+            .cloned()
+            .collect()
     }
 }
 
@@ -374,10 +384,7 @@ pub enum DedupStrategy {
 pub struct DedupEngine;
 
 impl DedupEngine {
-    pub fn deduplicate(
-        messages: Vec<EmailMessage>,
-        strategy: DedupStrategy,
-    ) -> (Vec<EmailMessage>, Vec<EmailMessage>) {
+    pub fn deduplicate(messages: Vec<EmailMessage>, strategy: DedupStrategy) -> (Vec<EmailMessage>, Vec<EmailMessage>) {
         let mut seen = HashSet::new();
         let mut unique = Vec::new();
         let mut duplicates = Vec::new();
@@ -403,7 +410,11 @@ impl DedupEngine {
             }
         }
 
-        info!(unique = unique.len(), duplicates = duplicates.len(), "Deduplication finished");
+        info!(
+            unique = unique.len(),
+            duplicates = duplicates.len(),
+            "Deduplication finished"
+        );
         (unique, duplicates)
     }
 }
@@ -427,7 +438,7 @@ pub enum SplitMode {
     Even(usize),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SplitConfig {
     pub max_volume_bytes: usize,
     pub cluster_threads: bool,
@@ -442,11 +453,7 @@ impl VolumeSplitter {
         Self::split_with_mode(messages, config, &SplitMode::Size)
     }
 
-    pub fn split_with_mode(
-        messages: &[EmailMessage],
-        config: &SplitConfig,
-        mode: &SplitMode,
-    ) -> Vec<SplitVolume> {
+    pub fn split_with_mode(messages: &[EmailMessage], config: &SplitConfig, mode: &SplitMode) -> Vec<SplitVolume> {
         if messages.is_empty() {
             return Vec::new();
         }
@@ -455,7 +462,11 @@ impl VolumeSplitter {
             SplitMode::Year => Self::split_by_year(messages, config),
             SplitMode::Even(splits) => {
                 let total_bytes: usize = messages.iter().map(|m| m.size_bytes).sum();
-                let target = if *splits > 0 { (total_bytes / splits).max(1) } else { config.max_volume_bytes };
+                let target = if *splits > 0 {
+                    (total_bytes / splits).max(1)
+                } else {
+                    config.max_volume_bytes
+                };
                 let mut even_cfg = config.clone();
                 even_cfg.max_volume_bytes = target;
                 Self::split_by_size(messages, &even_cfg)
@@ -512,20 +523,21 @@ impl VolumeSplitter {
         let mut current_bytes = 0usize;
         let mut folder_counts = HashMap::new();
 
-        let mut commit_vol = |msgs: &mut Vec<EmailMessage>, bytes: &mut usize, fcounts: &mut HashMap<String, usize>, idx: &mut usize| {
-            if !msgs.is_empty() {
-                let file_name = format!("{}_part{:03}.{}", config.file_prefix, *idx, config.target_ext);
-                volumes.push(SplitVolume {
-                    volume_index: *idx,
-                    file_name,
-                    messages: std::mem::take(msgs),
-                    total_size_bytes: *bytes,
-                    folder_counts: std::mem::take(fcounts),
-                });
-                *idx += 1;
-                *bytes = 0;
-            }
-        };
+        let mut commit_vol =
+            |msgs: &mut Vec<EmailMessage>, bytes: &mut usize, fcounts: &mut HashMap<String, usize>, idx: &mut usize| {
+                if !msgs.is_empty() {
+                    let file_name = format!("{}_part{:03}.{}", config.file_prefix, *idx, config.target_ext);
+                    volumes.push(SplitVolume {
+                        volume_index: *idx,
+                        file_name,
+                        messages: std::mem::take(msgs),
+                        total_size_bytes: *bytes,
+                        folder_counts: std::mem::take(fcounts),
+                    });
+                    *idx += 1;
+                    *bytes = 0;
+                }
+            };
 
         if config.cluster_threads {
             // Group messages by conversation_id
@@ -537,7 +549,12 @@ impl VolumeSplitter {
             for (_thread_id, thread_msgs) in threads {
                 let thread_size: usize = thread_msgs.iter().map(|m| m.size_bytes).sum();
                 if current_bytes + thread_size > config.max_volume_bytes && !current_messages.is_empty() {
-                    commit_vol(&mut current_messages, &mut current_bytes, &mut folder_counts, &mut current_idx);
+                    commit_vol(
+                        &mut current_messages,
+                        &mut current_bytes,
+                        &mut folder_counts,
+                        &mut current_idx,
+                    );
                 }
 
                 for m in thread_msgs {
@@ -550,7 +567,12 @@ impl VolumeSplitter {
         } else {
             for m in messages {
                 if current_bytes + m.size_bytes > config.max_volume_bytes && !current_messages.is_empty() {
-                    commit_vol(&mut current_messages, &mut current_bytes, &mut folder_counts, &mut current_idx);
+                    commit_vol(
+                        &mut current_messages,
+                        &mut current_bytes,
+                        &mut folder_counts,
+                        &mut current_idx,
+                    );
                 }
                 current_messages.push(m.clone());
                 current_bytes += m.size_bytes;
@@ -559,7 +581,12 @@ impl VolumeSplitter {
             }
         }
 
-        commit_vol(&mut current_messages, &mut current_bytes, &mut folder_counts, &mut current_idx);
+        commit_vol(
+            &mut current_messages,
+            &mut current_bytes,
+            &mut folder_counts,
+            &mut current_idx,
+        );
         info!(volumes = volumes.len(), "Volume splitting completed");
         volumes
     }
@@ -603,7 +630,10 @@ mod tests {
         assert_eq!(parse_size_bytes("20GB").unwrap(), 20 * 1024 * 1024 * 1024);
         assert_eq!(parse_size_bytes("20 gb").unwrap(), 20 * 1024 * 1024 * 1024);
         assert_eq!(parse_size_bytes("500MB").unwrap(), 500 * 1024 * 1024);
-        assert_eq!(parse_size_bytes("1.5G").unwrap(), (1.5 * 1024.0 * 1024.0 * 1024.0) as usize);
+        assert_eq!(
+            parse_size_bytes("1.5G").unwrap(),
+            (1.5 * 1024.0 * 1024.0 * 1024.0) as usize
+        );
         assert_eq!(parse_size_bytes("100KB").unwrap(), 100 * 1024);
         assert_eq!(parse_size_bytes("1024B").unwrap(), 1024);
         assert_eq!(parse_size_bytes("0").unwrap(), 0);

@@ -82,18 +82,18 @@ impl FormatSniffer {
 
         if bytes.len() >= 4 {
             // PST / OST
-            if bytes.len() >= 4 && (&bytes[0..4] == b"!BDN" || &bytes[0..4] == &[0x4E, 0x44, 0x42, 0x4E]) {
+            if bytes.len() >= 4 && (&bytes[0..4] == b"!BDN" || bytes[0..4] == [0x4E, 0x44, 0x42, 0x4E]) {
                 return MailboxFormat::Pst;
             }
             if bytes.len() >= 4 && &bytes[0..4] == b"!BDO" {
                 return MailboxFormat::Ost;
             }
             // DBX
-            if &bytes[0..4] == &[0xCF, 0xAD, 0x12, 0xFE] {
+            if bytes[0..4] == [0xCF, 0xAD, 0x12, 0xFE] {
                 return MailboxFormat::Dbx;
             }
             // NSF
-            if &bytes[0..4] == &[0x1A, 0x00, 0x00, 0x04] {
+            if bytes[0..4] == [0x1A, 0x00, 0x00, 0x04] {
                 return MailboxFormat::Nsf;
             }
             // MBS
@@ -101,11 +101,11 @@ impl FormatSniffer {
                 return MailboxFormat::Mbs;
             }
             // MMDF
-            if &bytes[0..4] == &[0x01, 0x01, 0x01, 0x01] {
+            if bytes[0..4] == [0x01, 0x01, 0x01, 0x01] {
                 return MailboxFormat::Mmdf;
             }
             // ZIP magic PK\x03\x04
-            if &bytes[0..4] == &[0x50, 0x4B, 0x03, 0x04] {
+            if bytes[0..4] == [0x50, 0x4B, 0x03, 0x04] {
                 if ext_hint == "olm" {
                     return MailboxFormat::Olm;
                 }
@@ -115,7 +115,7 @@ impl FormatSniffer {
 
         if bytes.len() >= 8 {
             // MSG (CFB)
-            if &bytes[0..8] == &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1] {
+            if bytes[0..8] == [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1] {
                 return MailboxFormat::Msg;
             }
         }

@@ -7,12 +7,13 @@ pub struct EmlxReader;
 impl EmlxReader {
     pub fn parse(raw_bytes: &[u8], folder_path: Vec<String>) -> Result<EmailMessage, Box<dyn std::error::Error>> {
         // 1. Read first line to get byte count
-        let newline_pos = raw_bytes.iter().position(|&b| b == b'\n')
+        let newline_pos = raw_bytes
+            .iter()
+            .position(|&b| b == b'\n')
             .ok_or("Invalid EMLX: missing byte count newline")?;
 
         let count_str = std::str::from_utf8(&raw_bytes[..newline_pos])?.trim();
-        let mime_len: usize = count_str.parse()
-            .map_err(|_| "Invalid EMLX: byte count not a number")?;
+        let mime_len: usize = count_str.parse().map_err(|_| "Invalid EMLX: byte count not a number")?;
 
         let mime_start = newline_pos + 1;
         let mime_end = (mime_start + mime_len).min(raw_bytes.len());

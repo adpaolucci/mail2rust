@@ -43,17 +43,20 @@ impl ForensicEngine {
             };
         }
 
-        info!(prefix = prefix, start = starting_number, count = messages.len(), "Applying Bates stamping");
+        info!(
+            prefix = prefix,
+            start = starting_number,
+            count = messages.len(),
+            "Applying Bates stamping"
+        );
 
-        let mut current = starting_number;
-        let start_bates = format!("{}-{:0width$}", prefix, current, width = digit_padding);
+        let start_bates = format!("{}-{:0width$}", prefix, starting_number, width = digit_padding);
         let mut end_bates = start_bates.clone();
 
-        for msg in messages.iter_mut() {
+        for (current, msg) in (starting_number..).zip(messages.iter_mut()) {
             let bates = format!("{}-{:0width$}", prefix, current, width = digit_padding);
             msg.bates_number = Some(bates.clone());
             end_bates = bates;
-            current += 1;
         }
 
         BatesRange {

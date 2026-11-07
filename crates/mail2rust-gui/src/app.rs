@@ -1,24 +1,13 @@
 use crate::state::AppState;
 use crate::views::{
-    folder_tree::render_folder_tree,
-    message_list::render_message_list,
-    message_preview::render_message_preview,
-    modals::render_modals,
-    ribbon::render_ribbon,
-    status_bar::render_status_bar,
+    folder_tree::render_folder_tree, message_list::render_message_list, message_preview::render_message_preview,
+    modals::render_modals, ribbon::render_ribbon, status_bar::render_status_bar,
 };
 use eframe::egui::{self, Color32};
 
+#[derive(Default)]
 pub struct Mail2RustApp {
     pub state: AppState,
-}
-
-impl Default for Mail2RustApp {
-    fn default() -> Self {
-        Self {
-            state: AppState::default(),
-        }
-    }
 }
 
 impl eframe::App for Mail2RustApp {

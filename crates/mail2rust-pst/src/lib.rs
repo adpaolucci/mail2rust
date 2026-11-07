@@ -41,7 +41,10 @@ mod tests {
                 raw_mime: Vec::new(),
                 attachments: Vec::new(),
                 mapi_properties: Vec::new(),
-                flags: MessageFlags { read: true, ..Default::default() },
+                flags: MessageFlags {
+                    read: true,
+                    ..Default::default()
+                },
                 importance: Importance::High,
                 sha256: "test_sha256".to_string(),
                 md5: "test_md5".to_string(),
@@ -50,7 +53,9 @@ mod tests {
                 source_format: "EML".to_string(),
             };
 
-            writer.add_message(&sample_msg, inbox_nid).expect("Failed to add message");
+            writer
+                .add_message(&sample_msg, inbox_nid)
+                .expect("Failed to add message");
             writer.finalize().expect("Failed to finalize PST");
         }
 

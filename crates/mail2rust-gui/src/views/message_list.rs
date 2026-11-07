@@ -21,9 +21,13 @@ pub fn render_message_list(ui: &mut egui::Ui, state: &mut AppState) {
 
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(format!("Showing {} messages in {}", filtered.len(), state.active_folder))
-                    .color(Color32::from_rgb(148, 163, 184))
-                    .size(11.0),
+                RichText::new(format!(
+                    "Showing {} messages in {}",
+                    filtered.len(),
+                    state.active_folder
+                ))
+                .color(Color32::from_rgb(148, 163, 184))
+                .size(11.0),
             );
         });
 
@@ -94,11 +98,17 @@ pub fn render_message_list(ui: &mut egui::Ui, state: &mut AppState) {
                     ui.add_space(2.0);
 
                     // Subject line
-                    let subj_text = if msg.subject.is_empty() { "(No Subject)" } else { &msg.subject };
+                    let subj_text = if msg.subject.is_empty() {
+                        "(No Subject)"
+                    } else {
+                        &msg.subject
+                    };
                     let subj_style = if !msg.flags.read {
                         RichText::new(subj_text).color(Color32::WHITE).strong().size(13.0)
                     } else {
-                        RichText::new(subj_text).color(Color32::from_rgb(226, 232, 240)).size(13.0)
+                        RichText::new(subj_text)
+                            .color(Color32::from_rgb(226, 232, 240))
+                            .size(13.0)
                     };
                     ui.label(subj_style);
 

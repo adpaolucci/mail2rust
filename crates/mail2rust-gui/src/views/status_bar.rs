@@ -3,7 +3,11 @@ use eframe::egui::{self, Color32, RichText};
 
 pub fn render_status_bar(ctx: &egui::Context, state: &AppState) {
     egui::TopBottomPanel::bottom("status_bar")
-        .frame(egui::Frame::none().fill(Color32::from_rgb(15, 23, 42)).inner_margin(6.0))
+        .frame(
+            egui::Frame::none()
+                .fill(Color32::from_rgb(15, 23, 42))
+                .inner_margin(6.0),
+        )
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(

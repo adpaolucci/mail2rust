@@ -72,12 +72,14 @@ impl EmlExporter {
         };
 
         // Determine directory part if max_per_dir is configured
-        let target_dir = if self.max_per_dir > 0 {
+        let target_dir = if let Some(max) = std::num::NonZeroUsize::new(self.max_per_dir) {
             let count = self.dir_counts.entry(base_rel_dir.clone()).or_insert(0);
-            let part_num = *count / self.max_per_dir;
+            let part_num = *count / max;
             *count += 1;
             if part_num > 0 {
-                self.output_dir.join(&base_rel_dir).join(format!("__part{}", part_num + 1))
+                self.output_dir
+                    .join(&base_rel_dir)
+                    .join(format!("__part{}", part_num + 1))
             } else {
                 self.output_dir.join(&base_rel_dir)
             }
@@ -96,7 +98,10 @@ impl EmlExporter {
         let mut counter = 1;
 
         while self.seen_paths.contains(&final_path) || final_path.exists() {
-            let stem = Path::new(&base_name).file_stem().and_then(|s| s.to_str()).unwrap_or("email");
+            let stem = Path::new(&base_name)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("email");
             let new_name = format!("{} ({}).eml", stem, counter);
             final_path = target_dir.join(new_name);
             counter += 1;
@@ -117,7 +122,10 @@ impl EmlExporter {
 
     pub fn sanitize_segment(name: &str) -> String {
         let invalid = ['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
-        let mut clean: String = name.chars().map(|c| if invalid.contains(&c) { '_' } else { c }).collect();
+        let mut clean: String = name
+            .chars()
+            .map(|c| if invalid.contains(&c) { '_' } else { c })
+            .collect();
         clean = clean.trim().to_string();
         if clean.is_empty() {
             clean = "Folder".to_string();
@@ -128,7 +136,11 @@ impl EmlExporter {
     fn generate_filename(msg: &EmailMessage) -> String {
         let date_prefix = msg.date.format("%Y%m%d_%H%M%S").to_string();
         let safe_subj = Self::sanitize_segment(&msg.subject);
-        let truncated = if safe_subj.len() > 60 { &safe_subj[..60] } else { &safe_subj };
+        let truncated = if safe_subj.len() > 60 {
+            &safe_subj[..60]
+        } else {
+            &safe_subj
+        };
         format!("{}_{}.eml", date_prefix, truncated)
     }
 
@@ -186,8 +198,7 @@ mod tests {
     #[test]
     fn test_eml_export_naming_index() {
         let dir = tempdir().unwrap();
-        let mut exporter = EmlExporter::new(dir.path(), EmlLayout::Flat)
-            .with_naming(EmlNaming::Index);
+        let mut exporter = EmlExporter::new(dir.path(), EmlLayout::Flat).with_naming(EmlNaming::Index);
 
         let msg = make_test_msg("Hello World", &["Inbox"]);
         let path = exporter.export_message(&msg).unwrap();
@@ -197,8 +208,7 @@ mod tests {
     #[test]
     fn test_eml_export_max_per_dir() {
         let dir = tempdir().unwrap();
-        let mut exporter = EmlExporter::new(dir.path(), EmlLayout::Flat)
-            .with_max_per_dir(2);
+        let mut exporter = EmlExporter::new(dir.path(), EmlLayout::Flat).with_max_per_dir(2);
 
         let m1 = make_test_msg("M1", &["Inbox"]);
         let m2 = make_test_msg("M2", &["Inbox"]);

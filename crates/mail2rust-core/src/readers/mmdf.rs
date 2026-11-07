@@ -22,7 +22,7 @@ impl MmdfReader {
         info!(total_bytes = bytes.len(), "Parsing MMDF mailbox format");
 
         while idx + 4 <= bytes.len() {
-            if &bytes[idx..idx + 4] == Self::DELIMITER {
+            if bytes[idx..idx + 4] == Self::DELIMITER {
                 if idx > last_boundary {
                     let msg_bytes = &bytes[last_boundary..idx];
                     let trimmed = msg_bytes.trim_ascii();

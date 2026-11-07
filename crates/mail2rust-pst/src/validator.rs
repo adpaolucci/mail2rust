@@ -47,7 +47,10 @@ impl PstValidator {
         // 2. Client Magic
         let client_magic = (&header[0x08..0x0A]).read_u16::<LittleEndian>()?;
         if client_magic != PST_CLIENT_MAGIC {
-            errors.push(format!("Invalid Client Magic: 0x{:04X} (expected 0x534D 'SM')", client_magic));
+            errors.push(format!(
+                "Invalid Client Magic: 0x{:04X} (expected 0x534D 'SM')",
+                client_magic
+            ));
         }
 
         // 3. Version
@@ -92,7 +95,11 @@ impl PstValidator {
 
         Ok(PstValidationReport {
             is_valid,
-            format: if version == PST_UNICODE_VER { "Unicode PST (Outlook 2003 - 2024 / M365)".to_string() } else { "Legacy ANSI PST".to_string() },
+            format: if version == PST_UNICODE_VER {
+                "Unicode PST (Outlook 2003 - 2024 / M365)".to_string()
+            } else {
+                "Legacy ANSI PST".to_string()
+            },
             magic: magic_str,
             version,
             client_magic: format!("0x{:04X} ('SM')", client_magic),

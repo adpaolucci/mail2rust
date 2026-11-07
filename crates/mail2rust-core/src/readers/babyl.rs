@@ -43,7 +43,7 @@ impl BabylReader {
                 if attr_header.contains("flagged") {
                     flagged = true;
                 }
-                msg_text = &trimmed[star_idx + 12..].trim();
+                msg_text = trimmed[star_idx + 12..].trim();
             }
 
             if let Ok(mut msg) = EmlReader::parse(msg_text.as_bytes(), folder_path.clone()) {

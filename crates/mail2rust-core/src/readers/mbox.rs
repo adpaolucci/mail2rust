@@ -22,7 +22,11 @@ impl MboxReader {
             if line.starts_with(b"From ") {
                 if !current_msg_bytes.is_empty() {
                     msg_index += 1;
-                    trace!(index = msg_index, bytes = current_msg_bytes.len(), "Encountered MBOX message boundary");
+                    trace!(
+                        index = msg_index,
+                        bytes = current_msg_bytes.len(),
+                        "Encountered MBOX message boundary"
+                    );
                     match EmlReader::parse(&current_msg_bytes, folder_path.clone()) {
                         Ok(mut msg) => {
                             msg.source_format = "MBOX".to_string();
