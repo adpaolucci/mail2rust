@@ -14,6 +14,8 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use tracing::info;
 
+mod samples;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "mail2rust",
@@ -236,6 +238,11 @@ enum Commands {
     },
     /// Sniff file or folder to identify mailbox format and magic byte signature
     Sniff { path: PathBuf },
+    /// Generate a comprehensive multi-format sample and demo suite
+    GenerateSamples {
+        #[arg(short, long, alias = "output", default_value = "samples")]
+        output_dir: PathBuf,
+    },
     /// Launch the pure-Rust native GUI studio (zero Node.js or WebView2 dependencies)
     Gui,
 }
@@ -275,6 +282,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Target Path: {}", path.display());
             println!("Identified Format: {}", format.name());
             println!("Format Type: {:?}", format);
+        }
+
+        Commands::GenerateSamples { output_dir } => {
+            println!(
+                "Generating comprehensive multi-format sample suite into: {}",
+                output_dir.display()
+            );
+            samples::generate_all_samples(output_dir)?;
+            println!(
+                "Successfully generated all sample datasets in: {}",
+                output_dir.display()
+            );
         }
 
         Commands::ValidatePst { pst_file, password } => {
