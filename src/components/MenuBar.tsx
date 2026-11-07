@@ -23,6 +23,8 @@ interface MenuBarProps {
   onOpenForensics: () => void;
   onOpenLegacyFormats: () => void;
   onOpenRustCodebase: () => void;
+  onOpenExportReport: () => void;
+  onOpenSecurityAudit: () => void;
   onSelectAllFolders: () => void;
   onClearFolderSelection: () => void;
 }
@@ -36,6 +38,8 @@ export const MenuBar: React.FC<MenuBarProps> = ({
   onOpenForensics,
   onOpenLegacyFormats,
   onOpenRustCodebase,
+  onOpenExportReport,
+  onOpenSecurityAudit,
   onSelectAllFolders,
   onClearFolderSelection,
 }) => {
@@ -102,6 +106,16 @@ export const MenuBar: React.FC<MenuBarProps> = ({
                 <span>Auto-Split PST by Size (20GB / 45GB)</span>
               </span>
               <span className="text-[10px] text-slate-400 font-mono">Ctrl+S</span>
+            </button>
+            <button
+              onClick={() => { setActiveMenu(null); onOpenExportReport(); }}
+              className="w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white flex items-center justify-between text-xs"
+            >
+              <span className="flex items-center space-x-2">
+                <FileText className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Export eDiscovery Report (PDF / CSV)</span>
+              </span>
+              <span className="text-[10px] text-slate-400 font-mono">Ctrl+R</span>
             </button>
             <div className="h-px bg-slate-700 my-1" />
             <button
@@ -215,6 +229,20 @@ export const MenuBar: React.FC<MenuBarProps> = ({
             >
               <FileText className="w-3.5 h-3.5 text-blue-400" />
               <span>Bates Stamping Sequencer</span>
+            </button>
+            <button
+              onClick={() => { setActiveMenu(null); onOpenExportReport(); }}
+              className="w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white text-xs flex items-center space-x-2"
+            >
+              <FileText className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Export Compliance Audit Report (PDF / CSV)</span>
+            </button>
+            <button
+              onClick={() => { setActiveMenu(null); onOpenSecurityAudit(); }}
+              className="w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white text-xs flex items-center space-x-2"
+            >
+              <Shield className="w-3.5 h-3.5 text-purple-400" />
+              <span>Real-Time Security Audit Viewer (ISO 27001)</span>
             </button>
           </div>
         )}

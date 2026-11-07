@@ -22,6 +22,8 @@ interface RibbonBarProps {
   onOpenForensics: () => void;
   onOpenLegacyFormats: () => void;
   onOpenRustCodebase: () => void;
+  onOpenExportReport: () => void;
+  onOpenSecurityAudit: () => void;
   filterCriteria: FilterCriteria;
   onResetFilters: () => void;
   totalFilteredCount: number;
@@ -37,6 +39,8 @@ export const RibbonBar: React.FC<RibbonBarProps> = ({
   onOpenForensics,
   onOpenLegacyFormats,
   onOpenRustCodebase,
+  onOpenExportReport,
+  onOpenSecurityAudit,
   filterCriteria,
   onResetFilters,
   totalFilteredCount,
@@ -138,6 +142,26 @@ export const RibbonBar: React.FC<RibbonBarProps> = ({
         >
           <Layers className="w-4 h-4 text-indigo-400" />
           <span>Legacy Formats</span>
+        </button>
+
+        {/* 9. eDiscovery Compliance Report (PDF / CSV) */}
+        <button
+          onClick={onOpenExportReport}
+          className="flex items-center space-x-1.5 px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-650 text-slate-100 border border-slate-600/70 font-medium transition-all"
+          title="Export Professional eDiscovery Compliance Report (PDF / CSV Summary & Error Logs)"
+        >
+          <FileCode className="w-4 h-4 text-emerald-400" />
+          <span>Export Report (PDF/CSV)</span>
+        </button>
+
+        {/* 10. Dedicated Security Audit Viewer */}
+        <button
+          onClick={onOpenSecurityAudit}
+          className="flex items-center space-x-1.5 px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-650 text-slate-100 border border-slate-600/70 font-medium transition-all"
+          title="Real-Time Security & Forensic Activity Audit Trail (ISO 27001 & FRCP 37(e))"
+        >
+          <ShieldAlert className="w-4 h-4 text-purple-400" />
+          <span>Security Audit</span>
         </button>
       </div>
 

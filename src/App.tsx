@@ -21,10 +21,13 @@ import { DeltaSyncModal } from './components/DeltaSyncModal';
 import { ForensicModal } from './components/ForensicModal';
 import { LegacyFormatsModal } from './components/LegacyFormatsModal';
 import { RustCodebaseModal } from './components/RustCodebaseModal';
+import { ExportReportModal } from './components/ExportReportModal';
+import { SecurityAuditViewer } from './components/SecurityAuditViewer';
 
 import { INITIAL_FOLDERS, INITIAL_MESSAGES } from './data/seedData';
 import { MailboxFolder, EmailMessage, FilterCriteria, SyncCheckpoint } from './types/mail';
 import { filterMessages } from './utils/filterEngine';
+import { bulkDeleteMessages, updateFolderStatsAfterDeletion } from './utils/messageOps';
 
 export default function App() {
   const [folders, setFolders] = useState<MailboxFolder[]>(INITIAL_FOLDERS);
@@ -32,6 +35,7 @@ export default function App() {
   const [activeFolderId, setActiveFolderId] = useState<string>('inbox');
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(INITIAL_MESSAGES[0].id);
   const [searchQuery, setSearchQuery] = useState('');
+  const [checkedMessageIds, setCheckedMessageIds] = useState<string[]>([]);
 
   // Filtering Criteria State
   const [filterCriteria, setFilterCriteria] = useState<FilterCriteria>({
@@ -71,6 +75,8 @@ export default function App() {
   const [isForensicsOpen, setIsForensicsOpen] = useState(false);
   const [isLegacyFormatsOpen, setIsLegacyFormatsOpen] = useState(false);
   const [isRustCodebaseOpen, setIsRustCodebaseOpen] = useState(false);
+  const [isExportReportOpen, setIsExportReportOpen] = useState(false);
+  const [isSecurityAuditOpen, setIsSecurityAuditOpen] = useState(false);
 
   // Folder Operations
   const handleToggleFolderCheck = (folderId: string) => {
@@ -115,6 +121,54 @@ export default function App() {
       legalHoldOnly: false,
     });
     setSearchQuery('');
+  };
+
+  // Multi-Select & Bulk Deletion Handlers
+  const handleToggleCheckMessage = (id: string) => {
+    setCheckedMessageIds(prev =>
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAllVisibleMessages = (visibleIds: string[]) => {
+    setCheckedMessageIds(prev => {
+      const allChecked = visibleIds.length > 0 && visibleIds.every(id => prev.includes(id));
+      if (allChecked) {
+        return prev.filter(id => !visibleIds.includes(id));
+      } else {
+        return Array.from(new Set([...prev, ...visibleIds]));
+      }
+    });
+  };
+
+  const handleClearCheckedMessages = () => {
+    setCheckedMessageIds([]);
+  };
+
+  const handleBulkDeleteMessages = (idsToDelete: string[], allowLegalHoldOverride: boolean) => {
+    const result = bulkDeleteMessages(messages, idsToDelete, {
+      allowLegalHoldDeletion: allowLegalHoldOverride,
+    });
+
+    // 1. Update messages state
+    setMessages(result.remainingMessages);
+
+    // 2. Update folder statistics (counts, unread, sizes)
+    setFolders(prev => updateFolderStatsAfterDeletion(prev, result.deletedMessages));
+
+    // 3. Clear deleted message IDs from checked list
+    const deletedIdsSet = new Set(result.deletedMessages.map(m => m.id));
+    setCheckedMessageIds(prev => prev.filter(id => !deletedIdsSet.has(id)));
+
+    // 4. Update preview selection if current message was deleted
+    if (selectedMessageId && deletedIdsSet.has(selectedMessageId)) {
+      const remainingInActiveFolder = result.remainingMessages.filter(
+        m => m.folderId === activeFolderId
+      );
+      setSelectedMessageId(
+        remainingInActiveFolder.length > 0 ? remainingInActiveFolder[0].id : null
+      );
+    }
   };
 
   // Filter messages for current active folder and filter criteria
@@ -164,6 +218,8 @@ export default function App() {
         onOpenForensics={() => setIsForensicsOpen(true)}
         onOpenLegacyFormats={() => setIsLegacyFormatsOpen(true)}
         onOpenRustCodebase={() => setIsRustCodebaseOpen(true)}
+        onOpenExportReport={() => setIsExportReportOpen(true)}
+        onOpenSecurityAudit={() => setIsSecurityAuditOpen(true)}
         onSelectAllFolders={handleSelectAllFolders}
         onClearFolderSelection={handleClearFolderSelection}
       />
@@ -178,6 +234,8 @@ export default function App() {
         onOpenForensics={() => setIsForensicsOpen(true)}
         onOpenLegacyFormats={() => setIsLegacyFormatsOpen(true)}
         onOpenRustCodebase={() => setIsRustCodebaseOpen(true)}
+        onOpenExportReport={() => setIsExportReportOpen(true)}
+        onOpenSecurityAudit={() => setIsSecurityAuditOpen(true)}
         filterCriteria={filterCriteria}
         onResetFilters={handleResetFilters}
         totalFilteredCount={allFilteredMessages.length}
@@ -204,6 +262,11 @@ export default function App() {
           folderName={activeFolder ? activeFolder.name : 'Messages'}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
+          checkedMessageIds={checkedMessageIds}
+          onToggleCheckMessage={handleToggleCheckMessage}
+          onSelectAllVisible={handleSelectAllVisibleMessages}
+          onClearCheckedMessages={handleClearCheckedMessages}
+          onBulkDelete={handleBulkDeleteMessages}
         />
 
         {/* Right Pane: Multi-Tab Message Preview & Hex / Forensics */}
@@ -274,6 +337,19 @@ export default function App() {
       <RustCodebaseModal
         isOpen={isRustCodebaseOpen}
         onClose={() => setIsRustCodebaseOpen(false)}
+      />
+
+      <ExportReportModal
+        isOpen={isExportReportOpen}
+        onClose={() => setIsExportReportOpen(false)}
+        messages={messages}
+        folders={folders}
+        checkpoint={checkpoint}
+      />
+
+      <SecurityAuditViewer
+        isOpen={isSecurityAuditOpen}
+        onClose={() => setIsSecurityAuditOpen(false)}
       />
     </div>
   );
