@@ -124,11 +124,41 @@ impl EmlExporter {
         let invalid = ['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
         let mut clean: String = name
             .chars()
-            .map(|c| if invalid.contains(&c) { '_' } else { c })
+            .map(|c| if invalid.contains(&c) || c.is_control() { '_' } else { c })
             .collect();
-        clean = clean.trim().to_string();
-        if clean.is_empty() {
+        clean = clean.trim().trim_matches('.').to_string();
+        if clean.is_empty() || clean == "." || clean == ".." {
             clean = "Folder".to_string();
+        }
+        // Protect against Windows DOS reserved device names
+        let upper = clean.to_ascii_uppercase();
+        let stem = upper.split('.').next().unwrap_or("");
+        if matches!(
+            stem,
+            "CON"
+                | "PRN"
+                | "AUX"
+                | "NUL"
+                | "COM1"
+                | "COM2"
+                | "COM3"
+                | "COM4"
+                | "COM5"
+                | "COM6"
+                | "COM7"
+                | "COM8"
+                | "COM9"
+                | "LPT1"
+                | "LPT2"
+                | "LPT3"
+                | "LPT4"
+                | "LPT5"
+                | "LPT6"
+                | "LPT7"
+                | "LPT8"
+                | "LPT9"
+        ) {
+            clean = format!("_{}", clean);
         }
         clean
     }
@@ -136,11 +166,7 @@ impl EmlExporter {
     fn generate_filename(msg: &EmailMessage) -> String {
         let date_prefix = msg.date.format("%Y%m%d_%H%M%S").to_string();
         let safe_subj = Self::sanitize_segment(&msg.subject);
-        let truncated = if safe_subj.len() > 60 {
-            &safe_subj[..60]
-        } else {
-            &safe_subj
-        };
+        let truncated: String = safe_subj.chars().take(50).collect();
         format!("{}_{}.eml", date_prefix, truncated)
     }
 
@@ -220,5 +246,34 @@ mod tests {
 
         assert_eq!(p1.parent(), p2.parent());
         assert!(p3.to_str().unwrap().contains("__part2"));
+    }
+
+    #[test]
+    fn test_eml_sanitize_segment_and_device_names() {
+        assert_eq!(EmlExporter::sanitize_segment(".."), "Folder");
+        assert_eq!(EmlExporter::sanitize_segment("."), "Folder");
+        assert_eq!(EmlExporter::sanitize_segment(""), "Folder");
+        assert_eq!(EmlExporter::sanitize_segment("..."), "Folder");
+        assert_eq!(EmlExporter::sanitize_segment("CON"), "_CON");
+        assert_eq!(EmlExporter::sanitize_segment("prn.txt"), "_prn.txt");
+        assert_eq!(EmlExporter::sanitize_segment("NUL"), "_NUL");
+        assert_eq!(EmlExporter::sanitize_segment("Normal Folder"), "Normal Folder");
+        assert_eq!(
+            EmlExporter::sanitize_segment("Folder/With\\Slashes:And*Chars?"),
+            "Folder_With_Slashes_And_Chars_"
+        );
+    }
+
+    #[test]
+    fn test_eml_generate_filename_multibyte_utf8() {
+        let dir = tempdir().unwrap();
+        let mut exporter = EmlExporter::new(dir.path(), EmlLayout::Flat).with_naming(EmlNaming::Subject);
+        // Multibyte string that would have previously panicked if sliced at byte 60:
+        let msg = make_test_msg(
+            "こんにちは世界！これは非常に長い件名のメールです。🦀🚀✨マルチバイトテスト",
+            &["Inbox"],
+        );
+        let path = exporter.export_message(&msg).unwrap();
+        assert!(path.exists());
     }
 }

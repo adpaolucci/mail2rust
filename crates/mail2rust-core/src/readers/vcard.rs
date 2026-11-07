@@ -15,9 +15,12 @@ impl VcardReader {
         // Handle line unfolding (lines beginning with space or tab continue previous line)
         let mut unfolded: Vec<String> = Vec::new();
         for line in content.lines() {
-            if (line.starts_with(' ') || line.starts_with('\t')) && !unfolded.is_empty() {
-                let last = unfolded.last_mut().unwrap();
-                last.push_str(line.trim_start());
+            if line.starts_with(' ') || line.starts_with('\t') {
+                if let Some(last) = unfolded.last_mut() {
+                    last.push_str(line.trim_start());
+                } else {
+                    unfolded.push(line.trim_start().to_string());
+                }
             } else {
                 unfolded.push(line.to_string());
             }

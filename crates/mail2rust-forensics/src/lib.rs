@@ -3,7 +3,7 @@ use mail2rust_core::EmailMessage;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::File;
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::Path;
 use tracing::info;
 
@@ -108,31 +108,35 @@ impl ForensicEngine {
     }
 
     pub fn export_manifest_csv(messages: &[EmailMessage], path: &Path) -> io::Result<()> {
-        let mut file = File::create(path)?;
+        let file = File::create(path)?;
+        let mut file = BufWriter::new(file);
         writeln!(
             file,
             "bates_number,message_id,subject,sender,date,sha256,md5,size_bytes,folder_path,legal_hold"
         )?;
 
         for m in messages {
-            let bates = m.bates_number.as_deref().unwrap_or("");
+            let bates = m.bates_number.as_deref().unwrap_or("").replace('"', "\"\"");
+            let safe_msgid = m.message_id.replace('"', "\"\"");
             let safe_subj = m.subject.replace('"', "\"\"");
-            let folder = m.folder_path.join("/");
+            let safe_sender = m.from.email.replace('"', "\"\"");
+            let safe_folder = m.folder_path.join("/").replace('"', "\"\"");
             writeln!(
                 file,
                 "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",{},\"{}\",{}",
                 bates,
-                m.message_id,
+                safe_msgid,
                 safe_subj,
-                m.from.email,
+                safe_sender,
                 m.date.to_rfc3339(),
                 m.sha256,
                 m.md5,
                 m.size_bytes,
-                folder,
+                safe_folder,
                 m.legal_hold
             )?;
         }
+        file.flush()?;
 
         info!(path = ?path, count = messages.len(), "Exported CSV forensic manifest");
         Ok(())
@@ -216,5 +220,16 @@ mod tests {
         assert_eq!(manifest.total_items, 2);
         assert_eq!(manifest.total_size_bytes, 300);
         assert!(!manifest.root_sha256.is_empty());
+
+        // Test CSV manifest output with escaped quotes
+        messages[0].subject = "Subject with \"quotes\" and, commas".to_string();
+        let temp_csv = std::env::temp_dir().join(format!(
+            "test_manifest_{}.csv",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        ForensicEngine::export_manifest_csv(&messages, &temp_csv).expect("CSV export failed");
+        let content = std::fs::read_to_string(&temp_csv).expect("Failed to read CSV");
+        assert!(content.contains("\"Subject with \"\"quotes\"\" and, commas\""));
+        let _ = std::fs::remove_file(temp_csv);
     }
 }

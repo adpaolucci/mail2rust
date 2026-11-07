@@ -164,17 +164,15 @@ impl ImapClient {
 
         let address = format!("{}:{}", self.config.host, self.config.port);
         let timeout = std::time::Duration::from_secs(15);
-        let tcp_stream = TcpStream::connect_timeout(
-            &address
-                .parse()
-                .or_else(|_| {
-                    use std::net::ToSocketAddrs;
-                    address.to_socket_addrs().map(|mut addrs| addrs.next().unwrap())
-                })
-                .map_err(|e| ImapClientError::ConnectionFailed(format!("Failed to resolve {}: {}", address, e)))?,
-            timeout,
-        )
-        .map_err(|e| ImapClientError::ConnectionFailed(format!("Failed to connect to {}: {}", address, e)))?;
+        use std::net::ToSocketAddrs;
+        let socket_addr = address
+            .to_socket_addrs()
+            .map_err(|e| ImapClientError::ConnectionFailed(format!("Failed to resolve {}: {}", address, e)))?
+            .next()
+            .ok_or_else(|| ImapClientError::ConnectionFailed(format!("No IP addresses resolved for {}", address)))?;
+
+        let tcp_stream = TcpStream::connect_timeout(&socket_addr, timeout)
+            .map_err(|e| ImapClientError::ConnectionFailed(format!("Failed to connect to {}: {}", address, e)))?;
 
         tcp_stream
             .set_read_timeout(Some(std::time::Duration::from_secs(30)))

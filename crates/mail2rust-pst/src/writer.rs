@@ -184,7 +184,12 @@ impl<W: Write + Seek> PstWriter<W> {
             nbt_buf.write_u32::<LittleEndian>(*parent_nid)?;
         }
         let nbt_bid = self.write_block(nbt_buf)?;
-        let nbt_offset = self.bbt_entries.iter().find(|(b, _, _)| *b == nbt_bid).unwrap().1;
+        let nbt_offset = self
+            .bbt_entries
+            .iter()
+            .find(|(b, _, _)| *b == nbt_bid)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "NBT root block offset not found"))?
+            .1;
 
         // 3. Write BBT (Block B-Tree root block)
         let mut bbt_buf = Vec::new();
@@ -195,7 +200,12 @@ impl<W: Write + Seek> PstWriter<W> {
             bbt_buf.write_u32::<LittleEndian>(1)?; // ref count
         }
         let bbt_bid = self.write_block(bbt_buf)?;
-        let bbt_offset = self.bbt_entries.iter().find(|(b, _, _)| *b == bbt_bid).unwrap().1;
+        let bbt_offset = self
+            .bbt_entries
+            .iter()
+            .find(|(b, _, _)| *b == bbt_bid)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "BBT root block offset not found"))?
+            .1;
 
         // 4. Assemble and write the 512-byte MS-PST Header
         let mut header = [0u8; PST_HEADER_SIZE];

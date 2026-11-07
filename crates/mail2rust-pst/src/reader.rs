@@ -222,8 +222,21 @@ impl<R: Read + Seek> PstReader<R> {
     }
 
     fn carve_messages_from_stream(&mut self) -> io::Result<Vec<EmailMessage>> {
+        let stream_len = self.reader.seek(SeekFrom::End(0))?;
         self.reader.seek(SeekFrom::Start(0))?;
-        let mut data = Vec::new();
+
+        // Guard against unbounded memory allocation on massive containers
+        const MAX_CARVE_BYTES: u64 = 256 * 1024 * 1024; // 256 MB threshold
+        if stream_len > MAX_CARVE_BYTES {
+            info!(
+                size = stream_len,
+                threshold = MAX_CARVE_BYTES,
+                "Container size exceeds 256MB in-memory carving threshold; skipping deep block carving"
+            );
+            return Ok(Vec::new());
+        }
+
+        let mut data = Vec::with_capacity(stream_len as usize);
         self.reader.read_to_end(&mut data)?;
 
         let mut recovered = Vec::new();
