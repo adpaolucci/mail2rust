@@ -27,3 +27,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added ASCII validation and length guards to `parse_cli_datetime` to eliminate non-char-boundary slicing.
   - Added `f64` NaN/infinite and `usize::MAX` boundary checks to `parse_size_bytes`.
 - **Comprehensive Test Suite**: Unit, integration, and fuzz tests with 100% pass rate.
+- **Cross-Platform Linux / Ubuntu CI Fix**: Configured `x11` and `wayland` features on `eframe` and added Linux system graphics/windowing library dependencies (`libx11-dev`, `libwayland-dev`, `libgl1-mesa-dev`, `libxkbcommon-dev`, etc.) to the GitHub Actions workflow to ensure Ubuntu runners build cleanly alongside Windows and macOS.
