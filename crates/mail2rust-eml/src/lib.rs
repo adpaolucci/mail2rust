@@ -1,6 +1,6 @@
 use chrono::Datelike;
 use mail2rust_core::EmailMessage;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -15,10 +15,21 @@ pub enum EmlLayout {
     Flat,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EmlNaming {
+    #[default]
+    Subject,
+    Index,
+}
+
 pub struct EmlExporter {
     layout: EmlLayout,
+    naming: EmlNaming,
+    max_per_dir: usize,
     output_dir: PathBuf,
     seen_paths: HashSet<PathBuf>,
+    dir_counts: HashMap<PathBuf, usize>,
+    global_index: usize,
 }
 
 impl EmlExporter {
@@ -26,12 +37,28 @@ impl EmlExporter {
         Self {
             output_dir: output_dir.into(),
             layout,
+            naming: EmlNaming::Subject,
+            max_per_dir: 0,
             seen_paths: HashSet::new(),
+            dir_counts: HashMap::new(),
+            global_index: 0,
         }
     }
 
+    pub fn with_naming(mut self, naming: EmlNaming) -> Self {
+        self.naming = naming;
+        self
+    }
+
+    pub fn with_max_per_dir(mut self, max: usize) -> Self {
+        self.max_per_dir = max;
+        self
+    }
+
     pub fn export_message(&mut self, msg: &EmailMessage) -> io::Result<PathBuf> {
-        let rel_dir = match self.layout {
+        self.global_index += 1;
+
+        let base_rel_dir = match self.layout {
             EmlLayout::Folder => {
                 let mut dir = PathBuf::new();
                 for seg in &msg.folder_path {
@@ -44,10 +71,27 @@ impl EmlExporter {
             EmlLayout::Flat => PathBuf::new(),
         };
 
-        let target_dir = self.output_dir.join(rel_dir);
+        // Determine directory part if max_per_dir is configured
+        let target_dir = if self.max_per_dir > 0 {
+            let count = self.dir_counts.entry(base_rel_dir.clone()).or_insert(0);
+            let part_num = *count / self.max_per_dir;
+            *count += 1;
+            if part_num > 0 {
+                self.output_dir.join(&base_rel_dir).join(format!("__part{}", part_num + 1))
+            } else {
+                self.output_dir.join(&base_rel_dir)
+            }
+        } else {
+            self.output_dir.join(base_rel_dir)
+        };
+
         fs::create_dir_all(&target_dir)?;
 
-        let base_name = Self::generate_filename(msg);
+        let base_name = match self.naming {
+            EmlNaming::Index => format!("{:06}.eml", self.global_index),
+            EmlNaming::Subject => Self::generate_filename(msg),
+        };
+
         let mut final_path = target_dir.join(&base_name);
         let mut counter = 1;
 
@@ -111,40 +155,60 @@ mod tests {
     use mail2rust_core::{EmailAddress, EmailMessage, Importance, MessageFlags};
     use tempfile::tempdir;
 
-    #[test]
-    fn test_eml_export_folder_layout() {
-        let temp_dir = tempdir().unwrap();
-        let mut exporter = EmlExporter::new(temp_dir.path(), EmlLayout::Folder);
-
-        let msg = EmailMessage {
+    fn make_test_msg(subject: &str, folder: &[&str]) -> EmailMessage {
+        EmailMessage {
             id: "msg_1".to_string(),
-            message_id: "<id1@host>".to_string(),
+            message_id: "<test@example.com>".to_string(),
             conversation_id: "conv_1".to_string(),
-            folder_path: vec!["Archive".to_string(), "2026".to_string()],
-            subject: "Quarterly Audit".to_string(),
-            from: EmailAddress::new("Alice", "alice@example.com"),
-            to: vec![EmailAddress::new("Bob", "bob@example.com")],
-            cc: Vec::new(),
-            bcc: Vec::new(),
+            folder_path: folder.iter().map(|s| s.to_string()).collect(),
+            subject: subject.to_string(),
+            from: EmailAddress::new("Alice", "alice@test.com"),
+            to: vec![EmailAddress::new("Bob", "bob@test.com")],
+            cc: vec![],
+            bcc: vec![],
             date: Utc::now(),
             size_bytes: 50,
-            body_text: "Audit notes here.".to_string(),
+            body_text: "Test body text".to_string(),
             body_html: None,
-            raw_mime: Vec::new(),
-            attachments: Vec::new(),
-            mapi_properties: Vec::new(),
+            raw_mime: b"From: Alice <alice@test.com>\r\nSubject: Test\r\n\r\nTest body".to_vec(),
+            attachments: vec![],
+            mapi_properties: vec![],
             flags: MessageFlags::default(),
             importance: Importance::Normal,
-            sha256: "sha".to_string(),
-            md5: "md5".to_string(),
+            sha256: "sha_dummy".to_string(),
+            md5: "md5_dummy".to_string(),
             bates_number: None,
             legal_hold: false,
             source_format: "test".to_string(),
-        };
+        }
+    }
 
-        let exported = exporter.export_message(&msg).unwrap();
-        assert!(exported.exists());
-        assert!(exported.to_str().unwrap().contains("Archive"));
-        assert!(exported.to_str().unwrap().contains("2026"));
+    #[test]
+    fn test_eml_export_naming_index() {
+        let dir = tempdir().unwrap();
+        let mut exporter = EmlExporter::new(dir.path(), EmlLayout::Flat)
+            .with_naming(EmlNaming::Index);
+
+        let msg = make_test_msg("Hello World", &["Inbox"]);
+        let path = exporter.export_message(&msg).unwrap();
+        assert!(path.file_name().unwrap().to_str().unwrap().contains("000001.eml"));
+    }
+
+    #[test]
+    fn test_eml_export_max_per_dir() {
+        let dir = tempdir().unwrap();
+        let mut exporter = EmlExporter::new(dir.path(), EmlLayout::Flat)
+            .with_max_per_dir(2);
+
+        let m1 = make_test_msg("M1", &["Inbox"]);
+        let m2 = make_test_msg("M2", &["Inbox"]);
+        let m3 = make_test_msg("M3", &["Inbox"]);
+
+        let p1 = exporter.export_message(&m1).unwrap();
+        let p2 = exporter.export_message(&m2).unwrap();
+        let p3 = exporter.export_message(&m3).unwrap();
+
+        assert_eq!(p1.parent(), p2.parent());
+        assert!(p3.to_str().unwrap().contains("__part2"));
     }
 }

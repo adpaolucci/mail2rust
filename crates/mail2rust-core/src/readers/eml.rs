@@ -41,9 +41,26 @@ impl EmlReader {
             .map(|s| Self::parse_address_list(&Self::decode_rfc2047(s)))
             .unwrap_or_default();
 
+        let mut final_folder = folder_path;
+
         let date = headers.get("date")
             .and_then(|d| DateTime::parse_from_rfc2822(d.trim()).ok())
             .map(|dt| dt.with_timezone(&Utc))
+            .or_else(|| {
+                headers.get("received").and_then(|rec| {
+                    if let Some(semi_pos) = rec.rfind(';') {
+                        let date_part = rec[semi_pos + 1..].trim();
+                        let clean_date = if let Some(paren_pos) = date_part.find('(') {
+                            date_part[..paren_pos].trim()
+                        } else {
+                            date_part
+                        };
+                        DateTime::parse_from_rfc2822(clean_date).ok().map(|dt| dt.with_timezone(&Utc))
+                    } else {
+                        None
+                    }
+                })
+            })
             .unwrap_or_else(Utc::now);
 
         let importance = match headers.get("importance").map(|s| s.to_lowercase()).as_deref() {
@@ -75,6 +92,34 @@ impl EmlReader {
             }
         }
 
+        // Support Google Takeout X-Gmail-Labels
+        if let Some(gmail_labels) = headers.get("x-gmail-labels") {
+            let (g_folder, g_flags) = Self::parse_gmail_labels(gmail_labels);
+            if let Some(gf) = g_folder {
+                if final_folder.is_empty()
+                    || final_folder == vec!["Inbox".to_string()]
+                    || final_folder == vec!["Import".to_string()]
+                    || final_folder == vec!["Archive".to_string()]
+                {
+                    final_folder = gf;
+                }
+            }
+            if !g_flags.read {
+                flags.read = false;
+            } else {
+                flags.read = true;
+            }
+            if g_flags.flagged {
+                flags.flagged = true;
+            }
+            if g_flags.deleted {
+                flags.deleted = true;
+            }
+            if g_flags.draft {
+                flags.draft = true;
+            }
+        }
+
         let content_type = headers.get("content-type").cloned().unwrap_or_default();
         let transfer_encoding = headers.get("content-transfer-encoding").cloned().unwrap_or_default();
 
@@ -101,7 +146,7 @@ impl EmlReader {
             id,
             message_id,
             conversation_id,
-            folder_path,
+            folder_path: final_folder,
             subject,
             from,
             to,
@@ -402,6 +447,69 @@ impl EmlReader {
         }
 
         parts
+    }
+
+    pub fn parse_gmail_labels(header_val: &str) -> (Option<Vec<String>>, MessageFlags) {
+        let mut flags = MessageFlags::default();
+        let mut user_folder = None;
+
+        let parts: Vec<&str> = header_val
+            .split(',')
+            .map(|s| s.trim().trim_matches('"'))
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let has_unread = parts.iter().any(|&p| p.eq_ignore_ascii_case("unread"));
+        let has_starred = parts.iter().any(|&p| p.eq_ignore_ascii_case("starred"));
+        let has_trash = parts.iter().any(|&p| p.eq_ignore_ascii_case("trash") || p.eq_ignore_ascii_case("bin"));
+        let has_sent = parts.iter().any(|&p| p.eq_ignore_ascii_case("sent"));
+        let has_draft = parts.iter().any(|&p| p.eq_ignore_ascii_case("draft") || p.eq_ignore_ascii_case("drafts"));
+
+        flags.read = !has_unread;
+        flags.flagged = has_starred;
+        flags.deleted = has_trash;
+        flags.draft = has_draft;
+
+        // Custom user labels e.g. "Work/Finance" or "Receipts"
+        for p in &parts {
+            let low = p.to_lowercase();
+            if low == "inbox"
+                || low == "important"
+                || low == "starred"
+                || low == "unread"
+                || low == "trash"
+                || low == "bin"
+                || low == "sent"
+                || low == "draft"
+                || low == "drafts"
+                || low.starts_with("category ")
+                || low == "chats"
+                || low == "opened"
+            {
+                continue;
+            }
+            let segments: Vec<String> = p
+                .split('/')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !segments.is_empty() {
+                user_folder = Some(segments);
+                break;
+            }
+        }
+
+        if user_folder.is_none() {
+            if has_sent {
+                user_folder = Some(vec!["Sent Items".to_string()]);
+            } else if has_trash {
+                user_folder = Some(vec!["Deleted Items".to_string()]);
+            } else if has_draft {
+                user_folder = Some(vec!["Drafts".to_string()]);
+            }
+        }
+
+        (user_folder, flags)
     }
 
     fn decode_quoted_printable_bytes(bytes: &[u8]) -> Vec<u8> {

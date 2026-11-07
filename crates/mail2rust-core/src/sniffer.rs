@@ -17,6 +17,8 @@ pub enum MailboxFormat {
     Mh,
     Mmdf,
     Babyl,
+    Zip,
+    Gz,
     Unknown,
 }
 
@@ -38,6 +40,8 @@ impl MailboxFormat {
             Self::Mh => "MH / Sylpheed / Claws Mail",
             Self::Mmdf => "MMDF Mailbox",
             Self::Babyl => "Emacs Babyl",
+            Self::Zip => "Compressed Archive (ZIP / Takeout)",
+            Self::Gz => "Gzip Compressed Stream (GZ)",
             Self::Unknown => "Unknown / Unrecognized Format",
         }
     }
@@ -56,7 +60,7 @@ impl FormatSniffer {
             if path.join(".mh_sequences").is_file() {
                 return MailboxFormat::Mh;
             }
-            return MailboxFormat::Maildir;
+            return MailboxFormat::Eml;
         }
 
         let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
@@ -69,6 +73,13 @@ impl FormatSniffer {
     }
 
     pub fn sniff_bytes(bytes: &[u8], ext_hint: &str) -> MailboxFormat {
+        if bytes.len() >= 2 {
+            // GZ magic 0x1F 0x8B
+            if bytes[0] == 0x1F && bytes[1] == 0x8B {
+                return MailboxFormat::Gz;
+            }
+        }
+
         if bytes.len() >= 4 {
             // PST / OST
             if bytes.len() >= 4 && (&bytes[0..4] == b"!BDN" || &bytes[0..4] == &[0x4E, 0x44, 0x42, 0x4E]) {
@@ -92,6 +103,13 @@ impl FormatSniffer {
             // MMDF
             if &bytes[0..4] == &[0x01, 0x01, 0x01, 0x01] {
                 return MailboxFormat::Mmdf;
+            }
+            // ZIP magic PK\x03\x04
+            if &bytes[0..4] == &[0x50, 0x4B, 0x03, 0x04] {
+                if ext_hint == "olm" {
+                    return MailboxFormat::Olm;
+                }
+                return MailboxFormat::Zip;
             }
         }
 
@@ -119,13 +137,6 @@ impl FormatSniffer {
             }
         }
 
-        // Check for OLM: Zip containing com.microsoft
-        if bytes.len() >= 4 && &bytes[0..4] == &[0x50, 0x4B, 0x03, 0x04] {
-            if ext_hint == "olm" {
-                return MailboxFormat::Olm;
-            }
-        }
-
         Self::from_extension(ext_hint)
     }
 
@@ -142,6 +153,8 @@ impl FormatSniffer {
             "nsf" => MailboxFormat::Nsf,
             "tbb" => MailboxFormat::Tbb,
             "mbs" => MailboxFormat::Mbs,
+            "zip" => MailboxFormat::Zip,
+            "gz" | "tgz" => MailboxFormat::Gz,
             _ => MailboxFormat::Unknown,
         }
     }

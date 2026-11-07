@@ -81,8 +81,24 @@ pub struct MboxFileExporter;
 
 impl MboxFileExporter {
     pub fn export_to_file(messages: &[EmailMessage], file_path: &Path, compress_gzip: bool) -> io::Result<usize> {
-        info!(path = ?file_path, compress = compress_gzip, items = messages.len(), "Writing MBOX file");
-        let file = File::create(file_path)?;
+        Self::export_to_file_options(messages, file_path, compress_gzip, false)
+    }
+
+    pub fn export_to_file_options(
+        messages: &[EmailMessage],
+        file_path: &Path,
+        compress_gzip: bool,
+        append: bool,
+    ) -> io::Result<usize> {
+        info!(path = ?file_path, compress = compress_gzip, append = append, items = messages.len(), "Writing MBOX file");
+        let file = if append && !compress_gzip {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(file_path)?
+        } else {
+            File::create(file_path)?
+        };
         let buf = BufWriter::new(file);
 
         if compress_gzip {

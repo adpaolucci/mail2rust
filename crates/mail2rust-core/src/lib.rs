@@ -5,15 +5,16 @@ pub mod sniffer;
 
 pub use logging::init_logging;
 pub use models::{Attachment, EmailAddress, EmailMessage, Importance, MailboxFolder, MapiProperty, MessageFlags};
+pub use readers::archive::ArchiveReader;
+pub use readers::babyl::BabylReader;
 pub use readers::eml::EmlReader;
 pub use readers::emlx::EmlxReader;
 pub use readers::maildir::MaildirReader;
 pub use readers::mbox::MboxReader;
-pub use readers::msg::MsgReader;
-pub use readers::olm::OlmReader;
 pub use readers::mh::MhReader;
 pub use readers::mmdf::MmdfReader;
-pub use readers::babyl::BabylReader;
+pub use readers::msg::MsgReader;
+pub use readers::olm::OlmReader;
 pub use sniffer::{FormatSniffer, MailboxFormat};
 
 #[cfg(test)]
@@ -88,5 +89,35 @@ Subject: Message 2\r\n\
         assert_eq!(FormatSniffer::sniff_bytes(&[0xCF, 0xAD, 0x12, 0xFE], "dbx"), MailboxFormat::Dbx);
         assert_eq!(FormatSniffer::sniff_bytes(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1], "msg"), MailboxFormat::Msg);
         assert_eq!(FormatSniffer::sniff_bytes(b"From user@host", "mbox"), MailboxFormat::Mbox);
+        assert_eq!(FormatSniffer::sniff_bytes(&[0x50, 0x4B, 0x03, 0x04], "zip"), MailboxFormat::Zip);
+        assert_eq!(FormatSniffer::sniff_bytes(&[0x1F, 0x8B], "gz"), MailboxFormat::Gz);
+    }
+
+    #[test]
+    fn test_gmail_labels_routing() {
+        let (folder, flags) = EmlReader::parse_gmail_labels("Inbox,Important,Work/Finance,Starred");
+        assert_eq!(folder, Some(vec!["Work".to_string(), "Finance".to_string()]));
+        assert!(flags.read);
+        assert!(flags.flagged);
+        assert!(!flags.deleted);
+
+        let (sent_folder, _) = EmlReader::parse_gmail_labels("Sent,Important");
+        assert_eq!(sent_folder, Some(vec!["Sent Items".to_string()]));
+
+        let (trash_folder, trash_flags) = EmlReader::parse_gmail_labels("Trash");
+        assert_eq!(trash_folder, Some(vec!["Deleted Items".to_string()]));
+        assert!(trash_flags.deleted);
+    }
+
+    #[test]
+    fn test_received_header_date_fallback() {
+        let raw = b"From: Alice <alice@example.com>\r\n\
+To: Bob <bob@example.com>\r\n\
+Subject: No Date Header\r\n\
+Received: from mail.example.com; Thu, 15 Aug 2024 16:45:00 +0000 (UTC)\r\n\
+\r\n\
+Fallback date test";
+        let msg = EmlReader::parse(raw, vec!["Inbox".to_string()]).expect("Parse should succeed");
+        assert_eq!(msg.date.format("%Y-%m-%d").to_string(), "2024-08-15");
     }
 }

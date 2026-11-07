@@ -1,10 +1,15 @@
+use chrono::Datelike;
 use clap::{Parser, Subcommand, ValueEnum};
 use mail2rust_core::{
-    init_logging, BabylReader, EmailMessage, EmlReader, EmlxReader, FormatSniffer,
-    MailboxFormat, MaildirReader, MboxReader, MhReader, MmdfReader, MsgReader, OlmReader,
+    init_logging, ArchiveReader, BabylReader, EmailMessage, EmlReader, EmlxReader,
+    FormatSniffer, MailboxFormat, MaildirReader, MboxReader, MhReader, MmdfReader, MsgReader,
+    OlmReader,
 };
-use mail2rust_eml::{EmlExporter, EmlLayout};
-use mail2rust_filter::{DedupEngine, DedupStrategy, SplitConfig, VolumeSplitter};
+use mail2rust_eml::{EmlExporter, EmlLayout, EmlNaming};
+use mail2rust_filter::{
+    parse_cli_datetime, parse_size_bytes, DateFilter, DedupEngine, DedupStrategy, FolderFilter,
+    SplitConfig, SplitMode, VolumeSplitter,
+};
 use mail2rust_forensics::{BatesRange, ForensicEngine};
 use mail2rust_mbox::MboxFileExporter;
 use mail2rust_pst::{PstValidator, PstWriter};
@@ -28,8 +33,11 @@ struct Cli {
     #[arg(long, global = true)]
     log_file: Option<PathBuf>,
 
+    #[arg(long, global = true, alias = "audit-manifest")]
+    audit_log: Option<PathBuf>,
+
     #[arg(long, global = true)]
-    audit_manifest: Option<PathBuf>,
+    error_log: Option<PathBuf>,
 
     #[arg(long, global = true)]
     bates_prefix: Option<String>,
@@ -40,14 +48,37 @@ struct Cli {
     #[arg(long, global = true)]
     resume: Option<PathBuf>,
 
-    #[arg(long, global = true)]
-    checkpoint_out: Option<PathBuf>,
+    #[arg(long, global = true, alias = "checkpoint-out")]
+    state_file: Option<PathBuf>,
 
     #[arg(long, global = true)]
     dedup: Option<CliDedupStrategy>,
 
     #[arg(long, global = true)]
     dry_run: bool,
+
+    // Date filtering flags
+    #[arg(long, global = true, alias = "after")]
+    since: Option<String>,
+
+    #[arg(long, global = true, alias = "before")]
+    until: Option<String>,
+
+    #[arg(long, global = true)]
+    start_year: Option<i32>,
+
+    #[arg(long, global = true)]
+    end_year: Option<i32>,
+
+    // Folder filtering flags
+    #[arg(long, global = true)]
+    include_folder: Vec<String>,
+
+    #[arg(long, global = true)]
+    exclude_folder: Vec<String>,
+
+    #[arg(long, global = true)]
+    include_deleted: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -66,6 +97,16 @@ enum Commands {
     Convert {
         source: PathBuf,
         destination: PathBuf,
+        #[arg(long, alias = "split-pst")]
+        max_pst_size: Option<String>,
+        #[arg(long)]
+        split_by: Option<String>,
+        #[arg(long)]
+        splits: Option<usize>,
+        #[arg(long)]
+        pst_root: Option<String>,
+        #[arg(long)]
+        flatten: bool,
     },
     /// Convert any source into Microsoft Outlook PST (pure Rust, zero Outlook required)
     Pst {
@@ -73,6 +114,18 @@ enum Commands {
         destination: PathBuf,
         #[arg(long, default_value = "20")]
         max_pst_gb: usize,
+        #[arg(long, alias = "split-pst")]
+        max_pst_size: Option<String>,
+        #[arg(long)]
+        split_by: Option<String>,
+        #[arg(long)]
+        splits: Option<usize>,
+        #[arg(long)]
+        pst_root: Option<String>,
+        #[arg(long)]
+        flatten: bool,
+        #[arg(long)]
+        overwrite_pst: bool,
         #[arg(long, default_value = "true")]
         cluster_threads: bool,
         #[arg(long, default_value = "true")]
@@ -84,6 +137,10 @@ enum Commands {
         destination: PathBuf,
         #[arg(long, default_value = "folder")]
         layout: String,
+        #[arg(long, default_value = "subject")]
+        naming: String,
+        #[arg(long, default_value = "0")]
+        max_per_dir: usize,
     },
     /// Convert any source into standard mboxrd MBOX file
     Mbox {
@@ -91,6 +148,10 @@ enum Commands {
         destination: PathBuf,
         #[arg(long)]
         compress: bool,
+        #[arg(long)]
+        append: bool,
+        #[arg(long)]
+        split_size: Option<String>,
     },
     /// Split a mailbox into multi-volume parts while preserving email threads
     Split {
@@ -98,6 +159,12 @@ enum Commands {
         destination_dir: PathBuf,
         #[arg(long, default_value = "20000")]
         max_volume_mb: usize,
+        #[arg(long, alias = "split-size")]
+        split_size: Option<String>,
+        #[arg(long)]
+        split_by: Option<String>,
+        #[arg(long)]
+        splits: Option<usize>,
         #[arg(long, default_value = "true")]
         cluster_threads: bool,
         #[arg(long, default_value = "pst")]
@@ -164,46 +231,126 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        Commands::Convert { source, destination } => {
+        Commands::Convert {
+            source,
+            destination,
+            max_pst_size,
+            split_by,
+            splits,
+            pst_root,
+            flatten,
+        } => {
             let dest_ext = destination.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
             let dest_is_pst = dest_ext == "pst";
             let dest_is_mbox = dest_ext == "mbox" || dest_ext == "gz";
 
             if dest_is_pst {
-                run_pst_conversion(&cli, source, destination, 20, true, true)?;
+                let max_gb = if let Some(ref sz) = max_pst_size {
+                    parse_size_bytes(sz).unwrap_or(20 * 1024 * 1024 * 1024) / (1024 * 1024 * 1024)
+                } else {
+                    20
+                };
+                run_pst_conversion(
+                    &cli,
+                    source,
+                    destination,
+                    max_gb,
+                    split_by.as_deref(),
+                    *splits,
+                    pst_root.as_deref(),
+                    *flatten,
+                    true,
+                    true,
+                )?;
             } else if dest_is_mbox {
                 let compress = dest_ext == "gz";
-                run_mbox_conversion(&cli, source, destination, compress)?;
+                run_mbox_conversion(&cli, source, destination, compress, false)?;
             } else {
-                run_eml_conversion(&cli, source, destination, "folder")?;
+                run_eml_conversion(&cli, source, destination, "folder", "subject", 0)?;
             }
         }
 
-        Commands::Pst { source, destination, max_pst_gb, cluster_threads, compress } => {
-            run_pst_conversion(&cli, source, destination, *max_pst_gb, *cluster_threads, *compress)?;
+        Commands::Pst {
+            source,
+            destination,
+            max_pst_gb,
+            max_pst_size,
+            split_by,
+            splits,
+            pst_root,
+            flatten,
+            overwrite_pst: _,
+            cluster_threads,
+            compress,
+        } => {
+            let effective_gb = if let Some(ref sz) = max_pst_size {
+                parse_size_bytes(sz).unwrap_or(max_pst_gb * 1024 * 1024 * 1024) / (1024 * 1024 * 1024)
+            } else {
+                *max_pst_gb
+            };
+            run_pst_conversion(
+                &cli,
+                source,
+                destination,
+                effective_gb,
+                split_by.as_deref(),
+                *splits,
+                pst_root.as_deref(),
+                *flatten,
+                *cluster_threads,
+                *compress,
+            )?;
         }
 
-        Commands::Eml { source, destination, layout } => {
-            run_eml_conversion(&cli, source, destination, layout)?;
+        Commands::Eml { source, destination, layout, naming, max_per_dir } => {
+            run_eml_conversion(&cli, source, destination, layout, naming, *max_per_dir)?;
         }
 
-        Commands::Mbox { source, destination, compress } => {
-            run_mbox_conversion(&cli, source, destination, *compress)?;
+        Commands::Mbox { source, destination, compress, append, split_size: _ } => {
+            run_mbox_conversion(&cli, source, destination, *compress, *append)?;
         }
 
-        Commands::Split { source, destination_dir, max_volume_mb, cluster_threads, target_ext } => {
+        Commands::Split {
+            source,
+            destination_dir,
+            max_volume_mb,
+            split_size,
+            split_by,
+            splits,
+            cluster_threads,
+            target_ext,
+        } => {
             info!(source = ?source, dest = ?destination_dir, "Starting volume auto-split");
             let mut messages = ingest_source(source)?;
             apply_preprocessing(&cli, &mut messages)?;
 
+            if cli.dry_run {
+                perform_dry_run(&messages, source);
+                return Ok(());
+            }
+
+            let max_bytes = if let Some(ref sz) = split_size {
+                parse_size_bytes(sz).unwrap_or(max_volume_mb * 1024 * 1024)
+            } else {
+                max_volume_mb * 1024 * 1024
+            };
+
+            let split_mode = if let Some("year") = split_by.as_deref() {
+                SplitMode::Year
+            } else if let Some(n) = splits {
+                SplitMode::Even(*n)
+            } else {
+                SplitMode::Size
+            };
+
             let cfg = SplitConfig {
-                max_volume_bytes: max_volume_mb * 1024 * 1024,
+                max_volume_bytes: max_bytes,
                 cluster_threads: *cluster_threads,
                 file_prefix: "Volume".to_string(),
                 target_ext: target_ext.clone(),
             };
 
-            let volumes = VolumeSplitter::split(&messages, &cfg);
+            let volumes = VolumeSplitter::split_with_mode(&messages, &cfg, &split_mode);
             std::fs::create_dir_all(destination_dir)?;
 
             for vol in &volumes {
@@ -268,6 +415,10 @@ fn run_pst_conversion(
     source: &Path,
     destination: &Path,
     max_pst_gb: usize,
+    split_by: Option<&str>,
+    splits: Option<usize>,
+    pst_root: Option<&str>,
+    flatten: bool,
     cluster_threads: bool,
     compress: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -275,11 +426,26 @@ fn run_pst_conversion(
     let mut messages = ingest_source(source)?;
     apply_preprocessing(cli, &mut messages)?;
 
+    if cli.dry_run {
+        perform_dry_run(&messages, source);
+        return Ok(());
+    }
+
     let max_bytes = max_pst_gb * 1024 * 1024 * 1024;
     let total_bytes: usize = messages.iter().map(|m| m.size_bytes).sum();
 
-    if total_bytes > max_bytes {
-        info!("Mailbox size ({} bytes) exceeds single PST limit ({} bytes), auto-splitting", total_bytes, max_bytes);
+    let split_mode = if let Some("year") = split_by {
+        Some(SplitMode::Year)
+    } else if let Some(n) = splits {
+        Some(SplitMode::Even(n))
+    } else if total_bytes > max_bytes {
+        Some(SplitMode::Size)
+    } else {
+        None
+    };
+
+    if let Some(mode) = split_mode {
+        info!("Splitting PST export using mode: {:?}", mode);
         let prefix = destination.file_stem().and_then(|s| s.to_str()).unwrap_or("Archive");
         let parent_dir = destination.parent().unwrap_or_else(|| Path::new("."));
         let cfg = SplitConfig {
@@ -288,14 +454,14 @@ fn run_pst_conversion(
             file_prefix: prefix.to_string(),
             target_ext: "pst".to_string(),
         };
-        let volumes = VolumeSplitter::split(&messages, &cfg);
+        let volumes = VolumeSplitter::split_with_mode(&messages, &cfg, &mode);
         for vol in &volumes {
             let out_file = parent_dir.join(&vol.file_name);
-            write_single_pst(&vol.messages, &out_file, compress)?;
+            write_single_pst(&vol.messages, &out_file, compress, pst_root, flatten)?;
         }
         println!("Exported {} PST volumes successfully", volumes.len());
     } else {
-        write_single_pst(&messages, destination, compress)?;
+        write_single_pst(&messages, destination, compress, pst_root, flatten)?;
         println!("Exported 1 PST archive successfully ({} messages)", messages.len());
     }
 
@@ -303,7 +469,13 @@ fn run_pst_conversion(
     Ok(())
 }
 
-fn write_single_pst(messages: &[EmailMessage], destination: &Path, compress: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn write_single_pst(
+    messages: &[EmailMessage],
+    destination: &Path,
+    compress: bool,
+    pst_root: Option<&str>,
+    flatten: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = destination.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -311,17 +483,37 @@ fn write_single_pst(messages: &[EmailMessage], destination: &Path, compress: boo
     let mut writer = PstWriter::new(file, compress)?;
 
     let mut folder_map = std::collections::HashMap::new();
-    let root_inbox = writer.add_folder("Inbox", None)?;
-    folder_map.insert("Inbox".to_string(), root_inbox);
+
+    let root_nid = match pst_root {
+        Some(root_name) if !root_name.trim().is_empty() => {
+            let nid = writer.add_folder(root_name.trim(), None)?;
+            folder_map.insert(root_name.trim().to_string(), nid);
+            nid
+        }
+        _ => {
+            let nid = writer.add_folder("Inbox", None)?;
+            folder_map.insert("Inbox".to_string(), nid);
+            nid
+        }
+    };
+
+    let parent_folder_name = match pst_root {
+        Some(root_name) if !root_name.trim().is_empty() => Some(root_name.trim()),
+        _ => None,
+    };
 
     for m in messages {
-        let folder_name = m.folder_path.last().cloned().unwrap_or_else(|| "Inbox".to_string());
-        let fnid = match folder_map.get(&folder_name) {
-            Some(&nid) => nid,
-            None => {
-                let new_nid = writer.add_folder(&folder_name, None)?;
-                folder_map.insert(folder_name.clone(), new_nid);
-                new_nid
+        let fnid = if flatten {
+            root_nid
+        } else {
+            let folder_name = m.folder_path.last().cloned().unwrap_or_else(|| "Inbox".to_string());
+            match folder_map.get(&folder_name) {
+                Some(&nid) => nid,
+                None => {
+                    let new_nid = writer.add_folder(&folder_name, parent_folder_name)?;
+                    folder_map.insert(folder_name.clone(), new_nid);
+                    new_nid
+                }
             }
         };
         writer.add_message(m, fnid)?;
@@ -337,10 +529,17 @@ fn run_eml_conversion(
     source: &Path,
     destination: &Path,
     layout_str: &str,
+    naming_str: &str,
+    max_per_dir: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!(source = ?source, dest = ?destination, layout = layout_str, "Starting EML export");
     let mut messages = ingest_source(source)?;
     apply_preprocessing(cli, &mut messages)?;
+
+    if cli.dry_run {
+        perform_dry_run(&messages, source);
+        return Ok(());
+    }
 
     let layout = match layout_str.to_lowercase().as_str() {
         "year" => EmlLayout::Year,
@@ -349,7 +548,15 @@ fn run_eml_conversion(
         _ => EmlLayout::Folder,
     };
 
-    let mut exporter = EmlExporter::new(destination, layout);
+    let naming = match naming_str.to_lowercase().as_str() {
+        "index" => EmlNaming::Index,
+        _ => EmlNaming::Subject,
+    };
+
+    let mut exporter = EmlExporter::new(destination, layout)
+        .with_naming(naming)
+        .with_max_per_dir(max_per_dir);
+
     for m in &messages {
         exporter.export_message(m)?;
     }
@@ -364,19 +571,100 @@ fn run_mbox_conversion(
     source: &Path,
     destination: &Path,
     compress: bool,
+    append: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!(source = ?source, dest = ?destination, compress = compress, "Starting MBOX export");
+    info!(source = ?source, dest = ?destination, compress = compress, append = append, "Starting MBOX export");
     let mut messages = ingest_source(source)?;
     apply_preprocessing(cli, &mut messages)?;
+
+    if cli.dry_run {
+        perform_dry_run(&messages, source);
+        return Ok(());
+    }
 
     if let Some(parent) = destination.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    MboxFileExporter::export_to_file(&messages, destination, compress)?;
+    MboxFileExporter::export_to_file_options(&messages, destination, compress, append)?;
     println!("Exported {} messages into mboxrd container: {}", messages.len(), destination.display());
     post_process(cli, &messages, source, destination)?;
     Ok(())
+}
+
+fn perform_dry_run(messages: &[EmailMessage], source: &Path) {
+    println!("\n======================================================================");
+    println!("                   PRE-FLIGHT DRY-RUN AUDIT REPORT");
+    println!("======================================================================");
+    println!("Source Store:          {}", source.display());
+
+    let total_count = messages.len();
+    let total_bytes: usize = messages.iter().map(|m| m.size_bytes).sum();
+    let total_mb = total_bytes as f64 / (1024.0 * 1024.0);
+    let total_gb = total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+
+    let read_count = messages.iter().filter(|m| m.flags.read).count();
+    let unread_count = total_count.saturating_sub(read_count);
+    let flagged_count = messages.iter().filter(|m| m.flags.flagged).count();
+    let deleted_count = messages.iter().filter(|m| m.flags.deleted).count();
+
+    println!("Total Messages:        {}", total_count);
+    println!("Total Payload Size:    {} bytes ({:.2} MB / {:.3} GB)", total_bytes, total_mb, total_gb);
+    println!("Message Flags:         {} Read | {} Unread | {} Flagged | {} Deleted", read_count, unread_count, flagged_count, deleted_count);
+
+    if let (Some(earliest), Some(latest)) = (messages.iter().map(|m| m.date).min(), messages.iter().map(|m| m.date).max()) {
+        println!("Date Span:             {} -> {}", earliest.format("%Y-%m-%d %H:%M:%S UTC"), latest.format("%Y-%m-%d %H:%M:%S UTC"));
+    }
+
+    // Breakdown by year
+    let mut year_counts: std::collections::BTreeMap<i32, (usize, usize)> = std::collections::BTreeMap::new();
+    for m in messages {
+        let entry = year_counts.entry(m.date.year()).or_insert((0, 0));
+        entry.0 += 1;
+        entry.1 += m.size_bytes;
+    }
+
+    println!("\nYear Breakdown:");
+    for (year, (count, bytes)) in &year_counts {
+        println!("  - {}: {:>6} msgs ({:.2} MB)", year, count, *bytes as f64 / (1024.0 * 1024.0));
+    }
+
+    // Folder Breakdown
+    let mut folder_counts: std::collections::BTreeMap<String, (usize, usize)> = std::collections::BTreeMap::new();
+    for m in messages {
+        let folder = if m.folder_path.is_empty() { "Inbox".to_string() } else { m.folder_path.join("/") };
+        let entry = folder_counts.entry(folder).or_insert((0, 0));
+        entry.0 += 1;
+        entry.1 += m.size_bytes;
+    }
+
+    println!("\nFolder Hierarchy Distribution:");
+    for (folder, (count, bytes)) in &folder_counts {
+        println!("  - {:<30} {:>6} msgs ({:.2} MB)", folder, count, *bytes as f64 / (1024.0 * 1024.0));
+    }
+
+    // Oversized Attachments Warning (> 20 MB / > 25 MB)
+    let threshold_20mb = 20 * 1024 * 1024;
+    let mut oversized = Vec::new();
+    for m in messages {
+        for att in &m.attachments {
+            if att.size_bytes >= threshold_20mb {
+                oversized.push((att.filename.clone(), att.size_bytes, m.subject.clone(), m.folder_path.join("/")));
+            }
+        }
+    }
+
+    if !oversized.is_empty() {
+        println!("\n[!] WARNING: Detected {} Oversized Attachment(s) (>= 20 MB):", oversized.len());
+        println!("    These files may exceed Outlook MAPI server attachment limits (20-25 MB).");
+        for (name, sz, subj, fld) in oversized {
+            println!("    * Filename: {} ({:.2} MB) | Subject: {} | Folder: {}", name, sz as f64 / (1024.0 * 1024.0), subj, fld);
+        }
+    } else {
+        println!("\nAttachment Check:      PASSED (No attachments >= 20 MB found)");
+    }
+
+    println!("======================================================================\n");
 }
 
 fn ingest_source(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::error::Error>> {
@@ -385,6 +673,15 @@ fn ingest_source(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::error:
     info!(source = ?source, format = format.name(), "Ingesting mailbox source");
 
     match format {
+        MailboxFormat::Zip => {
+            let file = File::open(source)?;
+            messages = ArchiveReader::read_zip(file)?;
+        }
+        MailboxFormat::Gz => {
+            let file = File::open(source)?;
+            let fname = source.file_name().and_then(|s| s.to_str()).unwrap_or("archive.gz");
+            messages = ArchiveReader::read_gz(file, fname)?;
+        }
         MailboxFormat::Mbox => {
             let file = File::open(source)?;
             let folder = vec![source.file_stem().and_then(|s| s.to_str()).unwrap_or("Inbox").to_string()];
@@ -456,6 +753,7 @@ fn ingest_source(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::error:
 }
 
 fn apply_preprocessing(cli: &Cli, messages: &mut Vec<EmailMessage>) -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Resume / Checkpoint delta
     if let Some(ref chk_path) = cli.resume {
         if chk_path.exists() {
             let chk = CheckpointManager::load(chk_path)?;
@@ -465,6 +763,50 @@ fn apply_preprocessing(cli: &Cli, messages: &mut Vec<EmailMessage>) -> Result<()
         }
     }
 
+    // 2. Date Filtering
+    let since_dt = if let Some(ref s) = cli.since {
+        Some(parse_cli_datetime(s, false).map_err(|e| format!("Invalid --since: {}", e))?)
+    } else {
+        None
+    };
+    let until_dt = if let Some(ref u) = cli.until {
+        Some(parse_cli_datetime(u, true).map_err(|e| format!("Invalid --until: {}", e))?)
+    } else {
+        None
+    };
+
+    let date_filter = DateFilter {
+        since: since_dt,
+        until: until_dt,
+        start_year: cli.start_year,
+        end_year: cli.end_year,
+    };
+
+    if date_filter.is_active() {
+        let before_count = messages.len();
+        messages.retain(|m| date_filter.matches(&m.date));
+        info!(retained = messages.len(), skipped = before_count - messages.len(), "Applied date filtering");
+    }
+
+    // 3. Folder Filtering
+    let folder_filter = FolderFilter::new(cli.include_folder.clone(), cli.exclude_folder.clone());
+    if folder_filter.is_active() {
+        let before_count = messages.len();
+        messages.retain(|m| folder_filter.matches(&m.folder_path));
+        info!(retained = messages.len(), skipped = before_count - messages.len(), "Applied folder filtering");
+    }
+
+    // 4. Deleted Message Filtering
+    if !cli.include_deleted {
+        let before_count = messages.len();
+        messages.retain(|m| !m.flags.deleted);
+        let skipped = before_count - messages.len();
+        if skipped > 0 {
+            info!(skipped = skipped, "Skipped deleted/expunged messages (--include-deleted not set)");
+        }
+    }
+
+    // 5. Deduplication
     if let Some(strat) = cli.dedup {
         let rs_strat = match strat {
             CliDedupStrategy::Sha256 => DedupStrategy::Sha256,
@@ -476,6 +818,7 @@ fn apply_preprocessing(cli: &Cli, messages: &mut Vec<EmailMessage>) -> Result<()
         *messages = unique;
     }
 
+    // 6. Bates Stamping
     if let Some(ref pfx) = cli.bates_prefix {
         ForensicEngine::apply_bates_stamping(messages, pfx, cli.bates_start, 7);
     }
@@ -489,14 +832,16 @@ fn post_process(
     source: &Path,
     dest: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(ref manifest_path) = cli.audit_manifest {
+    if let Some(ref manifest_path) = cli.audit_log {
         ForensicEngine::export_manifest_csv(messages, manifest_path)?;
+        info!(manifest = ?manifest_path, "Saved audit manifest");
     }
 
-    if let Some(ref chk_out) = cli.checkpoint_out {
+    if let Some(ref state_path) = cli.state_file {
         let mut chk = CheckpointManager::new_checkpoint(&source.display().to_string(), &dest.display().to_string());
         CheckpointManager::commit_run(&mut chk, messages);
-        CheckpointManager::save(&chk, chk_out)?;
+        CheckpointManager::save(&chk, state_path)?;
+        info!(state = ?state_path, "Saved migration state");
     }
 
     Ok(())
