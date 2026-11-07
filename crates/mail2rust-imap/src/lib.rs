@@ -490,7 +490,7 @@ mod tests {
 
             let mut line = String::new();
             while reader.read_line(&mut line).unwrap() > 0 {
-                let parts: Vec<&str> = line.trim().split_whitespace().collect();
+                let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.is_empty() {
                     line.clear();
                     continue;
@@ -558,12 +558,14 @@ mod tests {
             }
         });
 
-        let mut config = ImapConfig::default();
-        config.host = "127.0.0.1".to_string();
-        config.port = local_addr.port();
-        config.username = "user@example.com".to_string();
-        config.password = "secret".to_string();
-        config.use_tls = false; // Plain TCP for loopback mock
+        let config = ImapConfig {
+            host: "127.0.0.1".to_string(),
+            port: local_addr.port(),
+            username: "user@example.com".to_string(),
+            password: "secret".to_string(),
+            use_tls: false, // Plain TCP for loopback mock
+            ..Default::default()
+        };
 
         let mut client = ImapClient::new(config);
         assert!(client.connect().is_ok());

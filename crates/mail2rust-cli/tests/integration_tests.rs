@@ -322,7 +322,7 @@ fn test_cli_subcommands_end_to_end() {
         socket.write_all(b"* OK Mock CLI IMAP Server Ready\r\n").unwrap();
         let mut line = String::new();
         while reader.read_line(&mut line).unwrap() > 0 {
-            let parts: Vec<&str> = line.trim().split_whitespace().collect();
+            let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.is_empty() {
                 line.clear();
                 continue;
