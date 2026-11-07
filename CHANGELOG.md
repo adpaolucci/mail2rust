@@ -18,4 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Conversation Thread Clustering Auto-Splitter**: Splits mailboxes at custom size boundaries (e.g. 20 GB / 45 GB) while maintaining thread integrity across volumes.
 - **Forensic eDiscovery Suite**: Bates stamping engine, SHA-256 and MD5 cryptographic hashing, legal hold flagging, and export of CSV/JSON chain-of-custody manifests.
 - **Resumable Delta Sync Checkpointing**: Incremental checkpointing engine with folder high-watermark UID tracking.
-- **Comprehensive Test Suite**: Unit and end-to-end integration tests with 100% pass rate.
+- **High-Throughput Mutational Fuzz Testing Suite**: Deterministic `FuzzRng` PRNG testing suite executing 70,000+ mutational iterations across RFC 5322 MIME decoding, MBOX streaming, Apple Mail EMLX XML plists, Outlook MSG CFB sectors, Babyl & MMDF delimiters, PST NDB validation, format sniffing, and CLI filter syntax.
+- **Parser Security & Hardening**:
+  - Bound MIME recursion depth to 16 to prevent stack exhaustion from recursive multipart MIME bombs.
+  - Hardened `EmailAddress::parse` against inverted angle bracket pairs (`> ... <`).
+  - Hardened `EmlxReader` against out-of-order XML integer tags.
+  - Hardened `EmlReader` boundary and filename extraction using key-value splitting on `=`.
+  - Added ASCII validation and length guards to `parse_cli_datetime` to eliminate non-char-boundary slicing.
+  - Added `f64` NaN/infinite and `usize::MAX` boundary checks to `parse_size_bytes`.
+- **Comprehensive Test Suite**: Unit, integration, and fuzz tests with 100% pass rate.

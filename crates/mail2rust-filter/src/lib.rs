@@ -28,6 +28,10 @@ pub fn parse_size_bytes(val: &str) -> Result<usize, String> {
         .parse()
         .map_err(|_| format!("Invalid numeric value in size: '{}'", val))?;
 
+    if num < 0.0 || num.is_nan() || num.is_infinite() {
+        return Err(format!("Invalid size number: '{}'", val));
+    }
+
     let bytes = match unit_part.as_str() {
         "B" | "BYTES" | "" => num,
         "K" | "KB" | "KIB" => num * 1024.0,
@@ -36,6 +40,10 @@ pub fn parse_size_bytes(val: &str) -> Result<usize, String> {
         "T" | "TB" | "TIB" => num * 1024.0 * 1024.0 * 1024.0 * 1024.0,
         _ => return Err(format!("Unrecognized size unit in '{}': '{}'", val, unit_part)),
     };
+
+    if bytes > usize::MAX as f64 {
+        return Err(format!("Size exceeds maximum allowed: '{}'", val));
+    }
 
     Ok(bytes as usize)
 }
@@ -67,7 +75,11 @@ pub fn parse_cli_datetime(val: &str, is_end_of_day: bool) -> Result<DateTime<Utc
     }
 
     // 2. Date only: "YYYY-MM-DD" or "YYYY/MM/DD"
-    if s.len() == 10 && (s.chars().nth(4) == Some('-') || s.chars().nth(4) == Some('/')) {
+    if s.len() == 10
+        && s.is_ascii()
+        && (s.as_bytes()[4] == b'-' || s.as_bytes()[4] == b'/')
+        && (s.as_bytes()[7] == b'-' || s.as_bytes()[7] == b'/')
+    {
         let y: i32 = s[0..4].parse().map_err(|_| "Invalid year")?;
         let m: u32 = s[5..7].parse().map_err(|_| "Invalid month")?;
         let d: u32 = s[8..10].parse().map_err(|_| "Invalid day")?;

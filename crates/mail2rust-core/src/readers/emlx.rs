@@ -40,8 +40,9 @@ impl EmlxReader {
         if let Some(idx) = plist_str.find(key_marker) {
             let sub = &plist_str[idx + key_marker.len()..];
             if let Some(int_start) = sub.find("<integer>") {
-                if let Some(int_end) = sub.find("</integer>") {
-                    let num_str = sub[int_start + 9..int_end].trim();
+                let after_int = &sub[int_start + 9..];
+                if let Some(pos) = after_int.find("</integer>") {
+                    let num_str = after_int[..pos].trim();
                     if let Ok(flags_val) = num_str.parse::<u64>() {
                         return Some(MessageFlags {
                             read: (flags_val & 0x0001) != 0,

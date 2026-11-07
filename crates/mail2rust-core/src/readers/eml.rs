@@ -140,6 +140,7 @@ impl EmlReader {
             &mut body_text,
             &mut body_html,
             &mut attachments,
+            0,
         );
 
         let conversation_id = EmailMessage::generate_conversation_id(&subject, &message_id, in_reply_to);
@@ -320,6 +321,7 @@ impl EmlReader {
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn parse_mime_part(
         bytes: &[u8],
         content_type_header: &str,
@@ -328,7 +330,12 @@ impl EmlReader {
         body_text: &mut String,
         body_html: &mut Option<String>,
         attachments: &mut Vec<Attachment>,
+        depth: usize,
     ) {
+        if depth > 16 {
+            return;
+        }
+
         let ct_lower = content_type_header.to_lowercase();
         if ct_lower.contains("multipart/") {
             // Find boundary
@@ -352,6 +359,7 @@ impl EmlReader {
                         body_text,
                         body_html,
                         attachments,
+                        depth + 1,
                     );
                 }
                 return;
@@ -401,12 +409,16 @@ impl EmlReader {
     }
 
     fn extract_boundary(ct: &str) -> Option<String> {
-        let parts = ct.split(';');
-        for p in parts {
+        for p in ct.split(';') {
             let trimmed = p.trim();
-            if trimmed.to_lowercase().starts_with("boundary=") {
-                let b = &trimmed[9..];
-                return Some(b.trim_matches('"').trim().to_string());
+            if let Some(eq_idx) = trimmed.find('=') {
+                let (key, val) = trimmed.split_at(eq_idx);
+                if key.trim().eq_ignore_ascii_case("boundary") {
+                    let b = val[1..].trim().trim_matches('"').trim();
+                    if !b.is_empty() {
+                        return Some(b.to_string());
+                    }
+                }
             }
         }
         None
@@ -416,11 +428,15 @@ impl EmlReader {
         for source in [disp, ct] {
             for part in source.split(';') {
                 let p = part.trim();
-                if p.to_lowercase().starts_with("filename=") {
-                    return Some(Self::decode_rfc2047(p[9..].trim_matches('"').trim()));
-                }
-                if p.to_lowercase().starts_with("name=") {
-                    return Some(Self::decode_rfc2047(p[5..].trim_matches('"').trim()));
+                if let Some(eq_idx) = p.find('=') {
+                    let (key, val) = p.split_at(eq_idx);
+                    let k = key.trim();
+                    if k.eq_ignore_ascii_case("filename") || k.eq_ignore_ascii_case("name") {
+                        let fn_str = val[1..].trim().trim_matches('"').trim();
+                        if !fn_str.is_empty() {
+                            return Some(Self::decode_rfc2047(fn_str));
+                        }
+                    }
                 }
             }
         }
