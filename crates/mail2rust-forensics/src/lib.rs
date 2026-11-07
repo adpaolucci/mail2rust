@@ -96,7 +96,7 @@ impl ForensicEngine {
             total_size_bytes,
             root_sha256,
             bates_range,
-            tool_version: "mail2rust-forensics v3.2.0".to_string(),
+            tool_version: format!("mail2rust-forensics v{}", env!("CARGO_PKG_VERSION")),
         }
     }
 

@@ -244,7 +244,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     init_logging(&cli.log_level, cli.log_file.as_deref())?;
 
-    info!(version = "3.2.0", "Mail2Rust Engine Initialized");
+    info!(version = env!("CARGO_PKG_VERSION"), "Mail2Rust Engine Initialized");
 
     match &cli.command {
         Commands::Gui => {

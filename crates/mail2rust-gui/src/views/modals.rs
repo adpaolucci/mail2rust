@@ -821,7 +821,11 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("✉").size(32.0));
                         ui.vertical(|ui| {
-                            ui.label(RichText::new("Mail2Rust Studio v3.2.0").strong().size(13.0));
+                            ui.label(
+                                RichText::new(format!("Mail2Rust Studio v{}", env!("CARGO_PKG_VERSION")))
+                                    .strong()
+                                    .size(13.0),
+                            );
                             ui.label(
                                 RichText::new("Universal High-Performance Email Engine in 100% Pure Rust").size(11.0),
                             );
