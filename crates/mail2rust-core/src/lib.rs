@@ -9,12 +9,14 @@ pub use readers::archive::ArchiveReader;
 pub use readers::babyl::BabylReader;
 pub use readers::eml::EmlReader;
 pub use readers::emlx::EmlxReader;
+pub use readers::ical::IcalReader;
 pub use readers::maildir::MaildirReader;
 pub use readers::mbox::MboxReader;
 pub use readers::mh::MhReader;
 pub use readers::mmdf::MmdfReader;
 pub use readers::msg::MsgReader;
 pub use readers::olm::OlmReader;
+pub use readers::vcard::VcardReader;
 pub use sniffer::{FormatSniffer, MailboxFormat};
 
 use std::fs::File;
@@ -65,6 +67,14 @@ pub fn ingest_path(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::erro
             let file = File::open(source)?;
             messages = BabylReader::parse(file, vec!["Babyl".to_string()])?;
         }
+        MailboxFormat::Vcard => {
+            let bytes = std::fs::read(source)?;
+            messages = VcardReader::parse(&bytes, vec!["Contacts".to_string()])?;
+        }
+        MailboxFormat::Icalendar => {
+            let bytes = std::fs::read(source)?;
+            messages = IcalReader::parse(&bytes, vec!["Calendar".to_string()])?;
+        }
         _ => {
             if source.is_file() {
                 let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
@@ -73,6 +83,10 @@ pub fn ingest_path(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::erro
                     messages.push(EmlxReader::parse(&bytes, vec!["Import".to_string()])?);
                 } else if ext == "msg" {
                     messages.push(MsgReader::parse(&bytes, vec!["Import".to_string()])?);
+                } else if ext == "vcf" || ext == "vcard" {
+                    messages.extend(VcardReader::parse(&bytes, vec!["Contacts".to_string()])?);
+                } else if ext == "ics" || ext == "ical" {
+                    messages.extend(IcalReader::parse(&bytes, vec!["Calendar".to_string()])?);
                 } else {
                     messages.push(EmlReader::parse(&bytes, vec!["Import".to_string()])?);
                 }
@@ -99,6 +113,14 @@ pub fn ingest_path(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::erro
                         } else if ext == "msg" {
                             if let Ok(m) = MsgReader::parse(&bytes, folder) {
                                 messages.push(m);
+                            }
+                        } else if ext == "vcf" || ext == "vcard" {
+                            if let Ok(c) = VcardReader::parse(&bytes, vec!["Contacts".to_string()]) {
+                                messages.extend(c);
+                            }
+                        } else if ext == "ics" || ext == "ical" {
+                            if let Ok(ev) = IcalReader::parse(&bytes, vec!["Calendar".to_string()]) {
+                                messages.extend(ev);
                             }
                         } else if ext == "eml" || ext.is_empty() {
                             if let Ok(m) = EmlReader::parse(&bytes, folder) {

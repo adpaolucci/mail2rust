@@ -17,6 +17,8 @@ pub enum MailboxFormat {
     Mh,
     Mmdf,
     Babyl,
+    Vcard,
+    Icalendar,
     Zip,
     Gz,
     Unknown,
@@ -40,6 +42,8 @@ impl MailboxFormat {
             Self::Mh => "MH / Sylpheed / Claws Mail",
             Self::Mmdf => "MMDF Mailbox",
             Self::Babyl => "Emacs Babyl",
+            Self::Vcard => "vCard Address Book (VCF)",
+            Self::Icalendar => "iCalendar Events & Meetings (ICS)",
             Self::Zip => "Compressed Archive (ZIP / Takeout)",
             Self::Gz => "Gzip Compressed Stream (GZ)",
             Self::Unknown => "Unknown / Unrecognized Format",
@@ -128,6 +132,17 @@ impl FormatSniffer {
             return MailboxFormat::Mbox;
         }
 
+        // vCard (BEGIN:VCARD)
+        if bytes.len() >= 11 {
+            let prefix = String::from_utf8_lossy(&bytes[..50.min(bytes.len())]).to_uppercase();
+            if prefix.contains("BEGIN:VCARD") {
+                return MailboxFormat::Vcard;
+            }
+            if prefix.contains("BEGIN:VCALENDAR") {
+                return MailboxFormat::Icalendar;
+            }
+        }
+
         // Check for EMLX: starts with ascii digits followed by newline
         if let Some(pos) = bytes.iter().take(10).position(|&b| b == b'\n') {
             if let Ok(s) = std::str::from_utf8(&bytes[..pos]) {
@@ -153,6 +168,8 @@ impl FormatSniffer {
             "nsf" => MailboxFormat::Nsf,
             "tbb" => MailboxFormat::Tbb,
             "mbs" => MailboxFormat::Mbs,
+            "vcf" | "vcard" => MailboxFormat::Vcard,
+            "ics" | "ical" | "ifb" => MailboxFormat::Icalendar,
             "zip" => MailboxFormat::Zip,
             "gz" | "tgz" => MailboxFormat::Gz,
             _ => MailboxFormat::Unknown,

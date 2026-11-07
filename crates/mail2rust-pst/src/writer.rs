@@ -107,7 +107,13 @@ impl<W: Write + Seek> PstWriter<W> {
         self.alloc_nid_counter += 1;
 
         let mut pc = PropertyContext::new();
-        pc.add_string_w(PR_MESSAGE_CLASS_W, "IPM.Note");
+        let msg_class = msg
+            .mapi_properties
+            .iter()
+            .find(|p| p.tag == PR_MESSAGE_CLASS_W)
+            .map(|p| p.value.as_str())
+            .unwrap_or("IPM.Note");
+        pc.add_string_w(PR_MESSAGE_CLASS_W, msg_class);
         pc.add_string_w(PR_SUBJECT_W, &msg.subject);
         pc.add_string_w(PR_BODY_W, &msg.body_text);
         if let Some(ref html) = msg.body_html {

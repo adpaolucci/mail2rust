@@ -49,11 +49,28 @@ pub enum ActiveModal {
     About,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExportScope {
+    #[default]
+    All,
+    Filtered,
+    Selected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExportFormat {
+    #[default]
+    Pst,
+    Mbox,
+    Eml,
+}
+
 pub struct AppState {
     pub folders: Vec<GuiFolder>,
     pub active_folder: String,
     pub messages: Vec<EmailMessage>,
     pub selected_message_id: Option<String>,
+    pub selected_message_ids: std::collections::HashSet<String>,
     pub search_query: String,
     pub active_tab: ActiveTab,
     pub active_modal: ActiveModal,
@@ -77,6 +94,8 @@ pub struct AppState {
     pub pst_compress: bool,
     pub pst_root: String,
     pub pst_status_message: Option<String>,
+    pub export_scope: ExportScope,
+    pub export_format: ExportFormat,
 
     // Filter Form States
     pub filter_since: String,
@@ -112,6 +131,7 @@ impl Default for AppState {
             active_folder: "Inbox".to_string(),
             messages,
             selected_message_id: selected,
+            selected_message_ids: std::collections::HashSet::new(),
             search_query: String::new(),
             active_tab: ActiveTab::Preview,
             active_modal: ActiveModal::None,
@@ -131,6 +151,8 @@ impl Default for AppState {
             pst_compress: true,
             pst_root: "Imported (Mail2Rust)".to_string(),
             pst_status_message: None,
+            export_scope: ExportScope::All,
+            export_format: ExportFormat::Pst,
 
             filter_since: String::new(),
             filter_until: String::new(),
@@ -168,6 +190,53 @@ impl AppState {
         } else {
             self.sort_column = col;
             self.sort_direction = SortDirection::Ascending;
+        }
+    }
+
+    pub fn toggle_message_selection(&mut self, id: &str) {
+        if self.selected_message_ids.contains(id) {
+            self.selected_message_ids.remove(id);
+        } else {
+            self.selected_message_ids.insert(id.to_string());
+        }
+    }
+
+    pub fn is_message_selected(&self, id: &str) -> bool {
+        self.selected_message_ids.contains(id)
+    }
+
+    pub fn select_all_filtered(&mut self) {
+        let ids: Vec<String> = self.filtered_messages().into_iter().map(|m| m.id.clone()).collect();
+        for id in ids {
+            self.selected_message_ids.insert(id);
+        }
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selected_message_ids.clear();
+    }
+
+    pub fn invert_selection_filtered(&mut self) {
+        let ids: Vec<String> = self.filtered_messages().into_iter().map(|m| m.id.clone()).collect();
+        for id in ids {
+            if self.selected_message_ids.contains(&id) {
+                self.selected_message_ids.remove(&id);
+            } else {
+                self.selected_message_ids.insert(id);
+            }
+        }
+    }
+
+    pub fn get_messages_for_export(&self) -> Vec<EmailMessage> {
+        match self.export_scope {
+            ExportScope::All => self.messages.clone(),
+            ExportScope::Filtered => self.filtered_messages().into_iter().cloned().collect(),
+            ExportScope::Selected => self
+                .messages
+                .iter()
+                .filter(|m| self.selected_message_ids.contains(&m.id))
+                .cloned()
+                .collect(),
         }
     }
 

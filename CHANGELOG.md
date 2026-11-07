@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Multi-Crate Rust Workspace**: Architected 9 specialized crates (`mail2rust-core`, `mail2rust-pst`, `mail2rust-eml`, `mail2rust-mbox`, `mail2rust-filter`, `mail2rust-forensics`, `mail2rust-sync`, `mail2rust-cli`, `mail2rust-gui`).
+- **Pure-Rust MS-PST and Offline OST Reader (`mail2rust-pst`)**:
+  - Implemented pure-Rust bidirectional reading and extraction of `.pst` and `.ost` files without Outlook COM.
+  - Implemented official Microsoft `[MS-PST]` 5.1 Permutative Encoding (`mpbbR` / `mpbbI`) decryption with 100% bijective roundtrip validation.
+  - Traversed NBT (Node B-Tree) and BBT (Block B-Tree) hierarchies and parsed Property Context (`0xBC`) structures for MAPI tags (Subject, Body, HTML Body, Sender, Headers).
+  - Built-in heuristic block-carving fallback scanner for orphaned or damaged OST/PST files.
+  - Full integration into CLI (`convert`, `split`, `audit`) and GUI (`File -> Open Mailbox...`).
+- **Contacts and Calendars Ingestion (`IPM.Contact` / `IPM.Appointment`)**:
+  - Implemented native vCard (`.vcf`, RFC 6350 / RFC 2426) parser extracting names, organizations, titles, emails, phones, and notes.
+  - Implemented native iCalendar (`.ics`, RFC 5545) parser extracting event summaries, descriptions, locations, timestamps, organizers, and attendees.
+  - Automatic format sniffing for `.vcf` and `.ics` files and standard MIME envelopes.
+  - Automatic routing of items into Outlook `Contacts` and `Calendar` folders with corresponding `PR_MESSAGE_CLASS_W` MAPI message properties.
+- **Selective Checked Item Export & Multi-Format Targets in GUI**:
+  - Added individual message checkbox selection column with Win32 `[X]`/`[ ]` glyphs and row highlight tinting.
+  - Added selection commands: "Select All Filtered" (`Ctrl+A`), "Invert Selection", and "Clear Selection" (`Ctrl+D`).
+  - Added multi-scope export support: `All Messages`, `Current Filter`, and `Selected Items Only`.
+  - Added universal export targets: direct export to `PST` (Unicode 64-bit), `MBOX` (RFC 4155), or `EML` directory tree with Bates stamping.
 - **Classic Windows Management Console (MMC / Win2k / WinXP) UI Redesign**:
   - Transformed GUI from modern dark-slate into a high-density, minimalist early 2000s Windows administrative utility design.
   - Classic Win32 menu bar (`File`, `Action`, `View`, `Tools`, `Help`) with standard keyboard shortcuts.

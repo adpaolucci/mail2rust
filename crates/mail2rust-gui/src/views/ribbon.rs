@@ -1,4 +1,4 @@
-use crate::state::{ActiveModal, AppState};
+use crate::state::{ActiveModal, AppState, ExportScope};
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 
 pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
@@ -17,7 +17,13 @@ pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
                         state.active_modal = ActiveModal::OpenMailbox;
                         ui.close_menu();
                     }
-                    if ui.button("Export to Microsoft PST...  (Ctrl+E)").clicked() {
+                    if ui.button("Export Messages (PST/MBOX/EML)...  (Ctrl+E)").clicked() {
+                        state.export_scope = ExportScope::All;
+                        state.active_modal = ActiveModal::DirectPst;
+                        ui.close_menu();
+                    }
+                    if ui.button("Export Selected Items Only...").clicked() {
+                        state.export_scope = ExportScope::Selected;
                         state.active_modal = ActiveModal::DirectPst;
                         ui.close_menu();
                     }
@@ -32,14 +38,30 @@ pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
                 });
 
                 ui.menu_button("Action", |ui| {
-                    if ui.button("Ingest Mailbox Path...").clicked() {
-                        state.active_modal = ActiveModal::OpenMailbox;
+                    if ui.button("Select All Filtered  (Ctrl+A)").clicked() {
+                        state.select_all_filtered();
                         ui.close_menu();
                     }
-                    if ui.button("Generate Direct PST Container").clicked() {
+                    if ui.button("Invert Selection").clicked() {
+                        state.invert_selection_filtered();
+                        ui.close_menu();
+                    }
+                    if ui.button("Clear Selection  (Ctrl+D)").clicked() {
+                        state.clear_selection();
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Export Selected Messages...").clicked() {
+                        state.export_scope = ExportScope::Selected;
                         state.active_modal = ActiveModal::DirectPst;
                         ui.close_menu();
                     }
+                    if ui.button("Export Filtered Messages...").clicked() {
+                        state.export_scope = ExportScope::Filtered;
+                        state.active_modal = ActiveModal::DirectPst;
+                        ui.close_menu();
+                    }
+                    ui.separator();
                     if ui.button("Multi-Volume Auto-Split").clicked() {
                         state.active_modal = ActiveModal::AutoSplit;
                         ui.close_menu();
@@ -118,43 +140,49 @@ pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(3.0, 0.0);
 
-                if win32_tool_button(ui, "📂 Open...") {
+                if win32_tool_button(ui, "Open...") {
                     state.active_modal = ActiveModal::OpenMailbox;
                 }
-                if win32_tool_button(ui, "💾 Export PST") {
+                if win32_tool_button(ui, "Export...") {
                     state.active_modal = ActiveModal::DirectPst;
                 }
-                if win32_tool_button(ui, "✂ Split") {
+
+                toolbar_separator(ui);
+
+                if win32_tool_button(ui, "Select All") {
+                    state.select_all_filtered();
+                }
+                if win32_tool_button(ui, "Clear Sel") {
+                    state.clear_selection();
+                }
+
+                toolbar_separator(ui);
+
+                if win32_tool_button(ui, "Split") {
                     state.active_modal = ActiveModal::AutoSplit;
                 }
-
-                toolbar_separator(ui);
-
-                if win32_tool_button(ui, "🏷 Filter") {
+                if win32_tool_button(ui, "Filter") {
                     state.active_modal = ActiveModal::FilterCriteria;
                 }
-                if win32_tool_button(ui, "⚖ Forensics") {
+                if win32_tool_button(ui, "Forensics") {
                     state.active_modal = ActiveModal::Forensics;
                 }
-
-                toolbar_separator(ui);
-
-                if win32_tool_button(ui, "🛡 Validate") {
+                if win32_tool_button(ui, "Validate") {
                     state.active_modal = ActiveModal::ValidatePst;
                 }
-                if win32_tool_button(ui, "🔍 Dry-Run") {
+                if win32_tool_button(ui, "Dry-Run") {
                     state.active_modal = ActiveModal::DryRun;
                 }
 
                 toolbar_separator(ui);
 
-                if win32_tool_button(ui, "⟳ Refresh") {
+                if win32_tool_button(ui, "Refresh") {
                     state.rebuild_folders_from_messages();
                 }
 
                 // Right aligned search box in classic toolbar style
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if !state.search_query.is_empty() && ui.small_button("✕").clicked() {
+                    if !state.search_query.is_empty() && ui.small_button("X").clicked() {
                         state.search_query.clear();
                     }
 

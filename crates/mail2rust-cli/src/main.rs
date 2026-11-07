@@ -768,6 +768,10 @@ fn perform_dry_run(messages: &[EmailMessage], source: &Path) {
 }
 
 fn ingest_source(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::error::Error>> {
+    let fmt = FormatSniffer::sniff_path(source);
+    if fmt == mail2rust_core::MailboxFormat::Pst || fmt == mail2rust_core::MailboxFormat::Ost {
+        return Ok(mail2rust_pst::PstReader::read_path(source)?);
+    }
     mail2rust_core::ingest_path(source)
 }
 

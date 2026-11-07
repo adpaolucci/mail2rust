@@ -1,7 +1,9 @@
-use crate::state::{ActiveModal, AppState};
+use crate::state::{ActiveModal, AppState, ExportFormat, ExportScope};
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
+use mail2rust_eml::{EmlExporter, EmlLayout};
 use mail2rust_filter::{SplitConfig, VolumeSplitter};
 use mail2rust_forensics::ForensicEngine;
+use mail2rust_mbox::MboxFileExporter;
 use mail2rust_pst::{PstValidator, PstWriter};
 use std::fs::File;
 use std::path::Path;
@@ -51,7 +53,14 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                 state.open_mailbox_status = Some("Error: Please specify a valid file or folder path.".to_string());
                             } else {
                                 let p = Path::new(&path);
-                                match mail2rust_core::ingest_path(p) {
+                                let fmt = mail2rust_core::FormatSniffer::sniff_path(p);
+                                let result = if fmt == mail2rust_core::MailboxFormat::Pst || fmt == mail2rust_core::MailboxFormat::Ost {
+                                    mail2rust_pst::PstReader::read_path(p).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+                                } else {
+                                    mail2rust_core::ingest_path(p)
+                                };
+
+                                match result {
                                     Ok(msgs) => {
                                         let count = msgs.len();
                                         state.messages = msgs;
@@ -77,37 +86,68 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
 
         ActiveModal::DirectPst => {
             let mut is_open = true;
-            egui::Window::new("Export to Microsoft Outlook PST")
+            let total_msgs = state.messages.len();
+            let filtered_msgs = state.filtered_messages().len();
+            let selected_msgs = state.selected_message_ids.len();
+
+            egui::Window::new("Export Mailbox Archive / Container")
                 .open(&mut is_open)
                 .resizable(false)
-                .fixed_size(Vec2::new(540.0, 360.0))
+                .fixed_size(Vec2::new(560.0, 420.0))
                 .show(ctx, |ui| {
-                    ui.label("Generate [MS-PST] 64-bit Unicode PST archives directly using pure Rust (zero Outlook/MAPI COM).");
-                    ui.add_space(6.0);
+                    ui.label("Export email messages to Microsoft Outlook PST, standard MBOX, or RFC 5322 EML directory.");
+                    ui.add_space(4.0);
 
-                    // GroupBox: Target Files
-                    win32_groupbox(ui, "Destination PST Container", |ui| {
-                        egui::Grid::new("pst_form").spacing([8.0, 6.0]).show(ui, |ui| {
-                            ui.label(RichText::new("Destination File:").size(11.0).strong());
-                            ui.add(egui::TextEdit::singleline(&mut state.pst_dest_path).desired_width(360.0));
-                            ui.end_row();
-
-                            ui.label(RichText::new("Root Folder Name:").size(11.0).strong());
-                            ui.add(egui::TextEdit::singleline(&mut state.pst_root).desired_width(200.0));
-                            ui.end_row();
-
-                            ui.label(RichText::new("Volume Limit (GB):").size(11.0).strong());
-                            ui.add(egui::DragValue::new(&mut state.pst_max_gb).range(1..=50));
-                            ui.end_row();
+                    // GroupBox: Export Scope
+                    win32_groupbox(ui, "Export Scope", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.radio_value(&mut state.export_scope, ExportScope::All, format!("All Messages ({})", total_msgs));
+                            ui.radio_value(&mut state.export_scope, ExportScope::Filtered, format!("Current Filter ({})", filtered_msgs));
+                            ui.radio_value(&mut state.export_scope, ExportScope::Selected, format!("Checked / Selected ({})", selected_msgs));
                         });
                     });
 
                     ui.add_space(4.0);
 
-                    // GroupBox: Conversion Options
-                    win32_groupbox(ui, "Options", |ui| {
-                        ui.checkbox(&mut state.pst_cluster_threads, "Preserve email conversation threads across volume boundaries");
-                        ui.checkbox(&mut state.pst_compress, "Enable compressible encryption (NDB_CRYPT_PERMUTE)");
+                    // GroupBox: Target Format
+                    win32_groupbox(ui, "Target Container Format", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.radio_value(&mut state.export_format, ExportFormat::Pst, "Microsoft Outlook (.pst)");
+                            ui.radio_value(&mut state.export_format, ExportFormat::Mbox, "Standard MBOX (.mbox)");
+                            ui.radio_value(&mut state.export_format, ExportFormat::Eml, "EML Directory (.eml)");
+                        });
+                    });
+
+                    ui.add_space(4.0);
+
+                    // GroupBox: Target Destination & Options
+                    win32_groupbox(ui, "Destination Path & Options", |ui| {
+                        egui::Grid::new("export_dest_form").spacing([8.0, 6.0]).show(ui, |ui| {
+                            let label_text = match state.export_format {
+                                ExportFormat::Pst => "Destination PST File:",
+                                ExportFormat::Mbox => "Destination MBOX File:",
+                                ExportFormat::Eml => "Destination EML Folder:",
+                            };
+                            ui.label(RichText::new(label_text).size(11.0).strong());
+                            ui.add(egui::TextEdit::singleline(&mut state.pst_dest_path).desired_width(360.0));
+                            ui.end_row();
+
+                            if state.export_format == ExportFormat::Pst {
+                                ui.label(RichText::new("Root Folder Name:").size(11.0).strong());
+                                ui.add(egui::TextEdit::singleline(&mut state.pst_root).desired_width(200.0));
+                                ui.end_row();
+
+                                ui.label(RichText::new("Volume Limit (GB):").size(11.0).strong());
+                                ui.add(egui::DragValue::new(&mut state.pst_max_gb).range(1..=50));
+                                ui.end_row();
+                            }
+                        });
+
+                        if state.export_format == ExportFormat::Pst {
+                            ui.add_space(4.0);
+                            ui.checkbox(&mut state.pst_cluster_threads, "Preserve email conversation threads across volume boundaries");
+                            ui.checkbox(&mut state.pst_compress, "Enable compressible encryption (NDB_CRYPT_PERMUTE)");
+                        }
                     });
 
                     if let Some(ref msg) = state.pst_status_message {
@@ -126,58 +166,104 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                             state.active_modal = ActiveModal::None;
                         }
 
-                        if win32_dialog_button(ui, "Generate PST") {
-                            let dest_path = state.pst_dest_path.trim().to_string();
-                            if dest_path.is_empty() {
-                                state.pst_status_message = Some("Error: Destination PST path cannot be empty.".to_string());
-                            } else {
-                                match File::create(&dest_path) {
-                                    Ok(file) => {
-                                        match PstWriter::new(file, state.pst_compress) {
-                                            Ok(mut writer) => {
-                                                let mut folder_nids = std::collections::HashMap::new();
-                                                let root_nid = writer.add_folder(&state.pst_root, None).unwrap_or(0x8000);
-                                                folder_nids.insert(state.pst_root.clone(), root_nid);
+                        let export_btn_label = match state.export_format {
+                            ExportFormat::Pst => "Generate PST",
+                            ExportFormat::Mbox => "Export MBOX",
+                            ExportFormat::Eml => "Export EML",
+                        };
 
-                                                for f in &state.folders {
-                                                    if !folder_nids.contains_key(&f.name) {
-                                                        if let Ok(nid) = writer.add_folder(&f.name, Some(&state.pst_root)) {
-                                                            folder_nids.insert(f.name.clone(), nid);
+                        if win32_dialog_button(ui, export_btn_label) {
+                            let dest_path = state.pst_dest_path.trim().to_string();
+                            let items = state.get_messages_for_export();
+
+                            if items.is_empty() {
+                                state.pst_status_message = Some("Error: No messages match the selected export scope.".to_string());
+                            } else if dest_path.is_empty() {
+                                state.pst_status_message = Some("Error: Destination path cannot be empty.".to_string());
+                            } else {
+                                match state.export_format {
+                                    ExportFormat::Pst => {
+                                        match File::create(&dest_path) {
+                                            Ok(file) => {
+                                                match PstWriter::new(file, state.pst_compress) {
+                                                    Ok(mut writer) => {
+                                                        let mut folder_nids = std::collections::HashMap::new();
+                                                        let root_nid = writer.add_folder(&state.pst_root, None).unwrap_or(0x8000);
+                                                        folder_nids.insert(state.pst_root.clone(), root_nid);
+
+                                                        for f in &state.folders {
+                                                            if !folder_nids.contains_key(&f.name) {
+                                                                if let Ok(nid) = writer.add_folder(&f.name, Some(&state.pst_root)) {
+                                                                    folder_nids.insert(f.name.clone(), nid);
+                                                                }
+                                                            }
+                                                        }
+
+                                                        let mut msg_written = 0;
+                                                        for msg in &items {
+                                                            let folder_name = msg.folder_path.last().cloned().unwrap_or_else(|| "Inbox".to_string());
+                                                            let target_nid = folder_nids.get(&folder_name).copied().unwrap_or(root_nid);
+                                                            if writer.add_message(msg, target_nid).is_ok() {
+                                                                msg_written += 1;
+                                                            }
+                                                        }
+
+                                                        if let Err(e) = writer.finalize() {
+                                                            state.pst_status_message = Some(format!("Error finalizing PST: {}", e));
+                                                        } else if let Ok(vfile) = File::open(&dest_path) {
+                                                            if let Ok(report) = PstValidator::validate(vfile) {
+                                                                state.pst_status_message = Some(format!(
+                                                                    "Success: Exported {} messages to valid [MS-PST] Unicode container (CRC-32: 0x{:08X}).",
+                                                                    msg_written, report.calculated_crc
+                                                                ));
+                                                            } else {
+                                                                state.pst_status_message = Some(format!(
+                                                                    "Success: Exported {} messages to PST.", msg_written
+                                                                ));
+                                                            }
                                                         }
                                                     }
-                                                }
-
-                                                let mut msg_written = 0;
-                                                for msg in &state.messages {
-                                                    let folder_name = msg.folder_path.last().cloned().unwrap_or_else(|| "Inbox".to_string());
-                                                    let target_nid = folder_nids.get(&folder_name).copied().unwrap_or(root_nid);
-                                                    if writer.add_message(msg, target_nid).is_ok() {
-                                                        msg_written += 1;
-                                                    }
-                                                }
-
-                                                if let Err(e) = writer.finalize() {
-                                                    state.pst_status_message = Some(format!("Error finalizing PST: {}", e));
-                                                } else if let Ok(vfile) = File::open(&dest_path) {
-                                                    if let Ok(report) = PstValidator::validate(vfile) {
-                                                        state.pst_status_message = Some(format!(
-                                                            "Success: Exported {} messages to valid [MS-PST] Unicode container (CRC-32: 0x{:08X}).",
-                                                            msg_written, report.calculated_crc
-                                                        ));
-                                                    } else {
-                                                        state.pst_status_message = Some(format!(
-                                                            "Success: Exported {} messages to PST.", msg_written
-                                                        ));
+                                                    Err(e) => {
+                                                        state.pst_status_message = Some(format!("Error initializing PST writer: {}", e));
                                                     }
                                                 }
                                             }
                                             Err(e) => {
-                                                state.pst_status_message = Some(format!("Error initializing PST writer: {}", e));
+                                                state.pst_status_message = Some(format!("Error creating destination file: {}", e));
                                             }
                                         }
                                     }
-                                    Err(e) => {
-                                        state.pst_status_message = Some(format!("Error creating destination file: {}", e));
+                                    ExportFormat::Mbox => {
+                                        match MboxFileExporter::export_to_file(&items, Path::new(&dest_path), false) {
+                                            Ok(count) => {
+                                                state.pst_status_message = Some(format!(
+                                                    "Success: Exported {} messages to standard MBOX at '{}'.",
+                                                    count, dest_path
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                state.pst_status_message = Some(format!("Error writing MBOX: {}", e));
+                                            }
+                                        }
+                                    }
+                                    ExportFormat::Eml => {
+                                        let mut exporter = EmlExporter::new(Path::new(&dest_path), EmlLayout::Folder);
+                                        let mut written = 0;
+                                        let mut last_err = None;
+                                        for m in &items {
+                                            match exporter.export_message(m) {
+                                                Ok(_) => written += 1,
+                                                Err(e) => last_err = Some(e),
+                                            }
+                                        }
+                                        if let Some(err) = last_err {
+                                            state.pst_status_message = Some(format!("Exported {} messages with warning/error: {}", written, err));
+                                        } else {
+                                            state.pst_status_message = Some(format!(
+                                                "Success: Exported {} messages to EML directory hierarchy at '{}'.",
+                                                written, dest_path
+                                            ));
+                                        }
                                     }
                                 }
                             }
