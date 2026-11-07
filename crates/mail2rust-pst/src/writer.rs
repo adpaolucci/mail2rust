@@ -1,11 +1,12 @@
 use crate::ltp::{
     PropertyContext, PR_BODY_HTML_W, PR_BODY_W, PR_CONTENT_COUNT, PR_CONTENT_UNREAD, PR_DISPLAY_NAME_W, PR_HASATTACH,
-    PR_IMPORTANCE, PR_INTERNET_MESSAGE_ID_W, PR_MESSAGE_CLASS_W, PR_MESSAGE_FLAGS, PR_SENDER_EMAIL_ADDRESS_W,
-    PR_SENDER_NAME_W, PR_SUBFOLDERS, PR_SUBJECT_W,
+    PR_IMPORTANCE, PR_INTERNET_MESSAGE_ID_W, PR_MESSAGE_CLASS_W, PR_MESSAGE_FLAGS, PR_PST_PASSWORD,
+    PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_W, PR_SUBFOLDERS, PR_SUBJECT_W,
 };
 use crate::ndb::{
-    calculate_partial_header_crc, permute_bytes, NID_ROOT_FOLDER, PST_CLIENT_MAGIC, PST_CLIENT_VER, PST_HEADER_SIZE,
-    PST_UNICODE_MAGIC, PST_UNICODE_VER,
+    calculate_partial_header_crc, compute_pst_password_crc, cyclic_crypt, permute_bytes, PstEncryption,
+    NID_MESSAGE_STORE, NID_ROOT_FOLDER, PST_CLIENT_MAGIC, PST_CLIENT_VER, PST_HEADER_SIZE, PST_UNICODE_MAGIC,
+    PST_UNICODE_VER,
 };
 use byteorder::{LittleEndian, WriteBytesExt};
 use mail2rust_core::EmailMessage;
@@ -28,12 +29,26 @@ pub struct PstWriter<W: Write + Seek> {
     nbt_entries: Vec<(u32, u64, u32)>, // (NID, BID, ParentNID)
     bbt_entries: Vec<(u64, u64, u32)>, // (BID, FileOffset, ByteLength)
     folder_map: HashMap<String, u32>,
-    use_compression: bool,
+    encryption: PstEncryption,
+    password: Option<String>,
 }
 
 impl<W: Write + Seek> PstWriter<W> {
-    pub fn new(mut writer: W, use_compression: bool) -> io::Result<Self> {
-        info!("Initializing MS-PST 64-bit Unicode Personal Folders container");
+    pub fn new(writer: W, use_compression: bool) -> io::Result<Self> {
+        let enc = if use_compression {
+            PstEncryption::Permute
+        } else {
+            PstEncryption::None
+        };
+        Self::with_encryption(writer, enc, None)
+    }
+
+    pub fn with_encryption(mut writer: W, encryption: PstEncryption, password: Option<String>) -> io::Result<Self> {
+        info!(
+            encryption = ?encryption,
+            has_password = password.is_some(),
+            "Initializing MS-PST 64-bit Unicode Personal Folders container"
+        );
         // Reserve 512 bytes for header
         let zero_hdr = [0u8; PST_HEADER_SIZE];
         writer.write_all(&zero_hdr)?;
@@ -46,7 +61,8 @@ impl<W: Write + Seek> PstWriter<W> {
             nbt_entries: Vec::new(),
             bbt_entries: Vec::new(),
             folder_map: HashMap::new(),
-            use_compression,
+            encryption,
+            password,
         })
     }
 
@@ -54,8 +70,10 @@ impl<W: Write + Seek> PstWriter<W> {
         let bid = self.alloc_bid_counter;
         self.alloc_bid_counter += 4; // BIDs increment by 4 in Unicode NDB
 
-        if self.use_compression {
-            permute_bytes(&mut data);
+        match self.encryption {
+            PstEncryption::None => {}
+            PstEncryption::Permute => permute_bytes(&mut data),
+            PstEncryption::Cyclic => cyclic_crypt(&mut data, bid),
         }
 
         let offset = self.current_offset;
@@ -97,7 +115,6 @@ impl<W: Write + Seek> PstWriter<W> {
 
         self.nbt_entries.push((nid, bid, parent_nid));
         self.folder_map.insert(name.to_string(), nid);
-
         debug!(nid = nid, name = name, "Added folder to PST");
         Ok(nid)
     }
@@ -148,7 +165,18 @@ impl<W: Write + Seek> PstWriter<W> {
     pub fn finalize(&mut self) -> io::Result<()> {
         info!("Finalizing PST file and constructing B-Trees (NBT/BBT)");
 
-        // 1. Write NBT (Node B-Tree root block)
+        // 1. Create Message Store node (NID_MESSAGE_STORE = 0x21) with optional password CRC
+        let mut store_pc = PropertyContext::new();
+        store_pc.add_string_w(PR_DISPLAY_NAME_W, "Personal Folders");
+        if let Some(ref pwd) = self.password {
+            let pwd_crc = compute_pst_password_crc(pwd);
+            store_pc.add_u32(PR_PST_PASSWORD, pwd_crc);
+        }
+        let store_data = store_pc.serialize()?;
+        let store_bid = self.write_block(store_data)?;
+        self.nbt_entries.push((NID_MESSAGE_STORE, store_bid, 0));
+
+        // 2. Write NBT (Node B-Tree root block)
         let mut nbt_buf = Vec::new();
         for (nid, bid, parent_nid) in &self.nbt_entries {
             nbt_buf.write_u32::<LittleEndian>(*nid)?;
@@ -158,7 +186,7 @@ impl<W: Write + Seek> PstWriter<W> {
         let nbt_bid = self.write_block(nbt_buf)?;
         let nbt_offset = self.bbt_entries.iter().find(|(b, _, _)| *b == nbt_bid).unwrap().1;
 
-        // 2. Write BBT (Block B-Tree root block)
+        // 3. Write BBT (Block B-Tree root block)
         let mut bbt_buf = Vec::new();
         for (bid, off, len) in &self.bbt_entries {
             bbt_buf.write_u64::<LittleEndian>(*bid)?;
@@ -169,7 +197,7 @@ impl<W: Write + Seek> PstWriter<W> {
         let bbt_bid = self.write_block(bbt_buf)?;
         let bbt_offset = self.bbt_entries.iter().find(|(b, _, _)| *b == bbt_bid).unwrap().1;
 
-        // 3. Assemble and write the 512-byte MS-PST Header
+        // 4. Assemble and write the 512-byte MS-PST Header
         let mut header = [0u8; PST_HEADER_SIZE];
 
         // dwMagic: "!BDN" = 0x4E44424E
@@ -206,8 +234,8 @@ impl<W: Write + Seek> PstWriter<W> {
         header[0xC4..0xCC].copy_from_slice(&bbt_bid.to_le_bytes());
         header[0xCC..0xD4].copy_from_slice(&bbt_offset.to_le_bytes());
 
-        // bCryptMethod: 0x01 for Compressible (NDB_CRYPT_PERMUTE), 0x00 for None
-        header[0x1CD] = if self.use_compression { 0x01 } else { 0x00 };
+        // bCryptMethod: 0x00 (None), 0x01 (Permute/Compressible), 0x02 (Cyclic/High)
+        header[0x1CD] = self.encryption.as_u8();
 
         // Calculate dwCRCPartial (over bytes 0x08..0x1DF) and write at 0x04
         let crc = calculate_partial_header_crc(&header);
@@ -220,6 +248,7 @@ impl<W: Write + Seek> PstWriter<W> {
 
         info!(
             crc = format!("0x{:08X}", crc),
+            encryption = ?self.encryption,
             nodes = self.nbt_entries.len(),
             blocks = self.bbt_entries.len(),
             "MS-PST construction finalized successfully"

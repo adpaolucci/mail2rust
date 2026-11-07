@@ -1,8 +1,11 @@
 use crate::ltp::{
     ParsedPropertyContext, PR_BODY_HTML_W, PR_BODY_W, PR_DISPLAY_NAME_W, PR_IMPORTANCE, PR_INTERNET_MESSAGE_ID_W,
-    PR_MESSAGE_CLASS_W, PR_MESSAGE_FLAGS, PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_W, PR_SUBJECT_W,
+    PR_MESSAGE_CLASS_W, PR_MESSAGE_FLAGS, PR_PST_PASSWORD, PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_W, PR_SUBJECT_W,
 };
-use crate::ndb::{depermute_bytes, NID_ROOT_FOLDER, PST_HEADER_SIZE, PST_UNICODE_MAGIC};
+use crate::ndb::{
+    compute_pst_password_crc, cyclic_crypt, depermute_bytes, PstEncryption, NID_MESSAGE_STORE, NID_ROOT_FOLDER,
+    PST_HEADER_SIZE, PST_UNICODE_MAGIC,
+};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use chrono::Utc;
 use mail2rust_core::{EmailAddress, EmailMessage, Importance, MessageFlags};
@@ -54,6 +57,8 @@ impl<R: Read + Seek> PstReader<R> {
                 bbt_raw.truncate(n);
                 if crypt_method == 0x01 {
                     depermute_bytes(&mut bbt_raw);
+                } else if crypt_method == 0x02 {
+                    cyclic_crypt(&mut bbt_raw, bbt_bid);
                 }
                 // Parse 24-byte BBT records: (bid: u64, offset: u64, len: u32, ref_count: u32)
                 let mut cur = &bbt_raw[..];
@@ -81,6 +86,8 @@ impl<R: Read + Seek> PstReader<R> {
                 nbt_raw.truncate(n);
                 if crypt_method == 0x01 {
                     depermute_bytes(&mut nbt_raw);
+                } else if crypt_method == 0x02 {
+                    cyclic_crypt(&mut nbt_raw, nbt_bid);
                 }
                 // Parse 16-byte NBT records: (nid: u32, bid: u64, parent_nid: u32)
                 let mut cur = &nbt_raw[..];
@@ -177,6 +184,28 @@ impl<R: Read + Seek> PstReader<R> {
         Ok(messages)
     }
 
+    pub fn get_encryption(&self) -> PstEncryption {
+        PstEncryption::from_u8(self.crypt_method)
+    }
+
+    pub fn get_stored_password_crc(&mut self) -> Option<u32> {
+        let store_node = self.nbt_nodes.iter().find(|(nid, _, _)| *nid == NID_MESSAGE_STORE)?;
+        let block = self.read_block_by_bid(store_node.1)?;
+        let pc = ParsedPropertyContext::parse(&block)?;
+        pc.get_u32(PR_PST_PASSWORD)
+    }
+
+    pub fn is_password_protected(&mut self) -> bool {
+        self.get_stored_password_crc().is_some()
+    }
+
+    pub fn verify_password(&mut self, password: &str) -> bool {
+        match self.get_stored_password_crc() {
+            Some(stored_crc) => stored_crc == compute_pst_password_crc(password),
+            None => password.is_empty(),
+        }
+    }
+
     fn read_block_by_bid(&mut self, bid: u64) -> Option<Vec<u8>> {
         let (offset, len) = *self.bbt_map.get(&bid)?;
         self.reader.seek(SeekFrom::Start(offset)).ok()?;
@@ -185,6 +214,8 @@ impl<R: Read + Seek> PstReader<R> {
 
         if self.crypt_method == 0x01 {
             depermute_bytes(&mut buf);
+        } else if self.crypt_method == 0x02 {
+            cyclic_crypt(&mut buf, bid);
         }
 
         Some(buf)
@@ -217,7 +248,7 @@ impl<R: Read + Seek> PstReader<R> {
             }
 
             // Test depermuted
-            if self.crypt_method == 0x01 || data[offset] == crate::ndb::PERMUTE_TABLE[0xBC] {
+            if self.crypt_method == 0x01 || data[offset] == crate::ndb::MPBB[0xBC] {
                 let mut dep = chunk.clone();
                 depermute_bytes(&mut dep);
                 if let Some(pc) = ParsedPropertyContext::parse(&dep) {

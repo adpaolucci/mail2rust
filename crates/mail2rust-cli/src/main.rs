@@ -8,7 +8,7 @@ use mail2rust_filter::{
 };
 use mail2rust_forensics::{BatesRange, ForensicEngine};
 use mail2rust_mbox::MboxFileExporter;
-use mail2rust_pst::{PstValidator, PstWriter};
+use mail2rust_pst::{PstEncryption, PstReader, PstValidator, PstWriter};
 use mail2rust_sync::CheckpointManager;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -18,7 +18,7 @@ use tracing::info;
 #[command(
     name = "mail2rust",
     author = "Anthony D. Paolucci <adpaolucci@gmail.com>",
-    version = "3.2.0",
+    version = "3.3.0",
     about = "Universal high-performance offline email & mailbox converter in 100% pure Rust"
 )]
 struct Cli {
@@ -86,6 +86,24 @@ enum CliDedupStrategy {
     Content,
 }
 
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
+enum CliPstEncryption {
+    None,
+    #[default]
+    Permute,
+    Cyclic,
+}
+
+impl From<CliPstEncryption> for PstEncryption {
+    fn from(val: CliPstEncryption) -> Self {
+        match val {
+            CliPstEncryption::None => PstEncryption::None,
+            CliPstEncryption::Permute => PstEncryption::Permute,
+            CliPstEncryption::Cyclic => PstEncryption::Cyclic,
+        }
+    }
+}
+
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
     /// Convert any email/mailbox format to another (auto-detects source & destination)
@@ -102,6 +120,10 @@ enum Commands {
         pst_root: Option<String>,
         #[arg(long)]
         flatten: bool,
+        #[arg(long, default_value = "permute")]
+        encryption: CliPstEncryption,
+        #[arg(long)]
+        password: Option<String>,
     },
     /// Convert any source into Microsoft Outlook PST (pure Rust, zero Outlook required)
     Pst {
@@ -125,6 +147,10 @@ enum Commands {
         cluster_threads: bool,
         #[arg(long, default_value = "true")]
         compress: bool,
+        #[arg(long, default_value = "permute")]
+        encryption: CliPstEncryption,
+        #[arg(long)]
+        password: Option<String>,
     },
     /// Convert any source into clean EML files with customizable directory layout
     Eml {
@@ -178,7 +204,11 @@ enum Commands {
         examiner: String,
     },
     /// Validate MS-PST container header magic, version, CRC-32 checksum, and B-Trees
-    ValidatePst { pst_file: PathBuf },
+    ValidatePst {
+        pst_file: PathBuf,
+        #[arg(long)]
+        password: Option<String>,
+    },
     /// Ingest mail directly from an IMAP server over TLS/SSL into PST, MBOX, or EML
     Imap {
         #[arg(long)]
@@ -247,7 +277,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Format Type: {:?}", format);
         }
 
-        Commands::ValidatePst { pst_file } => {
+        Commands::ValidatePst { pst_file, password } => {
             info!(path = ?pst_file, "Running MS-PST specification validation");
             let file = File::open(pst_file)?;
             let report = PstValidator::validate(file)?;
@@ -270,6 +300,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "BBT Root BID: 0x{:X} (Offset 0x{:X})",
                 report.bbt_root_bid, report.bbt_root_offset
             );
+
+            if let Ok(file_for_reader) = File::open(pst_file) {
+                if let Ok(mut reader) = PstReader::open(file_for_reader) {
+                    let has_pwd = reader.is_password_protected();
+                    println!("Password Protected: {}", has_pwd);
+                    if has_pwd {
+                        if let Some(ref pwd) = password {
+                            let verified = reader.verify_password(pwd);
+                            println!(
+                                "Password Verification: {}",
+                                if verified {
+                                    "SUCCESS (MATCH)"
+                                } else {
+                                    "FAILED (INCORRECT)"
+                                }
+                            );
+                        } else {
+                            println!("Password Verification: (No password provided; pass --password <str> to verify)");
+                        }
+                    }
+                }
+            }
             if !report.errors.is_empty() {
                 println!("\nErrors Encountered:");
                 for e in &report.errors {
@@ -286,6 +338,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             splits,
             pst_root,
             flatten,
+            encryption,
+            password,
         } => {
             let dest_ext = destination
                 .extension()
@@ -311,7 +365,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     pst_root.as_deref(),
                     *flatten,
                     true,
-                    true,
+                    (*encryption).into(),
+                    password.as_deref(),
                 )?;
             } else if dest_is_mbox {
                 let compress = dest_ext == "gz";
@@ -333,11 +388,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             overwrite_pst: _,
             cluster_threads,
             compress,
+            encryption,
+            password,
         } => {
             let effective_gb = if let Some(ref sz) = max_pst_size {
                 parse_size_bytes(sz).unwrap_or(max_pst_gb * 1024 * 1024 * 1024) / (1024 * 1024 * 1024)
             } else {
                 *max_pst_gb
+            };
+            let enc: PstEncryption = if !*compress && *encryption == CliPstEncryption::Permute {
+                PstEncryption::None
+            } else {
+                (*encryption).into()
             };
             run_pst_conversion(
                 &cli,
@@ -349,7 +411,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 pst_root.as_deref(),
                 *flatten,
                 *cluster_threads,
-                *compress,
+                enc,
+                password.as_deref(),
             )?;
         }
 
@@ -642,9 +705,16 @@ fn run_pst_conversion(
     pst_root: Option<&str>,
     flatten: bool,
     cluster_threads: bool,
-    compress: bool,
+    encryption: PstEncryption,
+    password: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!(source = ?source, dest = ?destination, "Starting PST conversion (zero Outlook dependency)");
+    info!(
+        source = ?source,
+        dest = ?destination,
+        encryption = ?encryption,
+        has_password = password.is_some(),
+        "Starting PST conversion (zero Outlook dependency)"
+    );
     let mut messages = ingest_source(source)?;
     apply_preprocessing(cli, &mut messages)?;
 
@@ -679,11 +749,11 @@ fn run_pst_conversion(
         let volumes = VolumeSplitter::split_with_mode(&messages, &cfg, &mode);
         for vol in &volumes {
             let out_file = parent_dir.join(&vol.file_name);
-            write_single_pst(&vol.messages, &out_file, compress, pst_root, flatten)?;
+            write_single_pst(&vol.messages, &out_file, encryption, password, pst_root, flatten)?;
         }
         println!("Exported {} PST volumes successfully", volumes.len());
     } else {
-        write_single_pst(&messages, destination, compress, pst_root, flatten)?;
+        write_single_pst(&messages, destination, encryption, password, pst_root, flatten)?;
         println!("Exported 1 PST archive successfully ({} messages)", messages.len());
     }
 
@@ -694,7 +764,8 @@ fn run_pst_conversion(
 fn write_single_pst(
     messages: &[EmailMessage],
     destination: &Path,
-    compress: bool,
+    encryption: PstEncryption,
+    password: Option<&str>,
     pst_root: Option<&str>,
     flatten: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -702,7 +773,7 @@ fn write_single_pst(
         std::fs::create_dir_all(parent)?;
     }
     let file = File::create(destination)?;
-    let mut writer = PstWriter::new(file, compress)?;
+    let mut writer = PstWriter::with_encryption(file, encryption, password.map(|s| s.to_string()))?;
 
     let mut folder_map = std::collections::HashMap::new();
 

@@ -415,4 +415,42 @@ fn test_cli_subcommands_end_to_end() {
     let messages = mail2rust_pst::PstReader::read_path(&imap_pst).expect("Failed to read messages from PST");
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].subject, "Direct IMAP Ingestion");
+
+    // Test: mail2rust pst with cyclic encryption and password protection
+    let cyclic_pst = base.join("cyclic_encrypted.pst");
+    let cyclic_out = Command::new(bin_path)
+        .args([
+            "pst",
+            mbox_path.to_str().unwrap(),
+            cyclic_pst.to_str().unwrap(),
+            "--encryption",
+            "cyclic",
+            "--password",
+            "PrivilegedLegal2026",
+        ])
+        .output()
+        .expect("PST cyclic export failed to execute");
+    assert!(cyclic_out.status.success());
+    assert!(cyclic_pst.exists());
+
+    // Test: validate-pst with password verification
+    let val_out = Command::new(bin_path)
+        .args([
+            "validate-pst",
+            cyclic_pst.to_str().unwrap(),
+            "--password",
+            "PrivilegedLegal2026",
+        ])
+        .output()
+        .expect("Validate PST failed to execute");
+    assert!(val_out.status.success());
+    let val_stdout = String::from_utf8_lossy(&val_out.stdout);
+    assert!(val_stdout.contains("High Encryption (NDB_CRYPT_CYCLIC)"));
+    assert!(val_stdout.contains("Password Protected: true"));
+    assert!(val_stdout.contains("SUCCESS (MATCH)"));
+
+    // Verify reading messages directly from the cyclic PST
+    let read_msgs = mail2rust_pst::PstReader::read_path(&cyclic_pst).expect("Failed to read cyclic PST");
+    assert_eq!(read_msgs.len(), 3);
+    assert!(read_msgs.iter().any(|m| m.subject.contains("Quarterly Report")));
 }

@@ -103,7 +103,8 @@ pub struct AppState {
     pub pst_dest_path: String,
     pub pst_max_gb: usize,
     pub pst_cluster_threads: bool,
-    pub pst_compress: bool,
+    pub pst_encryption: mail2rust_pst::PstEncryption,
+    pub pst_password: String,
     pub pst_root: String,
     pub pst_status_message: Option<String>,
     pub export_scope: ExportScope,
@@ -126,6 +127,7 @@ pub struct AppState {
 
     // PST Validator States
     pub validate_pst_path: String,
+    pub validate_pst_password: String,
     pub validation_report: Option<String>,
 
     // Dry Run States
@@ -170,7 +172,8 @@ impl Default for AppState {
             pst_dest_path: "C:\\Migration\\Exported_Archive.pst".to_string(),
             pst_max_gb: 20,
             pst_cluster_threads: true,
-            pst_compress: true,
+            pst_encryption: mail2rust_pst::PstEncryption::Permute,
+            pst_password: String::new(),
             pst_root: "Imported (Mail2Rust)".to_string(),
             pst_status_message: None,
             export_scope: ExportScope::All,
@@ -190,6 +193,7 @@ impl Default for AppState {
             forensics_result: None,
 
             validate_pst_path: String::new(),
+            validate_pst_password: String::new(),
             validation_report: None,
 
             dry_run_report: None,

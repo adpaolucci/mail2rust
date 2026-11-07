@@ -314,7 +314,18 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                         if state.export_format == ExportFormat::Pst {
                             ui.add_space(4.0);
                             ui.checkbox(&mut state.pst_cluster_threads, "Preserve email conversation threads across volume boundaries");
-                            ui.checkbox(&mut state.pst_compress, "Enable compressible encryption (NDB_CRYPT_PERMUTE)");
+                            ui.add_space(2.0);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Encryption:").size(11.0).strong());
+                                ui.radio_value(&mut state.pst_encryption, mail2rust_pst::PstEncryption::Permute, "Compressible (Permute)");
+                                ui.radio_value(&mut state.pst_encryption, mail2rust_pst::PstEncryption::Cyclic, "High Encryption (Cyclic)");
+                                ui.radio_value(&mut state.pst_encryption, mail2rust_pst::PstEncryption::None, "None");
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("PST Password:").size(11.0).strong());
+                                ui.add(egui::TextEdit::singleline(&mut state.pst_password).password(true).desired_width(180.0));
+                                ui.label(RichText::new("(Optional password protection)").size(10.0).italics());
+                            });
                         }
                     });
 
@@ -353,7 +364,12 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                     ExportFormat::Pst => {
                                         match File::create(&dest_path) {
                                             Ok(file) => {
-                                                match PstWriter::new(file, state.pst_compress) {
+                                                let pwd = if state.pst_password.trim().is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(state.pst_password.trim().to_string())
+                                                };
+                                                match PstWriter::with_encryption(file, state.pst_encryption, pwd) {
                                                     Ok(mut writer) => {
                                                         let mut folder_nids = std::collections::HashMap::new();
                                                         let root_nid = writer.add_folder(&state.pst_root, None).unwrap_or(0x8000);
@@ -712,10 +728,15 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                     ui.label("Validate [MS-PST] NDB header magic, version, CRC-32 partial checksum, and B-Trees.");
                     ui.add_space(6.0);
 
-                    win32_groupbox(ui, "PST File Target", |ui| {
+                    win32_groupbox(ui, "PST File Target & Authentication", |ui| {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("File:").strong().size(11.0));
-                            ui.add(egui::TextEdit::singleline(&mut state.validate_pst_path).desired_width(360.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.validate_pst_path).desired_width(340.0));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Password:").strong().size(11.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.validate_pst_password).password(true).desired_width(180.0));
+                            ui.label(RichText::new("(Optional CRC password verification)").size(10.0).italics());
                         });
                     });
 
@@ -743,14 +764,36 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                             if Path::new(&state.validate_pst_path).exists() {
                                 if let Ok(file) = File::open(&state.validate_pst_path) {
                                     if let Ok(report) = PstValidator::validate(file) {
+                                        let mut pwd_info = String::new();
+                                        if let Ok(f2) = File::open(&state.validate_pst_path) {
+                                            if let Ok(mut r) = mail2rust_pst::PstReader::open(f2) {
+                                                if r.is_password_protected() {
+                                                    pwd_info.push_str("\nPassword Protected: YES");
+                                                    if !state.validate_pst_password.is_empty() {
+                                                        if r.verify_password(&state.validate_pst_password) {
+                                                            pwd_info.push_str(" (MATCH / VERIFIED)");
+                                                        } else {
+                                                            pwd_info.push_str(" (MISMATCH / INCORRECT)");
+                                                        }
+                                                    } else {
+                                                        pwd_info.push_str(" (No test password supplied)");
+                                                    }
+                                                } else {
+                                                    pwd_info.push_str("\nPassword Protected: NO");
+                                                }
+                                            }
+                                        }
+
                                         state.validation_report = Some(format!(
-                                            "Status: {}\nFormat: {}\nMagic: {}\nDeclared CRC: 0x{:08X}\nCalculated CRC: 0x{:08X}\nCRC Match: {}",
+                                            "Status: {}\nFormat: {}\nMagic: {}\nEncryption: {}\nDeclared CRC: 0x{:08X}\nCalculated CRC: 0x{:08X}\nCRC Match: {}{}",
                                             if report.is_valid { "VALID COMPLIANT PST" } else { "INVALID PST" },
                                             report.format,
                                             report.magic,
+                                            report.encryption_method,
                                             report.declared_crc,
                                             report.calculated_crc,
-                                            report.crc_match
+                                            report.crc_match,
+                                            pwd_info
                                         ));
                                     } else {
                                         state.validation_report = Some("Error: Failed to validate PST structure.".to_string());

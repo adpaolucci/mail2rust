@@ -6,11 +6,12 @@ pub mod writer;
 
 pub use ltp::{
     ParsedPropertyContext, PropertyContext, PR_BODY_HTML_W, PR_BODY_W, PR_DISPLAY_NAME_W, PR_IMPORTANCE,
-    PR_INTERNET_MESSAGE_ID_W, PR_MESSAGE_CLASS_W, PR_MESSAGE_FLAGS, PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_W,
-    PR_SUBJECT_W,
+    PR_INTERNET_MESSAGE_ID_W, PR_MESSAGE_CLASS_W, PR_MESSAGE_FLAGS, PR_PST_PASSWORD, PR_SENDER_EMAIL_ADDRESS_W,
+    PR_SENDER_NAME_W, PR_SUBJECT_W,
 };
 pub use ndb::{
-    calculate_partial_header_crc, depermute_bytes, permute_bytes, Bref, DEPERMUTE_TABLE, PERMUTE_TABLE,
+    calculate_partial_header_crc, compute_pst_password_crc, cyclic_crypt, depermute_bytes, permute_bytes, Bref,
+    PstEncryption, DEPERMUTE_TABLE, MPBB, NDB_CRYPT_CYCLIC, NDB_CRYPT_NONE, NDB_CRYPT_PERMUTE, PERMUTE_TABLE,
     PST_HEADER_SIZE, PST_UNICODE_MAGIC, PST_UNICODE_VER,
 };
 pub use reader::PstReader;
@@ -34,6 +35,31 @@ mod tests {
 
         depermute_bytes(&mut data);
         assert_eq!(data, original, "Depermuted data must match original 100%");
+    }
+
+    #[test]
+    fn test_cyclic_cipher_symmetry() {
+        let original: Vec<u8> = (0..=255).collect();
+        let mut data = original.clone();
+        let bid = 0x1234_5678_9ABC_DEF0u64;
+
+        cyclic_crypt(&mut data, bid);
+        assert_ne!(data, original, "Cyclic encryption must scramble data");
+
+        cyclic_crypt(&mut data, bid);
+        assert_eq!(
+            data, original,
+            "Cyclic cipher is symmetric: decrypting restores plaintext 100%"
+        );
+    }
+
+    #[test]
+    fn test_password_crc() {
+        let pwd = "SuperSecretPassword2026!";
+        let crc = compute_pst_password_crc(pwd);
+        assert_ne!(crc, 0);
+        assert_eq!(crc, compute_pst_password_crc(pwd));
+        assert_ne!(crc, compute_pst_password_crc("WrongPassword"));
     }
 
     #[test]
@@ -144,5 +170,81 @@ mod tests {
         assert!(messages[0].body_text.contains("Pure-Rust bidirectional reading"));
         assert!(messages[0].flags.read);
         assert_eq!(messages[0].importance, Importance::High);
+    }
+
+    #[test]
+    fn test_pst_cyclic_high_encryption_and_password() {
+        let mut buffer = Cursor::new(Vec::new());
+        let secret = "TopSecretLegalPst2026";
+
+        // 1. Write PST with Cyclic (High Encryption) and password
+        {
+            let mut writer = PstWriter::with_encryption(&mut buffer, PstEncryption::Cyclic, Some(secret.to_string()))
+                .expect("Failed to init cyclic PstWriter");
+            let confidential_nid = writer.add_folder("Confidential", None).expect("Folder creation failed");
+
+            let msg = EmailMessage {
+                id: "msg_confidential".to_string(),
+                message_id: "<confidential@enterprise.local>".to_string(),
+                conversation_id: "conv_conf".to_string(),
+                folder_path: vec!["Confidential".to_string()],
+                subject: "Privileged M&A Due Diligence".to_string(),
+                from: EmailAddress::new("General Counsel", "counsel@enterprise.local"),
+                to: vec![EmailAddress::new("Board", "board@enterprise.local")],
+                cc: vec![],
+                bcc: vec![],
+                date: Utc::now(),
+                size_bytes: 256,
+                body_text: "Confidential acquisition material encrypted with NDB_CRYPT_CYCLIC.".to_string(),
+                body_html: None,
+                raw_mime: vec![],
+                attachments: vec![],
+                mapi_properties: vec![],
+                flags: MessageFlags {
+                    read: true,
+                    ..Default::default()
+                },
+                importance: Importance::High,
+                sha256: "conf_sha".to_string(),
+                md5: "conf_md5".to_string(),
+                bates_number: Some("CONF-0001".to_string()),
+                legal_hold: true,
+                source_format: "CyclicTest".to_string(),
+            };
+
+            writer.add_message(&msg, confidential_nid).expect("Add message failed");
+            writer.finalize().expect("Finalize failed");
+        }
+
+        // 2. Validate container
+        let report = PstValidator::validate(&mut buffer).expect("Validation failed");
+        assert!(report.is_valid);
+        assert_eq!(report.encryption_method, "High Encryption (NDB_CRYPT_CYCLIC)");
+
+        // 3. Read back with PstReader and test password verification
+        let mut reader = PstReader::open(&mut buffer).expect("Reader open failed");
+        assert_eq!(reader.get_encryption(), PstEncryption::Cyclic);
+        assert!(
+            reader.is_password_protected(),
+            "Must detect password protection on message store"
+        );
+        assert!(
+            reader.verify_password(secret),
+            "Correct password must verify successfully"
+        );
+        assert!(
+            !reader.verify_password("IncorrectPassword"),
+            "Wrong password must be rejected"
+        );
+
+        // 4. Verify message extraction under cyclic encryption
+        let messages = reader.read_all_messages().expect("Read messages failed");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].subject, "Privileged M&A Due Diligence");
+        assert_eq!(
+            messages[0].body_text,
+            "Confidential acquisition material encrypted with NDB_CRYPT_CYCLIC."
+        );
+        assert_eq!(messages[0].folder_path, vec!["Confidential".to_string()]);
     }
 }

@@ -52,10 +52,10 @@ Self-contained native executables with **zero external runtime dependencies** (n
 
 | Platform | Target Architecture | Distribution Package | Included Binaries |
 | :--- | :--- | :--- | :--- |
-| **Windows (64-bit)** | `x86_64-pc-windows-msvc` | [**`mail2rust-windows-x86_64.zip`**](https://github.com/adpaolucci/mail2rust/releases/latest) | `mail2rust.exe`, `mail2rust-gui.exe` |
-| **Linux (64-bit)** | `x86_64-unknown-linux-gnu` | [**`mail2rust-linux-x86_64.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest) | `mail2rust`, `mail2rust-gui` |
-| **macOS Apple Silicon** | `aarch64-apple-darwin` (M1/M2/M3/M4) | [**`mail2rust-macos-aarch64.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest) | `mail2rust`, `mail2rust-gui` |
-| **macOS Intel** | `x86_64-apple-darwin` | [**`mail2rust-macos-x86_64.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest) | `mail2rust`, `mail2rust-gui` |
+| **Windows (64-bit)** | `x86_64-pc-windows-msvc` | [**`mail2rust-x86_64-pc-windows-msvc.zip`**](https://github.com/adpaolucci/mail2rust/releases/latest/download/mail2rust-x86_64-pc-windows-msvc.zip) | `mail2rust.exe`, `mail2rust-gui.exe` |
+| **Linux (64-bit)** | `x86_64-unknown-linux-gnu` | [**`mail2rust-x86_64-unknown-linux-gnu.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest/download/mail2rust-x86_64-unknown-linux-gnu.tar.gz) | `mail2rust`, `mail2rust-gui` |
+| **macOS Apple Silicon** | `aarch64-apple-darwin` (M1/M2/M3/M4) | [**`mail2rust-aarch64-apple-darwin.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest/download/mail2rust-aarch64-apple-darwin.tar.gz) | `mail2rust`, `mail2rust-gui` |
+| **macOS Intel** | `x86_64-apple-darwin` | [**`mail2rust-x86_64-apple-darwin.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest/download/mail2rust-x86_64-apple-darwin.tar.gz) | `mail2rust`, `mail2rust-gui` |
 
 > Every release archive includes cryptographic `SHA256SUMS.txt` hashes and both the high-throughput CLI engine (`mail2rust`) and the native desktop management utility (`mail2rust-gui`).
 
@@ -224,19 +224,31 @@ mail2rust audit "evidence.mbox" \
 mail2rust sniff "unknown_archive_file"
 ```
 
-### 8. MS-PST Container Validation
-Verifies header magic, CRC-32 partial checksum, BREF root offsets, and format version:
+### 8. MS-PST Container Validation & Password Verification
+Verifies header magic, CRC-32 partial checksum, BREF root offsets, format version, and password verification:
 ```bash
-mail2rust validate-pst "archive.pst"
+mail2rust validate-pst "archive.pst" --password "TopSecret2026!"
 ```
 
-### 9. Native Desktop GUI Studio
+### 9. PST High Encryption & Password Protection
+Export PST files with high-security cyclic permutation (`NDB_CRYPT_CYCLIC`) and Outlook password protection (`PidTagPstPassword` / `dwPasswordCRC`):
+```bash
+# Export PST with High Encryption (Cyclic) and password protection
+mail2rust pst "evidence.mbox" "secure_archive.pst" \
+  --encryption cyclic \
+  --password "TopSecretLegal2026!"
+
+# Validate container and verify password match
+mail2rust validate-pst "secure_archive.pst" --password "TopSecretLegal2026!"
+```
+
+### 10. Native Desktop GUI Studio
 Launch the 100% pure Rust desktop workbench (zero Node.js or WebView2 dependencies):
 ```bash
 mail2rust gui
 ```
 
-### 10. Direct IMAP Live Ingestion (`mail2rust imap`)
+### 11. Direct IMAP Live Ingestion (`mail2rust imap`)
 Directly ingest mailboxes from any IMAP server over TLS/SSL into PST, MBOX, or EML containers:
 ```bash
 # Ingest live Gmail account directly into a 64-bit Outlook PST

@@ -5,6 +5,23 @@ All notable changes to `mail2rust` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-11-07
+
+### Added
+- **PST High Encryption (`NDB_CRYPT_CYCLIC`)**:
+  - Implemented the official Microsoft `[MS-PST]` 5.2 Cyclic Obfuscation symmetric cipher using the 768-byte `MPBB` master permutation table.
+  - Generates dynamic block-level cryptographic state keys from the lower 32-bit DWORD of each block's BID (`w = key ^ (key >> 16)`).
+  - Verified 100% bijective mathematical symmetry across write and read cycles in both `PstWriter` and `PstReader`.
+- **PST Password Protection & Checksum Verification (`dwPasswordCRC`)**:
+  - Implemented Outlook Message Store `PidTagPstPassword` (`0x67FF0003`) CRC-32 password generation on `NID_MESSAGE_STORE` (0x21).
+  - Added password detection (`is_password_protected`) and verification (`verify_password`) in `PstReader` and `PstValidator`.
+  - Added CLI `--password <str>` flag for `mail2rust pst`, `mail2rust convert`, and `mail2rust validate-pst`.
+  - Added CLI `--encryption <none|permute|cyclic>` flag to customize container security mode.
+  - Added interactive Win32 password and encryption property fields in GUI Export dialog and Container Validator modal.
+- **Cross-Platform Pre-Compiled Release Packages**:
+  - Automated GitHub Releases workflow (`.github/workflows/release.yml`) compiling standalone, zero-dependency release binaries for `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, and `x86_64-apple-darwin`.
+  - Generates verifiable `SHA256SUMS.txt` cryptographic digests for all distribution packages.
+
 ## [3.2.0] - 2026-11-07
 
 ### Added
