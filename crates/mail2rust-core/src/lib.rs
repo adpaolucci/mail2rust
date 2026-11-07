@@ -1,0 +1,92 @@
+pub mod logging;
+pub mod models;
+pub mod readers;
+pub mod sniffer;
+
+pub use logging::init_logging;
+pub use models::{Attachment, EmailAddress, EmailMessage, Importance, MailboxFolder, MapiProperty, MessageFlags};
+pub use readers::eml::EmlReader;
+pub use readers::emlx::EmlxReader;
+pub use readers::maildir::MaildirReader;
+pub use readers::mbox::MboxReader;
+pub use readers::msg::MsgReader;
+pub use readers::olm::OlmReader;
+pub use readers::mh::MhReader;
+pub use readers::mmdf::MmdfReader;
+pub use readers::babyl::BabylReader;
+pub use sniffer::{FormatSniffer, MailboxFormat};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_email_address_parsing() {
+        let addr = EmailAddress::parse("\"Alice Vance\" <alice@example.com>");
+        assert_eq!(addr.name, "Alice Vance");
+        assert_eq!(addr.email, "alice@example.com");
+
+        let plain = EmailAddress::parse("bob@example.com");
+        assert_eq!(plain.name, "bob@example.com");
+        assert_eq!(plain.email, "bob@example.com");
+    }
+
+    #[test]
+    fn test_eml_parser_simple() {
+        let raw = b"From: Alice <alice@example.com>\r\n\
+To: Bob <bob@example.com>\r\n\
+Subject: Test Email Subject\r\n\
+Date: Fri, 01 Nov 2026 12:00:00 +0000\r\n\
+Message-ID: <test01@example.com>\r\n\
+\r\n\
+Hello Bob, this is a plain text email message.";
+
+        let msg = EmlReader::parse(raw, vec!["Inbox".to_string()]).expect("Failed to parse EML");
+        assert_eq!(msg.subject, "Test Email Subject");
+        assert_eq!(msg.from.email, "alice@example.com");
+        assert_eq!(msg.to[0].email, "bob@example.com");
+        assert!(msg.body_text.contains("Hello Bob"));
+        assert_eq!(msg.folder_path, vec!["Inbox"]);
+    }
+
+    #[test]
+    fn test_eml_rfc2047_decoding() {
+        // Base64 encoded UTF-8 subject: "Hello World"
+        let b64 = "=?UTF-8?B?SGVsbG8gV29ybGQ=?=";
+        assert_eq!(EmlReader::decode_rfc2047(b64), "Hello World");
+
+        // Quoted-Printable encoded: "Hello_World"
+        let qp = "=?ISO-8859-1?Q?Hello=20World?=";
+        assert_eq!(EmlReader::decode_rfc2047(qp), "Hello World");
+    }
+
+    #[test]
+    fn test_mbox_reader_streaming() {
+        let mbox_data = b"From sender@example.com Fri Nov 01 12:00:00 2026\r\n\
+From: sender@example.com\r\n\
+Subject: Message 1\r\n\
+\r\n\
+First body\r\n\
+From sender@example.com Fri Nov 01 12:01:00 2026\r\n\
+From: sender@example.com\r\n\
+Subject: Message 2\r\n\
+\r\n\
+>From unescaped line\r\n";
+
+        let msgs = MboxReader::read_all(&mbox_data[..], vec!["Archive".to_string()])
+            .expect("Mbox parse failed");
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].subject, "Message 1");
+        assert_eq!(msgs[1].subject, "Message 2");
+        assert!(msgs[1].body_text.contains("From unescaped line"));
+    }
+
+    #[test]
+    fn test_format_sniffer() {
+        assert_eq!(FormatSniffer::sniff_bytes(b"!BDN\x00\x00", "pst"), MailboxFormat::Pst);
+        assert_eq!(FormatSniffer::sniff_bytes(b"!BDO\x00\x00", "ost"), MailboxFormat::Ost);
+        assert_eq!(FormatSniffer::sniff_bytes(&[0xCF, 0xAD, 0x12, 0xFE], "dbx"), MailboxFormat::Dbx);
+        assert_eq!(FormatSniffer::sniff_bytes(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1], "msg"), MailboxFormat::Msg);
+        assert_eq!(FormatSniffer::sniff_bytes(b"From user@host", "mbox"), MailboxFormat::Mbox);
+    }
+}

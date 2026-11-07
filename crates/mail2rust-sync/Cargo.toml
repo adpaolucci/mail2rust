@@ -1,0 +1,17 @@
+[package]
+name = "mail2rust-sync"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Incremental delta sync, high-watermark UID tracking, and resumable migration checkpoint engine"
+
+[dependencies]
+mail2rust-core.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3.17"

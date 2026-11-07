@@ -1,0 +1,30 @@
+[package]
+name = "mail2rust-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Unified high-performance offline email and mailbox conversion suite in pure Rust"
+
+[[bin]]
+name = "mail2rust"
+path = "src/main.rs"
+
+[dependencies]
+mail2rust-core.workspace = true
+mail2rust-pst.workspace = true
+mail2rust-eml.workspace = true
+mail2rust-mbox.workspace = true
+mail2rust-filter.workspace = true
+mail2rust-forensics.workspace = true
+mail2rust-sync.workspace = true
+clap.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+tempfile = "3.17"

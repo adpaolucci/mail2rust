@@ -1,0 +1,51 @@
+[workspace]
+members = [
+    "crates/mail2rust-core",
+    "crates/mail2rust-pst",
+    "crates/mail2rust-eml",
+    "crates/mail2rust-mbox",
+    "crates/mail2rust-filter",
+    "crates/mail2rust-forensics",
+    "crates/mail2rust-sync",
+    "crates/mail2rust-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "3.2.0"
+edition = "2021"
+authors = ["Anthony D. Paolucci <adpaolucci@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/adpaolucci/mail2rust"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+crc32fast = "1.4"
+sha2 = "0.10"
+md-5 = "0.10"
+byteorder = "1.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+flate2 = "1.0"
+walkdir = "2.5"
+regex = "1.11"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+clap = { version = "4.5", features = ["derive"] }
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+
+mail2rust-core = { path = "crates/mail2rust-core" }
+mail2rust-pst = { path = "crates/mail2rust-pst" }
+mail2rust-eml = { path = "crates/mail2rust-eml" }
+mail2rust-mbox = { path = "crates/mail2rust-mbox" }
+mail2rust-filter = { path = "crates/mail2rust-filter" }
+mail2rust-forensics = { path = "crates/mail2rust-forensics" }
+mail2rust-sync = { path = "crates/mail2rust-sync" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

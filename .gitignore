@@ -1,8 +1,16 @@
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Node / Web artifacts
 node_modules/
 build/
 dist/
 coverage/
+
+# OS / Editor artifacts
 .DS_Store
 *.log
 .env*
 !.env.example
+*.tmp

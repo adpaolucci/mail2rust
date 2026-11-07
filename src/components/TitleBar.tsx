@@ -21,7 +21,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         <div className="w-5 h-5 rounded bg-blue-600 flex items-center justify-center text-white shadow-sm">
           <Mail className="w-3.5 h-3.5" />
         </div>
-        <span className="font-semibold text-slate-100 tracking-tight">Mail2Mail Studio Desktop</span>
+        <span className="font-semibold text-slate-100 tracking-tight">Mail2Rust Studio Desktop</span>
         <span className="text-slate-500 font-mono text-[11px]">v3.2.0</span>
         <span className="hidden sm:inline-block text-slate-500">|</span>
         <span className="hidden md:inline-block text-slate-400 text-[11px]">

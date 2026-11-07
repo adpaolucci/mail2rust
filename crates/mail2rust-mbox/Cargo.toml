@@ -1,0 +1,16 @@
+[package]
+name = "mail2rust-mbox"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "High-throughput mboxrd exporter conforming to RFC 4155 with optional compression"
+
+[dependencies]
+mail2rust-core.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+flate2.workspace = true
+
+[dev-dependencies]
+tempfile = "3.17"

@@ -1,0 +1,26 @@
+[package]
+name = "mail2rust-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Core email models, RFC 5322 MIME parser, and format readers for mail2rust"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+md-5.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+walkdir.workspace = true
+regex.workspace = true
+uuid.workspace = true
+flate2.workspace = true
+byteorder.workspace = true
+crc32fast.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+tempfile = "3.17"
