@@ -28,7 +28,7 @@
 ![Desktop Main View](docs/screenshots/desktop-main.png)
 
 <details open>
-<summary><b>Click to view more screenshots (Live IMAP Ingestion, Selective Export, Forensics, MAPI Inspector, Thread Splitter)</b></summary>
+<summary><b>Click to view more screenshots (Live IMAP Ingestion, Selective Export, Forensics, MAPI Inspector, Thread Splitter, Architecture)</b></summary>
 
 | Direct IMAP Live Ingestion (TLS/SSL) | Selective Checked Items & Multi-Format Export |
 | :---: | :---: |
@@ -38,9 +38,13 @@
 | :---: | :---: |
 | ![Thread Splitter](docs/screenshots/auto-split-modal.png) | ![MAPI Inspector](docs/screenshots/mapi-inspector.png) |
 
-| eDiscovery Forensics & Bates Stamping | Rust Workspace Architecture |
+| eDiscovery Forensics & Bates Stamping | Chain-of-Custody Compliance Certificate |
 | :---: | :---: |
-| ![Forensics Modal](docs/screenshots/forensics-modal.png) | ![Rust Codebase](docs/screenshots/rust-codebase-modal.png) |
+| ![Forensics Modal](docs/screenshots/forensics-modal.png) | ![Compliance Report](docs/screenshots/export-report-modal.png) |
+
+| Rust Workspace Architecture (10 Crates) | |
+| :---: | :---: |
+| ![Rust Codebase](docs/screenshots/rust-codebase-modal.png) | |
 
 </details>
 
