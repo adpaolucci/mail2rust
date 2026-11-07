@@ -1,6 +1,22 @@
 use chrono::{TimeZone, Utc};
 use mail2rust_core::{Attachment, EmailAddress, EmailMessage, Importance, MessageFlags};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortColumn {
+    Importance,
+    Flags,
+    Subject,
+    From,
+    Date,
+    Size,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortDirection {
+    Ascending,
+    Descending,
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct GuiFolder {
@@ -42,11 +58,18 @@ pub struct AppState {
     pub active_tab: ActiveTab,
     pub active_modal: ActiveModal,
 
+    // Win32 Management Console Layout & Sorting
+    pub sort_column: SortColumn,
+    pub sort_direction: SortDirection,
+    pub show_tree_pane: bool,
+    pub show_preview_pane: bool,
+
     // Open Mailbox States
     pub open_mailbox_path: String,
     pub open_mailbox_status: Option<String>,
 
     // Modal Form States
+    #[allow(dead_code)]
     pub pst_source_path: String,
     pub pst_dest_path: String,
     pub pst_max_gb: usize,
@@ -93,6 +116,11 @@ impl Default for AppState {
             active_tab: ActiveTab::Preview,
             active_modal: ActiveModal::None,
 
+            sort_column: SortColumn::Date,
+            sort_direction: SortDirection::Descending,
+            show_tree_pane: true,
+            show_preview_pane: true,
+
             open_mailbox_path: String::new(),
             open_mailbox_status: None,
 
@@ -131,6 +159,18 @@ impl AppState {
         self.messages.iter().find(|m| &m.id == id)
     }
 
+    pub fn toggle_sort(&mut self, col: SortColumn) {
+        if self.sort_column == col {
+            self.sort_direction = match self.sort_direction {
+                SortDirection::Ascending => SortDirection::Descending,
+                SortDirection::Descending => SortDirection::Ascending,
+            };
+        } else {
+            self.sort_column = col;
+            self.sort_direction = SortDirection::Ascending;
+        }
+    }
+
     pub fn rebuild_folders_from_messages(&mut self) {
         let mut map: std::collections::BTreeMap<String, (usize, usize)> = std::collections::BTreeMap::new();
         for m in &self.messages {
@@ -166,7 +206,8 @@ impl AppState {
 
     pub fn filtered_messages(&self) -> Vec<&EmailMessage> {
         let q = self.search_query.to_lowercase();
-        self.messages
+        let mut list: Vec<&EmailMessage> = self
+            .messages
             .iter()
             .filter(|m| {
                 // Folder match
@@ -200,18 +241,52 @@ impl AppState {
 
                 // Search query match
                 if !q.is_empty() {
-                    let matches_subj = m.subject.to_lowercase().contains(&q);
-                    let matches_from =
-                        m.from.name.to_lowercase().contains(&q) || m.from.email.to_lowercase().contains(&q);
-                    let matches_body = m.body_text.to_lowercase().contains(&q);
-                    if !matches_subj && !matches_from && !matches_body {
+                    let in_subject = m.subject.to_lowercase().contains(&q);
+                    let in_sender = m.from.name.to_lowercase().contains(&q) || m.from.email.to_lowercase().contains(&q);
+                    let in_body = m.body_text.to_lowercase().contains(&q);
+                    let in_id = m.id.to_lowercase().contains(&q) || m.message_id.to_lowercase().contains(&q);
+                    if !in_subject && !in_sender && !in_body && !in_id {
                         return false;
                     }
                 }
 
                 true
             })
-            .collect()
+            .collect();
+
+        // Apply sorting based on column and direction
+        list.sort_by(|a, b| {
+            let cmp = match self.sort_column {
+                SortColumn::Importance => {
+                    let rank = |imp: &Importance| match imp {
+                        Importance::High => 2,
+                        Importance::Normal => 1,
+                        Importance::Low => 0,
+                    };
+                    rank(&a.importance).cmp(&rank(&b.importance))
+                }
+                SortColumn::Flags => {
+                    let a_read = a.flags.read as u8;
+                    let b_read = b.flags.read as u8;
+                    a_read.cmp(&b_read)
+                }
+                SortColumn::Subject => a.subject.to_lowercase().cmp(&b.subject.to_lowercase()),
+                SortColumn::From => {
+                    let a_from = format!("{} {}", a.from.name, a.from.email).to_lowercase();
+                    let b_from = format!("{} {}", b.from.name, b.from.email).to_lowercase();
+                    a_from.cmp(&b_from)
+                }
+                SortColumn::Date => a.date.cmp(&b.date),
+                SortColumn::Size => a.size_bytes.cmp(&b.size_bytes),
+            };
+
+            match self.sort_direction {
+                SortDirection::Ascending => cmp,
+                SortDirection::Descending => cmp.reverse(),
+            }
+        });
+
+        list
     }
 }
 

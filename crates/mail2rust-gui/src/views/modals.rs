@@ -1,5 +1,5 @@
 use crate::state::{ActiveModal, AppState};
-use eframe::egui::{self, Color32, RichText, Vec2};
+use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 use mail2rust_filter::{SplitConfig, VolumeSplitter};
 use mail2rust_forensics::ForensicEngine;
 use mail2rust_pst::{PstValidator, PstWriter};
@@ -12,34 +12,43 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
 
         ActiveModal::OpenMailbox => {
             let mut is_open = true;
-            egui::Window::new("📂 Open Mailbox Archive / Directory")
+            egui::Window::new("Open Mailbox Archive / Directory")
                 .open(&mut is_open)
                 .resizable(false)
-                .fixed_size(Vec2::new(540.0, 240.0))
+                .fixed_size(Vec2::new(520.0, 220.0))
                 .show(ctx, |ui| {
-                    ui.label("Ingest emails from any format: MBOX, Maildir, Apple Mail, Takeout .zip, .eml directory, OLM, or MSG.");
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
+                    ui.label("Ingest messages from MBOX, Maildir, Apple Mail EMLX, Google Takeout .zip, EML folder, OLM, or MSG.");
+                    ui.add_space(6.0);
 
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mailbox Path:").strong());
-                        ui.add(egui::TextEdit::singleline(&mut state.open_mailbox_path).desired_width(380.0));
+                    // GroupBox: Path Specification
+                    win32_groupbox(ui, "Source Archive / Folder Path", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Path:").strong().size(11.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.open_mailbox_path).desired_width(380.0));
+                        });
                     });
 
-                    ui.add_space(14.0);
+                    if let Some(ref st) = state.open_mailbox_status {
+                        ui.add_space(4.0);
+                        let is_err = st.starts_with("Error");
+                        let color = if is_err { Color32::from_rgb(180, 0, 0) } else { Color32::from_rgb(0, 120, 0) };
+                        ui.label(RichText::new(st).color(color).size(11.0));
+                    }
+
+                    ui.add_space(8.0);
                     ui.separator();
-                    ui.add_space(10.0);
+                    ui.add_space(6.0);
 
-                    ui.horizontal(|ui| {
-                        let load_btn = egui::Button::new(RichText::new("Ingest & Load Mailbox").color(Color32::WHITE).strong())
-                            .fill(Color32::from_rgb(37, 99, 235))
-                            .min_size(Vec2::new(170.0, 32.0));
+                    // Win32 Standard Bottom Buttons (right aligned, 75x23 px)
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if win32_dialog_button(ui, "Cancel") {
+                            state.active_modal = ActiveModal::None;
+                        }
 
-                        if ui.add(load_btn).clicked() {
+                        if win32_dialog_button(ui, "Open / Ingest") {
                             let path = state.open_mailbox_path.trim().to_string();
                             if path.is_empty() {
-                                state.open_mailbox_status = Some("Error: Please provide a valid file or folder path.".to_string());
+                                state.open_mailbox_status = Some("Error: Please specify a valid file or folder path.".to_string());
                             } else {
                                 let p = Path::new(&path);
                                 match mail2rust_core::ingest_path(p) {
@@ -48,28 +57,17 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                         state.messages = msgs;
                                         state.rebuild_folders_from_messages();
                                         state.open_mailbox_status = Some(format!(
-                                            "Successfully ingested {} messages across {} folders from '{}'.",
-                                            count, state.folders.len(), path
+                                            "Loaded {} message(s) across {} folder(s).",
+                                            count, state.folders.len()
                                         ));
                                     }
                                     Err(e) => {
-                                        state.open_mailbox_status = Some(format!("Error loading mailbox: {}", e));
+                                        state.open_mailbox_status = Some(format!("Error: {}", e));
                                     }
                                 }
                             }
                         }
-
-                        if ui.button("Close").clicked() {
-                            state.active_modal = ActiveModal::None;
-                        }
                     });
-
-                    if let Some(ref st) = state.open_mailbox_status {
-                        ui.add_space(8.0);
-                        let is_err = st.starts_with("Error");
-                        let color = if is_err { Color32::from_rgb(239, 68, 68) } else { Color32::from_rgb(34, 197, 94) };
-                        ui.label(RichText::new(st).color(color).strong());
-                    }
                 });
 
             if !is_open {
@@ -79,52 +77,56 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
 
         ActiveModal::DirectPst => {
             let mut is_open = true;
-            egui::Window::new("⚡ Direct PST Generation (Zero Outlook Dependency)")
+            egui::Window::new("Export to Microsoft Outlook PST")
                 .open(&mut is_open)
                 .resizable(false)
-                .fixed_size(Vec2::new(540.0, 380.0))
+                .fixed_size(Vec2::new(540.0, 360.0))
                 .show(ctx, |ui| {
-                    ui.label(
-                        RichText::new("Generate binary-compliant Microsoft Outlook Unicode PST files directly on Linux, macOS, or Windows using pure Rust [MS-PST] NDB architecture.")
-                            .color(Color32::from_rgb(148, 163, 184))
-                            .small(),
-                    );
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
+                    ui.label("Generate [MS-PST] 64-bit Unicode PST archives directly using pure Rust (zero Outlook/MAPI COM).");
+                    ui.add_space(6.0);
 
-                    egui::Grid::new("pst_form").spacing([10.0, 10.0]).show(ui, |ui| {
-                        ui.label(RichText::new("Source Mailbox:").strong());
-                        ui.add(egui::TextEdit::singleline(&mut state.pst_source_path).desired_width(380.0));
-                        ui.end_row();
+                    // GroupBox: Target Files
+                    win32_groupbox(ui, "Destination PST Container", |ui| {
+                        egui::Grid::new("pst_form").spacing([8.0, 6.0]).show(ui, |ui| {
+                            ui.label(RichText::new("Destination File:").size(11.0).strong());
+                            ui.add(egui::TextEdit::singleline(&mut state.pst_dest_path).desired_width(360.0));
+                            ui.end_row();
 
-                        ui.label(RichText::new("Destination PST:").strong());
-                        ui.add(egui::TextEdit::singleline(&mut state.pst_dest_path).desired_width(380.0));
-                        ui.end_row();
+                            ui.label(RichText::new("Root Folder Name:").size(11.0).strong());
+                            ui.add(egui::TextEdit::singleline(&mut state.pst_root).desired_width(200.0));
+                            ui.end_row();
 
-                        ui.label(RichText::new("Max PST Size (GB):").strong());
-                        ui.add(egui::DragValue::new(&mut state.pst_max_gb).range(1..=100));
-                        ui.end_row();
-
-                        ui.label(RichText::new("Root Folder Name:").strong());
-                        ui.add(egui::TextEdit::singleline(&mut state.pst_root).desired_width(200.0));
-                        ui.end_row();
+                            ui.label(RichText::new("Volume Limit (GB):").size(11.0).strong());
+                            ui.add(egui::DragValue::new(&mut state.pst_max_gb).range(1..=50));
+                            ui.end_row();
+                        });
                     });
 
-                    ui.add_space(10.0);
-                    ui.checkbox(&mut state.pst_cluster_threads, "Preserve Email Conversation Threads (Cluster before split)");
-                    ui.checkbox(&mut state.pst_compress, "Enable Compressible Encryption (NDB_CRYPT_PERMUTE)");
+                    ui.add_space(4.0);
 
-                    ui.add_space(14.0);
+                    // GroupBox: Conversion Options
+                    win32_groupbox(ui, "Options", |ui| {
+                        ui.checkbox(&mut state.pst_cluster_threads, "Preserve email conversation threads across volume boundaries");
+                        ui.checkbox(&mut state.pst_compress, "Enable compressible encryption (NDB_CRYPT_PERMUTE)");
+                    });
+
+                    if let Some(ref msg) = state.pst_status_message {
+                        ui.add_space(4.0);
+                        let is_err = msg.starts_with("Error");
+                        let color = if is_err { Color32::from_rgb(180, 0, 0) } else { Color32::from_rgb(0, 120, 0) };
+                        ui.label(RichText::new(msg).color(color).size(11.0));
+                    }
+
+                    ui.add_space(8.0);
                     ui.separator();
-                    ui.add_space(10.0);
+                    ui.add_space(6.0);
 
-                    ui.horizontal(|ui| {
-                        let run_btn = egui::Button::new(RichText::new("Generate Outlook PST").color(Color32::WHITE).strong())
-                            .fill(Color32::from_rgb(37, 99, 235))
-                            .min_size(Vec2::new(180.0, 32.0));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if win32_dialog_button(ui, "Close") {
+                            state.active_modal = ActiveModal::None;
+                        }
 
-                        if ui.add(run_btn).clicked() {
+                        if win32_dialog_button(ui, "Generate PST") {
                             let dest_path = state.pst_dest_path.trim().to_string();
                             if dest_path.is_empty() {
                                 state.pst_status_message = Some("Error: Destination PST path cannot be empty.".to_string());
@@ -159,12 +161,12 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                                 } else if let Ok(vfile) = File::open(&dest_path) {
                                                     if let Ok(report) = PstValidator::validate(vfile) {
                                                         state.pst_status_message = Some(format!(
-                                                            "Success: Generated valid [MS-PST] Unicode container for {} messages with CRC-32 (0x{:08X}) match.",
+                                                            "Success: Exported {} messages to valid [MS-PST] Unicode container (CRC-32: 0x{:08X}).",
                                                             msg_written, report.calculated_crc
                                                         ));
                                                     } else {
                                                         state.pst_status_message = Some(format!(
-                                                            "Success: Generated PST with {} messages.", msg_written
+                                                            "Success: Exported {} messages to PST.", msg_written
                                                         ));
                                                     }
                                                 }
@@ -180,18 +182,7 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                 }
                             }
                         }
-
-                        if ui.button("Close").clicked() {
-                            state.active_modal = ActiveModal::None;
-                        }
                     });
-
-                    if let Some(ref msg) = state.pst_status_message {
-                        ui.add_space(10.0);
-                        let is_err = msg.starts_with("Error");
-                        let color = if is_err { Color32::from_rgb(239, 68, 68) } else { Color32::from_rgb(34, 197, 94) };
-                        ui.label(RichText::new(msg).color(color).strong());
-                    }
                 });
 
             if !is_open {
@@ -201,30 +192,42 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
 
         ActiveModal::AutoSplit => {
             let mut is_open = true;
-            egui::Window::new("✂ Auto-Split Mailbox by Capacity / Year")
+            egui::Window::new("Auto-Split Mailbox by Capacity / Year")
                 .open(&mut is_open)
                 .resizable(false)
-                .fixed_size(Vec2::new(500.0, 300.0))
+                .fixed_size(Vec2::new(480.0, 260.0))
                 .show(ctx, |ui| {
-                    ui.label("Split large multi-gigabyte mail archives across manageable volumes without breaking reply chains.");
+                    ui.label(
+                        "Partition oversized mail archives across multiple volumes without splitting reply chains.",
+                    );
+                    ui.add_space(6.0);
+
+                    win32_groupbox(ui, "Volume Split Sizing", |ui| {
+                        ui.radio_value(&mut state.pst_max_gb, 15, "15 GB Volume Ceiling (Outlook Legacy Safe)");
+                        ui.radio_value(&mut state.pst_max_gb, 20, "20 GB Volume Ceiling (Recommended Default)");
+                        ui.radio_value(&mut state.pst_max_gb, 50, "50 GB Maximum Unicode PST Limit");
+                        ui.add_space(4.0);
+                        ui.checkbox(
+                            &mut state.pst_cluster_threads,
+                            "Maintain Thread Integrity (keep conversations in same volume)",
+                        );
+                    });
+
+                    if let Some(ref msg) = state.pst_status_message {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(msg).color(Color32::from_rgb(0, 120, 0)).size(11.0));
+                    }
+
                     ui.add_space(8.0);
                     ui.separator();
-                    ui.add_space(8.0);
+                    ui.add_space(6.0);
 
-                    ui.label(RichText::new("Split Strategy:").strong());
-                    ui.radio_value(&mut state.pst_max_gb, 15, "15 GB Volume Ceiling (Outlook Standard)");
-                    ui.radio_value(&mut state.pst_max_gb, 20, "20 GB Volume Ceiling (Modern Default)");
-                    ui.radio_value(&mut state.pst_max_gb, 50, "50 GB Maximum Unicode PST Limit");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if win32_dialog_button(ui, "Close") {
+                            state.active_modal = ActiveModal::None;
+                        }
 
-                    ui.add_space(8.0);
-                    ui.checkbox(&mut state.pst_cluster_threads, "Thread Clustering: Ensure replies stay in same volume");
-
-                    ui.add_space(14.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-
-                    ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Execute Volume Split").color(Color32::WHITE).strong()).clicked() {
+                        if win32_dialog_button(ui, "Split Now") {
                             let config = SplitConfig {
                                 max_volume_bytes: state.pst_max_gb * 1024 * 1024 * 1024,
                                 cluster_threads: state.pst_cluster_threads,
@@ -232,19 +235,12 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                             };
                             let volumes = VolumeSplitter::split(&state.messages, &config);
                             state.pst_status_message = Some(format!(
-                                "Volume split completed: Successfully clustered {} messages into {} volumes.",
-                                state.messages.len(), volumes.len()
+                                "Success: Split {} messages into {} volumes.",
+                                state.messages.len(),
+                                volumes.len()
                             ));
                         }
-                        if ui.button("Close").clicked() {
-                            state.active_modal = ActiveModal::None;
-                        }
                     });
-
-                    if let Some(ref msg) = state.pst_status_message {
-                        ui.add_space(10.0);
-                        ui.label(RichText::new(msg).color(Color32::from_rgb(34, 197, 94)).strong());
-                    }
                 });
 
             if !is_open {
@@ -254,62 +250,60 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
 
         ActiveModal::FilterCriteria => {
             let mut is_open = true;
-            egui::Window::new("🏷 Granular Query & Filter Rules")
+            egui::Window::new("Query & Filter Criteria")
                 .open(&mut is_open)
                 .resizable(false)
-                .fixed_size(Vec2::new(500.0, 340.0))
+                .fixed_size(Vec2::new(480.0, 310.0))
                 .show(ctx, |ui| {
-                    ui.label("Filter messages by date interval, folder wildcard rules, and deletion status.");
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
+                    ui.label("Filter messages by date range, folder pattern globs, and deletion status.");
+                    ui.add_space(6.0);
 
-                    egui::Grid::new("filter_grid").spacing([10.0, 10.0]).show(ui, |ui| {
-                        ui.label(RichText::new("Since / After Date:").strong());
-                        ui.add(egui::TextEdit::singleline(&mut state.filter_since).hint_text("YYYY-MM-DD or RFC 2822"));
-                        ui.end_row();
+                    win32_groupbox(ui, "Date and Folder Rules", |ui| {
+                        egui::Grid::new("filter_grid").spacing([8.0, 6.0]).show(ui, |ui| {
+                            ui.label(RichText::new("Since Date:").size(11.0).strong());
+                            ui.add(egui::TextEdit::singleline(&mut state.filter_since).hint_text("YYYY-MM-DD"));
+                            ui.end_row();
 
-                        ui.label(RichText::new("Until / Before Date:").strong());
-                        ui.add(egui::TextEdit::singleline(&mut state.filter_until).hint_text("YYYY-MM-DD or RFC 2822"));
-                        ui.end_row();
+                            ui.label(RichText::new("Until Date:").size(11.0).strong());
+                            ui.add(egui::TextEdit::singleline(&mut state.filter_until).hint_text("YYYY-MM-DD"));
+                            ui.end_row();
 
-                        ui.label(RichText::new("Include Folders (Glob):").strong());
-                        ui.add(
-                            egui::TextEdit::singleline(&mut state.filter_include_folder)
-                                .hint_text("e.g. Projects/*;*Inbox*"),
-                        );
-                        ui.end_row();
+                            ui.label(RichText::new("Include Glob:").size(11.0).strong());
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.filter_include_folder).hint_text("Projects/*"),
+                            );
+                            ui.end_row();
 
-                        ui.label(RichText::new("Exclude Folders (Glob):").strong());
-                        ui.add(
-                            egui::TextEdit::singleline(&mut state.filter_exclude_folder)
-                                .hint_text("e.g. *Trash*;*Spam*"),
-                        );
-                        ui.end_row();
+                            ui.label(RichText::new("Exclude Glob:").size(11.0).strong());
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.filter_exclude_folder)
+                                    .hint_text("*Trash*;*Spam*"),
+                            );
+                            ui.end_row();
+                        });
+
+                        ui.add_space(4.0);
+                        ui.checkbox(&mut state.filter_include_deleted, "Include deleted / expunged items");
                     });
 
-                    ui.add_space(10.0);
-                    ui.checkbox(&mut state.filter_include_deleted, "Include Deleted / Expunged Messages");
-
-                    ui.add_space(14.0);
-                    ui.separator();
                     ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(6.0);
 
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button(RichText::new("Apply Filter Criteria").color(Color32::WHITE).strong())
-                            .clicked()
-                        {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if win32_dialog_button(ui, "Cancel") {
                             state.active_modal = ActiveModal::None;
                         }
-                        if ui.button("Reset Defaults").clicked() {
+
+                        if win32_dialog_button(ui, "Reset") {
                             state.filter_since.clear();
                             state.filter_until.clear();
                             state.filter_include_folder.clear();
                             state.filter_exclude_folder = "*Trash*;*Spam*".to_string();
                             state.filter_include_deleted = false;
                         }
-                        if ui.button("Cancel").clicked() {
+
+                        if win32_dialog_button(ui, "Apply") {
                             state.active_modal = ActiveModal::None;
                         }
                     });
@@ -322,51 +316,53 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
 
         ActiveModal::Forensics => {
             let mut is_open = true;
-            egui::Window::new("⚖ Forensic eDiscovery & Bates Stamping")
+            egui::Window::new("Forensic Bates Stamping & Audit Manifest")
                 .open(&mut is_open)
                 .resizable(false)
-                .fixed_size(Vec2::new(540.0, 380.0))
+                .fixed_size(Vec2::new(520.0, 320.0))
                 .show(ctx, |ui| {
-                    ui.label("Generate chain-of-custody audit manifests and apply cryptographic Bates stamping.");
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
+                    ui.label("Apply sequential Bates stamping and generate forensic chain-of-custody manifests.");
+                    ui.add_space(6.0);
 
-                    egui::Grid::new("forensics_grid").spacing([10.0, 10.0]).show(ui, |ui| {
-                        ui.label(RichText::new("Case Number:").strong());
-                        ui.add(egui::TextEdit::singleline(&mut state.case_number).desired_width(260.0));
-                        ui.end_row();
+                    win32_groupbox(ui, "eDiscovery Properties", |ui| {
+                        egui::Grid::new("forensics_grid").spacing([8.0, 6.0]).show(ui, |ui| {
+                            ui.label(RichText::new("Case Number:").size(11.0).strong());
+                            ui.add(egui::TextEdit::singleline(&mut state.case_number).desired_width(220.0));
+                            ui.end_row();
 
-                        ui.label(RichText::new("Lead Examiner:").strong());
-                        ui.add(egui::TextEdit::singleline(&mut state.examiner).desired_width(260.0));
-                        ui.end_row();
+                            ui.label(RichText::new("Examiner Name:").size(11.0).strong());
+                            ui.add(egui::TextEdit::singleline(&mut state.examiner).desired_width(220.0));
+                            ui.end_row();
 
-                        ui.label(RichText::new("Bates Prefix:").strong());
-                        ui.add(egui::TextEdit::singleline(&mut state.bates_prefix).desired_width(180.0));
-                        ui.end_row();
+                            ui.label(RichText::new("Bates Prefix:").size(11.0).strong());
+                            ui.add(egui::TextEdit::singleline(&mut state.bates_prefix).desired_width(160.0));
+                            ui.end_row();
 
-                        ui.label(RichText::new("Bates Start Number:").strong());
-                        ui.add(egui::DragValue::new(&mut state.bates_start));
-                        ui.end_row();
+                            ui.label(RichText::new("Start Number:").size(11.0).strong());
+                            ui.add(egui::DragValue::new(&mut state.bates_start));
+                            ui.end_row();
 
-                        ui.label(RichText::new("Audit Manifest CSV:").strong());
-                        ui.add(egui::TextEdit::singleline(&mut state.manifest_csv_path).desired_width(340.0));
-                        ui.end_row();
+                            ui.label(RichText::new("Manifest CSV:").size(11.0).strong());
+                            ui.add(egui::TextEdit::singleline(&mut state.manifest_csv_path).desired_width(320.0));
+                            ui.end_row();
+                        });
                     });
 
-                    ui.add_space(14.0);
-                    ui.separator();
-                    ui.add_space(8.0);
+                    if let Some(ref res) = state.forensics_result {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(res).color(Color32::from_rgb(0, 120, 0)).size(11.0));
+                    }
 
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button(
-                                RichText::new("Generate Forensic Manifest")
-                                    .color(Color32::WHITE)
-                                    .strong(),
-                            )
-                            .clicked()
-                        {
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if win32_dialog_button(ui, "Close") {
+                            state.active_modal = ActiveModal::None;
+                        }
+
+                        if win32_dialog_button(ui, "Execute Stamping") {
                             let range = ForensicEngine::apply_bates_stamping(
                                 &mut state.messages,
                                 &state.bates_prefix,
@@ -374,19 +370,11 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                 7,
                             );
                             state.forensics_result = Some(format!(
-                                "Bates Stamping Applied: {} through {}. Root Merkle Digest Calculated.",
+                                "Success: Applied Bates numbering ({} through {}). Merkle root recorded.",
                                 range.start, range.end
                             ));
                         }
-                        if ui.button("Close").clicked() {
-                            state.active_modal = ActiveModal::None;
-                        }
                     });
-
-                    if let Some(ref res) = state.forensics_result {
-                        ui.add_space(8.0);
-                        ui.label(RichText::new(res).color(Color32::from_rgb(34, 197, 94)).strong());
-                    }
                 });
 
             if !is_open {
@@ -396,14 +384,12 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
 
         ActiveModal::DryRun => {
             let mut is_open = true;
-            egui::Window::new("🔍 Pre-Flight Dry-Run Inspection")
+            egui::Window::new("Pre-Flight Mailbox Inspection")
                 .open(&mut is_open)
-                .resizable(true)
-                .default_size(Vec2::new(550.0, 420.0))
+                .resizable(false)
+                .fixed_size(Vec2::new(480.0, 310.0))
                 .show(ctx, |ui| {
-                    ui.heading("Pre-Flight Mailbox Inventory & Safety Audit");
-                    ui.add_space(6.0);
-                    ui.separator();
+                    ui.label("Review mailbox inventory metrics prior to export or conversion.");
                     ui.add_space(6.0);
 
                     let total_count = state.messages.len();
@@ -411,46 +397,50 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                     let read_count = state.messages.iter().filter(|m| m.flags.read).count();
                     let flagged_count = state.messages.iter().filter(|m| m.flags.flagged).count();
 
-                    egui::Grid::new("dryrun_summary").spacing([12.0, 6.0]).show(ui, |ui| {
-                        ui.label(RichText::new("Total Messages:").strong());
-                        ui.label(format!("{}", total_count));
-                        ui.end_row();
+                    win32_groupbox(ui, "Inventory Metrics", |ui| {
+                        egui::Grid::new("dryrun_summary").spacing([10.0, 6.0]).show(ui, |ui| {
+                            ui.label("Total Messages:");
+                            ui.label(RichText::new(format!("{}", total_count)).strong());
+                            ui.end_row();
 
-                        ui.label(RichText::new("Total Payload Size:").strong());
-                        ui.label(format!(
-                            "{} bytes ({:.2} MB)",
-                            total_bytes,
-                            total_bytes as f64 / (1024.0 * 1024.0)
-                        ));
-                        ui.end_row();
+                            ui.label("Total Payload Size:");
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} bytes ({:.2} MB)",
+                                    total_bytes,
+                                    total_bytes as f64 / (1024.0 * 1024.0)
+                                ))
+                                .strong(),
+                            );
+                            ui.end_row();
 
-                        ui.label(RichText::new("Read / Unread:").strong());
-                        ui.label(format!(
-                            "{} Read | {} Unread",
-                            read_count,
-                            total_count.saturating_sub(read_count)
-                        ));
-                        ui.end_row();
+                            ui.label("Read / Unread:");
+                            ui.label(format!(
+                                "{} read / {} unread",
+                                read_count,
+                                total_count.saturating_sub(read_count)
+                            ));
+                            ui.end_row();
 
-                        ui.label(RichText::new("Flagged Items:").strong());
-                        ui.label(format!("{}", flagged_count));
-                        ui.end_row();
+                            ui.label("Flagged Items:");
+                            ui.label(format!("{}", flagged_count));
+                            ui.end_row();
 
-                        ui.label(RichText::new("Oversized Attachments (>20 MB):").strong());
-                        ui.label(
-                            RichText::new("None (All attachments within Outlook limits)")
-                                .color(Color32::from_rgb(34, 197, 94)),
-                        );
-                        ui.end_row();
+                            ui.label("Large Attachments (>20 MB):");
+                            ui.label(RichText::new("None (All within limits)").color(Color32::from_rgb(0, 120, 0)));
+                            ui.end_row();
+                        });
                     });
 
-                    ui.add_space(14.0);
-                    ui.separator();
                     ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(6.0);
 
-                    if ui.button("Close").clicked() {
-                        state.active_modal = ActiveModal::None;
-                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if win32_dialog_button(ui, "Close") {
+                            state.active_modal = ActiveModal::None;
+                        }
+                    });
                 });
 
             if !is_open {
@@ -460,59 +450,63 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
 
         ActiveModal::ValidatePst => {
             let mut is_open = true;
-            egui::Window::new("🛡 MS-PST Container Specification Validator")
+            egui::Window::new("MS-PST Container Validator")
                 .open(&mut is_open)
                 .resizable(false)
-                .fixed_size(Vec2::new(540.0, 360.0))
+                .fixed_size(Vec2::new(500.0, 310.0))
                 .show(ctx, |ui| {
-                    ui.label("Inspect any Outlook .pst archive against [MS-PST] NDB header magic, CRC-32, and B-Tree roots.");
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
+                    ui.label("Validate [MS-PST] NDB header magic, version, CRC-32 partial checksum, and B-Trees.");
+                    ui.add_space(6.0);
 
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("PST File Path:").strong());
-                        ui.add(egui::TextEdit::singleline(&mut state.validate_pst_path).desired_width(340.0));
+                    win32_groupbox(ui, "PST File Target", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("File:").strong().size(11.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.validate_pst_path).desired_width(360.0));
+                        });
                     });
 
-                    ui.add_space(10.0);
-                    if ui.button(RichText::new("Validate Container").color(Color32::WHITE).strong()).clicked() {
-                        if Path::new(&state.validate_pst_path).exists() {
-                            if let Ok(file) = File::open(&state.validate_pst_path) {
-                                if let Ok(report) = PstValidator::validate(file) {
-                                    state.validation_report = Some(format!(
-                                        "Validation Result: {}\nFormat: {}\nMagic: {}\nDeclared CRC: 0x{:08X}\nCalculated CRC: 0x{:08X}\nCRC Match: {}",
-                                        if report.is_valid { "VALID [MS-PST]" } else { "INVALID" },
-                                        report.format,
-                                        report.magic,
-                                        report.declared_crc,
-                                        report.calculated_crc,
-                                        report.crc_match
-                                    ));
-                                } else {
-                                    state.validation_report = Some("Error: Failed to validate PST structure.".to_string());
-                                }
-                            }
-                        } else {
-                            state.validation_report = Some("Validation Check: Enter a valid existing .pst file path.".to_string());
-                        }
-                    }
-
                     if let Some(ref report) = state.validation_report {
-                        ui.add_space(10.0);
+                        ui.add_space(4.0);
                         egui::Frame::none()
-                            .fill(Color32::from_rgb(15, 23, 42))
-                            .inner_margin(8.0)
-                            .rounding(4.0_f32)
+                            .fill(Color32::WHITE)
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(127, 157, 185)))
+                            .inner_margin(egui::Margin::same(6.0))
                             .show(ui, |ui| {
-                                ui.label(RichText::new(report).color(Color32::from_rgb(52, 211, 153)).monospace());
+                                ui.label(RichText::new(report).color(Color32::BLACK).monospace().size(11.0));
                             });
                     }
 
-                    ui.add_space(10.0);
-                    if ui.button("Close").clicked() {
-                        state.active_modal = ActiveModal::None;
-                    }
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if win32_dialog_button(ui, "Close") {
+                            state.active_modal = ActiveModal::None;
+                        }
+
+                        if win32_dialog_button(ui, "Validate") {
+                            if Path::new(&state.validate_pst_path).exists() {
+                                if let Ok(file) = File::open(&state.validate_pst_path) {
+                                    if let Ok(report) = PstValidator::validate(file) {
+                                        state.validation_report = Some(format!(
+                                            "Status: {}\nFormat: {}\nMagic: {}\nDeclared CRC: 0x{:08X}\nCalculated CRC: 0x{:08X}\nCRC Match: {}",
+                                            if report.is_valid { "VALID COMPLIANT PST" } else { "INVALID PST" },
+                                            report.format,
+                                            report.magic,
+                                            report.declared_crc,
+                                            report.calculated_crc,
+                                            report.crc_match
+                                        ));
+                                    } else {
+                                        state.validation_report = Some("Error: Failed to validate PST structure.".to_string());
+                                    }
+                                }
+                            } else {
+                                state.validation_report = Some("Error: Specified PST file does not exist.".to_string());
+                            }
+                        }
+                    });
                 });
 
             if !is_open {
@@ -522,25 +516,39 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
 
         ActiveModal::About => {
             let mut is_open = true;
-            egui::Window::new("ℹ About Mail2Rust Studio")
+            egui::Window::new("About Mail2Rust Management Console")
                 .open(&mut is_open)
                 .resizable(false)
-                .fixed_size(Vec2::new(450.0, 240.0))
+                .fixed_size(Vec2::new(420.0, 220.0))
                 .show(ctx, |ui| {
-                    ui.heading("Mail2Rust Studio v3.2.0");
-                    ui.label("Universal high-performance email & mailbox converter in 100% pure Rust.");
-                    ui.add_space(8.0);
-                    ui.label("• Zero Microsoft Outlook / Windows COM dependencies");
-                    ui.label("• Pure Rust [MS-PST] NDB Unicode writer and validator");
-                    ui.label("• Multi-format: MBOX, Maildir, EML, EMLX, MSG, OLM, MH, MMDF, Babyl");
-                    ui.label("• Forensic Bates stamping and root SHA-256 Merkle tree verification");
-                    ui.add_space(12.0);
-                    ui.separator();
-                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("✉").size(32.0));
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new("Mail2Rust Studio v3.2.0").strong().size(13.0));
+                            ui.label(
+                                RichText::new("Universal High-Performance Email Engine in 100% Pure Rust").size(11.0),
+                            );
+                        });
+                    });
 
-                    if ui.button("Close").clicked() {
-                        state.active_modal = ActiveModal::None;
-                    }
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    ui.label("• Zero Microsoft Outlook or Windows COM runtime dependencies");
+                    ui.label("• Native [MS-PST] 64-bit Unicode container generation & validation");
+                    ui.label("• High-throughput parsers: MBOX, Maildir, EML, EMLX, MSG, OLM, Babyl");
+                    ui.label("• Forensic Bates stamping, Merkle root hash verification, thread clustering");
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if win32_dialog_button(ui, "OK") {
+                            state.active_modal = ActiveModal::None;
+                        }
+                    });
                 });
 
             if !is_open {
@@ -548,4 +556,31 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
             }
         }
     }
+}
+
+fn win32_groupbox<R>(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.vertical(|ui| {
+        ui.label(
+            RichText::new(title)
+                .size(11.0)
+                .strong()
+                .color(Color32::from_rgb(0, 51, 153)),
+        );
+        egui::Frame::none()
+            .fill(Color32::from_rgb(244, 243, 238))
+            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(180, 180, 180)))
+            .inner_margin(egui::Margin::same(6.0))
+            .show(ui, add_contents)
+            .inner
+    })
+    .inner
+}
+
+fn win32_dialog_button(ui: &mut egui::Ui, text: &str) -> bool {
+    let btn = egui::Button::new(RichText::new(text).size(11.0).color(Color32::BLACK))
+        .fill(Color32::from_rgb(240, 240, 240))
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(160, 160, 160)))
+        .rounding(2.0_f32)
+        .min_size(Vec2::new(75.0, 23.0)); // Standard Win32 dialog button dimensions
+    ui.add(btn).clicked()
 }

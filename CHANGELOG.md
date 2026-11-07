@@ -9,7 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Multi-Crate Rust Workspace**: Architected 9 specialized crates (`mail2rust-core`, `mail2rust-pst`, `mail2rust-eml`, `mail2rust-mbox`, `mail2rust-filter`, `mail2rust-forensics`, `mail2rust-sync`, `mail2rust-cli`, `mail2rust-gui`).
-- **100% Pure-Rust Native GUI (`mail2rust-gui`)**: High-performance immediate-mode desktop workbench implemented using `eframe`/`egui`. Zero external webview, Electron, or Node.js runtime dependencies. Features classic 3-pane Outlook desktop layout (collapsible folder tree with unread badges, searchable message list with flag indicators, full message preview with RFC 5322 headers, MAPI DASL inspector, and forensic hashes).
+- **Classic Windows Management Console (MMC / Win2k / WinXP) UI Redesign**:
+  - Transformed GUI from modern dark-slate into a high-density, minimalist early 2000s Windows administrative utility design.
+  - Classic Win32 menu bar (`File`, `Action`, `View`, `Tools`, `Help`) with standard keyboard shortcuts.
+  - Compact utility toolbar replacing bulky ribbon banners, featuring flat 22px utility buttons and an integrated Quick Find filter.
+  - Win32 Details Report ListView with clickable sortable column headers (`!`, `Flags`, `From`, `Subject`, `Received`, `Size`) and sort glyphs (`▲`/`▼`).
+  - Sunken white TreeView with `[+]`/`[-]` expandable nodes, bold unread badges, and folder item counters.
+  - Classic Windows Property Sheet with tabbed inspector for Body, RFC 5322 Headers, MAPI DASL tags, and Forensics with 1-click clipboard copy.
+  - Multi-segment sunken status bar (`Ready`, `Active Folder`, `Message Counts`, `Selection Metadata`, `Architecture`).
+  - Redesigned dialogs with etched GroupBoxes, recessed white edit fields, and standard 75x23px Win32 command buttons (`[ OK ]`, `[ Cancel ]`, `[ Apply ]`).
 - **Embedded Modals in Pure Rust**: Direct PST generator, Multi-Volume Auto-Splitter, Query & Date Filter Rules, eDiscovery Forensics & Bates Stamping, Pre-Flight Dry-Run Inspector, and MS-PST Container Validator dialogs.
 - **CLI GUI Launch (`mail2rust gui`)**: Subcommand to launch the native GUI directly from the CLI tool.
 - **Pure-Rust MS-PST Writer**: Complete `[MS-PST]` Unicode 64-bit container generator with NDB header, CRC-32 partial checksum, B-Trees (NBT/BBT), and `NDB_CRYPT_PERMUTE` compressible encryption with zero Outlook dependencies.
