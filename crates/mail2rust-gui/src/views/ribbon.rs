@@ -17,6 +17,10 @@ pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
                         state.active_modal = ActiveModal::OpenMailbox;
                         ui.close_menu();
                     }
+                    if ui.button("Connect to IMAP Mailbox...  (Ctrl+M)").clicked() {
+                        state.active_modal = ActiveModal::ImapConnect;
+                        ui.close_menu();
+                    }
                     if ui.button("Export Messages (PST/MBOX/EML)...  (Ctrl+E)").clicked() {
                         state.export_scope = ExportScope::All;
                         state.active_modal = ActiveModal::DirectPst;
@@ -59,6 +63,11 @@ pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
                     if ui.button("Export Filtered Messages...").clicked() {
                         state.export_scope = ExportScope::Filtered;
                         state.active_modal = ActiveModal::DirectPst;
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Connect to IMAP Server").clicked() {
+                        state.active_modal = ActiveModal::ImapConnect;
                         ui.close_menu();
                     }
                     ui.separator();
@@ -142,6 +151,9 @@ pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
 
                 if win32_tool_button(ui, "Open...") {
                     state.active_modal = ActiveModal::OpenMailbox;
+                }
+                if win32_tool_button(ui, "IMAP...") {
+                    state.active_modal = ActiveModal::ImapConnect;
                 }
                 if win32_tool_button(ui, "Export...") {
                     state.active_modal = ActiveModal::DirectPst;

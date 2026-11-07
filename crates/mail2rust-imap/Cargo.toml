@@ -1,0 +1,19 @@
+[package]
+name = "mail2rust-imap"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Pure-Rust direct IMAP ingestion client, folder synchronization, and live mailbox streaming"
+
+[dependencies]
+mail2rust-core.workspace = true
+mail2rust-sync.workspace = true
+serde.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+imap = { version = "3.0.0-alpha.15", default-features = false, features = ["native-tls"] }
+native-tls = "0.2"
+
+[dev-dependencies]
+tempfile = "3.17"

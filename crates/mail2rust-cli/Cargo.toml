@@ -18,6 +18,7 @@ mail2rust-mbox.workspace = true
 mail2rust-filter.workspace = true
 mail2rust-forensics.workspace = true
 mail2rust-sync.workspace = true
+mail2rust-imap.workspace = true
 clap.workspace = true
 chrono.workspace = true
 tracing.workspace = true

@@ -40,6 +40,7 @@ pub enum ActiveTab {
 pub enum ActiveModal {
     None,
     OpenMailbox,
+    ImapConnect,
     DirectPst,
     AutoSplit,
     FilterCriteria,
@@ -84,6 +85,17 @@ pub struct AppState {
     // Open Mailbox States
     pub open_mailbox_path: String,
     pub open_mailbox_status: Option<String>,
+
+    // IMAP Connection States
+    pub imap_host: String,
+    pub imap_port: String,
+    pub imap_username: String,
+    pub imap_password: String,
+    pub imap_use_tls: bool,
+    pub imap_insecure_certs: bool,
+    pub imap_folder_filter: String,
+    pub imap_max_per_folder: String,
+    pub imap_status: Option<String>,
 
     // Modal Form States
     #[allow(dead_code)]
@@ -143,6 +155,16 @@ impl Default for AppState {
 
             open_mailbox_path: String::new(),
             open_mailbox_status: None,
+
+            imap_host: "imap.gmail.com".to_string(),
+            imap_port: "993".to_string(),
+            imap_username: String::new(),
+            imap_password: String::new(),
+            imap_use_tls: true,
+            imap_insecure_certs: false,
+            imap_folder_filter: String::new(),
+            imap_max_per_folder: String::new(),
+            imap_status: None,
 
             pst_source_path: "C:\\Migration\\Takeout.zip".to_string(),
             pst_dest_path: "C:\\Migration\\Exported_Archive.pst".to_string(),

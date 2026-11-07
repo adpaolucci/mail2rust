@@ -84,6 +84,174 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
             }
         }
 
+        ActiveModal::ImapConnect => {
+            let mut is_open = true;
+            egui::Window::new("Connect to IMAP Mailbox (Live Ingestion)")
+                .open(&mut is_open)
+                .resizable(false)
+                .fixed_size(Vec2::new(560.0, 360.0))
+                .show(ctx, |ui| {
+                    ui.label("Directly stream live messages from IMAP servers (Gmail, M365, iCloud, or custom corporate IMAP).");
+                    ui.add_space(6.0);
+
+                    // GroupBox: Server Connection
+                    win32_groupbox(ui, "Server Connection", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Host:").strong().size(11.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.imap_host).desired_width(260.0));
+
+                            ui.label(RichText::new("Port:").strong().size(11.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.imap_port).desired_width(60.0));
+                        });
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut state.imap_use_tls, "Use SSL/TLS (Port 993 recommended)");
+                            ui.add_space(10.0);
+                            ui.checkbox(&mut state.imap_insecure_certs, "Accept Untrusted / Self-Signed Certs");
+                        });
+                    });
+
+                    ui.add_space(6.0);
+
+                    // GroupBox: Account Credentials
+                    win32_groupbox(ui, "Authentication Credentials", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Username:").strong().size(11.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.imap_username).desired_width(380.0));
+                        });
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Password:").strong().size(11.0));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.imap_password)
+                                    .password(true)
+                                    .desired_width(380.0),
+                            );
+                        });
+                    });
+
+                    ui.add_space(6.0);
+
+                    // GroupBox: Sync Options
+                    win32_groupbox(ui, "Sync Options (Optional)", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Folder Filter:").strong().size(11.0));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.imap_folder_filter)
+                                    .hint_text("e.g. INBOX, Sent (leave empty for all)")
+                                    .desired_width(360.0),
+                            );
+                        });
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Max Messages / Folder:").strong().size(11.0));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.imap_max_per_folder)
+                                    .hint_text("e.g. 500 (leave empty for unlimited)")
+                                    .desired_width(120.0),
+                            );
+                        });
+                    });
+
+                    if let Some(ref st) = state.imap_status {
+                        ui.add_space(4.0);
+                        let is_err = st.starts_with("Error");
+                        let color = if is_err {
+                            Color32::from_rgb(180, 0, 0)
+                        } else {
+                            Color32::from_rgb(0, 120, 0)
+                        };
+                        ui.label(RichText::new(st).color(color).size(11.0));
+                    }
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    // Win32 Standard Bottom Buttons (right aligned, 75x23 px)
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if win32_dialog_button(ui, "Cancel") {
+                            state.active_modal = ActiveModal::None;
+                        }
+
+                        if win32_dialog_button(ui, "Connect & Ingest") {
+                            let host = state.imap_host.trim().to_string();
+                            let port = state.imap_port.trim().parse::<u16>().unwrap_or(993);
+                            let user = state.imap_username.trim().to_string();
+                            let pass = state.imap_password.clone();
+
+                            if host.is_empty() || user.is_empty() {
+                                state.imap_status = Some("Error: Please provide host and username.".to_string());
+                            } else {
+                                state.imap_status = Some("Connecting to IMAP server...".to_string());
+
+                                let folder_filter = if state.imap_folder_filter.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(
+                                        state
+                                            .imap_folder_filter
+                                            .split(',')
+                                            .map(|s| s.trim().to_string())
+                                            .filter(|s| !s.is_empty())
+                                            .collect(),
+                                    )
+                                };
+
+                                let max_limit = state.imap_max_per_folder.trim().parse::<usize>().ok();
+
+                                let config = mail2rust_imap::ImapConfig {
+                                    host: host.clone(),
+                                    port,
+                                    username: user.clone(),
+                                    password: pass,
+                                    use_tls: state.imap_use_tls,
+                                    insecure_certs: state.imap_insecure_certs,
+                                    folder_filter,
+                                    max_messages_per_folder: max_limit,
+                                    since_date: None,
+                                };
+
+                                let mut client = mail2rust_imap::ImapClient::new(config);
+                                match client.connect() {
+                                    Ok(()) => {
+                                        let mut checkpoint = mail2rust_sync::CheckpointManager::new_checkpoint(
+                                            &format!("imap://{}/{}", host, user),
+                                            "gui_workspace",
+                                        );
+
+                                        let mut ingested_messages = Vec::new();
+                                        match client.sync_all(&mut checkpoint, |_prog, msg| {
+                                            ingested_messages.push(msg);
+                                        }) {
+                                            Ok(count) => {
+                                                state.messages = ingested_messages;
+                                                state.rebuild_folders_from_messages();
+                                                state.imap_status = Some(format!(
+                                                    "Successfully ingested {} message(s) across {} folder(s).",
+                                                    count,
+                                                    state.folders.len()
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                state.imap_status = Some(format!("Error syncing mailboxes: {}", e));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        state.imap_status = Some(format!("Error connecting to IMAP server: {}", e));
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
+
+            if !is_open {
+                state.active_modal = ActiveModal::None;
+            }
+        }
+
         ActiveModal::DirectPst => {
             let mut is_open = true;
             let total_msgs = state.messages.len();

@@ -303,4 +303,116 @@ fn test_cli_subcommands_end_to_end() {
         .expect("filtered convert failed to execute");
     assert!(filt_out.status.success());
     assert!(filtered_pst.exists());
+
+    // Test: mail2rust imap direct ingestion into PST
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("Failed to bind mock IMAP listener");
+    let local_port = listener.local_addr().expect("Failed to get port").port();
+
+    let server_handle = std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader, Write};
+        let (mut socket, _) = listener.accept().expect("Failed to accept");
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        socket
+            .set_write_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut reader = BufReader::new(socket.try_clone().expect("Failed to clone"));
+
+        socket.write_all(b"* OK Mock CLI IMAP Server Ready\r\n").unwrap();
+        let mut line = String::new();
+        while reader.read_line(&mut line).unwrap() > 0 {
+            let parts: Vec<&str> = line.trim().split_whitespace().collect();
+            if parts.is_empty() {
+                line.clear();
+                continue;
+            }
+            let tag = parts[0];
+            let cmd = parts.get(1).map(|c| c.to_uppercase()).unwrap_or_default();
+            match cmd.as_str() {
+                "LOGIN" => {
+                    socket
+                        .write_all(format!("{} OK LOGIN completed\r\n", tag).as_bytes())
+                        .unwrap();
+                }
+                "LIST" => {
+                    socket
+                        .write_all(b"* LIST (\\HasNoChildren) \"/\" \"INBOX\"\r\n")
+                        .unwrap();
+                    socket
+                        .write_all(format!("{} OK LIST completed\r\n", tag).as_bytes())
+                        .unwrap();
+                }
+                "SELECT" => {
+                    socket.write_all(b"* 1 EXISTS\r\n").unwrap();
+                    socket.write_all(b"* OK [UIDVALIDITY 100] UIDs valid\r\n").unwrap();
+                    socket
+                        .write_all(format!("{} OK [READ-WRITE] SELECT completed\r\n", tag).as_bytes())
+                        .unwrap();
+                }
+                "UID" => {
+                    let sub_cmd = parts.get(2).map(|c| c.to_uppercase()).unwrap_or_default();
+                    if sub_cmd == "SEARCH" {
+                        socket.write_all(b"* SEARCH 77\r\n").unwrap();
+                        socket
+                            .write_all(format!("{} OK SEARCH completed\r\n", tag).as_bytes())
+                            .unwrap();
+                    } else if sub_cmd == "FETCH" {
+                        let raw_msg = "From: server@example.com\r\nTo: client@example.com\r\nSubject: Direct IMAP Ingestion\r\nDate: Sat, 07 Nov 2026 12:00:00 +0000\r\n\r\nLive stream direct to PST test!";
+                        let resp = format!(
+                            "* 1 FETCH (UID 77 FLAGS (\\Seen) INTERNALDATE \"07-Nov-2026 12:00:00 +0000\" BODY[] {{{}}}\r\n{})\r\n{} OK FETCH completed\r\n",
+                            raw_msg.len(),
+                            raw_msg,
+                            tag
+                        );
+                        socket.write_all(resp.as_bytes()).unwrap();
+                    }
+                }
+                "LOGOUT" => {
+                    socket.write_all(b"* BYE Logging out\r\n").unwrap();
+                    socket
+                        .write_all(format!("{} OK LOGOUT completed\r\n", tag).as_bytes())
+                        .unwrap();
+                    break;
+                }
+                _ => {
+                    socket
+                        .write_all(format!("{} BAD Unsupported\r\n", tag).as_bytes())
+                        .unwrap();
+                }
+            }
+            line.clear();
+        }
+    });
+
+    let imap_pst = base.join("imap_exported.pst");
+    let imap_out = Command::new(bin_path)
+        .args([
+            "imap",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            &local_port.to_string(),
+            "--username",
+            "testuser@domain.com",
+            "--password",
+            "secretpass",
+            "--no-tls",
+            "--output",
+            imap_pst.to_str().unwrap(),
+        ])
+        .output()
+        .expect("imap command failed to execute");
+
+    server_handle.join().expect("Mock IMAP server thread panicked");
+    assert!(imap_out.status.success());
+    assert!(imap_pst.exists());
+
+    let reader = File::open(&imap_pst).expect("Failed to open imap_pst");
+    let val = PstValidator::validate(reader).expect("PST validation failed on IMAP output");
+    assert!(val.is_valid);
+
+    let messages = mail2rust_pst::PstReader::read_path(&imap_pst).expect("Failed to read messages from PST");
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].subject, "Direct IMAP Ingestion");
 }

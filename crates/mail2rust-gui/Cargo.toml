@@ -14,6 +14,7 @@ mail2rust-mbox = { path = "../mail2rust-mbox" }
 mail2rust-filter = { path = "../mail2rust-filter" }
 mail2rust-forensics = { path = "../mail2rust-forensics" }
 mail2rust-sync = { path = "../mail2rust-sync" }
+mail2rust-imap = { path = "../mail2rust-imap" }
 chrono.workspace = true
 tracing.workspace = true
 serde.workspace = true

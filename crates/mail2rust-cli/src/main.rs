@@ -179,6 +179,31 @@ enum Commands {
     },
     /// Validate MS-PST container header magic, version, CRC-32 checksum, and B-Trees
     ValidatePst { pst_file: PathBuf },
+    /// Ingest mail directly from an IMAP server over TLS/SSL into PST, MBOX, or EML
+    Imap {
+        #[arg(long)]
+        host: String,
+        #[arg(long, default_value = "993")]
+        port: u16,
+        #[arg(short, long)]
+        username: String,
+        #[arg(short, long)]
+        password: Option<String>,
+        #[arg(long, alias = "disable-tls")]
+        no_tls: bool,
+        #[arg(long)]
+        insecure: bool,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long)]
+        folders: Vec<String>,
+        #[arg(long)]
+        max_per_folder: Option<usize>,
+        #[arg(long)]
+        since: Option<String>,
+        #[arg(long)]
+        checkpoint: Option<PathBuf>,
+    },
     /// Sniff file or folder to identify mailbox format and magic byte signature
     Sniff { path: PathBuf },
     /// Launch the pure-Rust native GUI studio (zero Node.js or WebView2 dependencies)
@@ -458,6 +483,148 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 manifest.bates_range.start, manifest.bates_range.end
             );
             println!("CSV Report: {}", output_csv.display());
+        }
+
+        Commands::Imap {
+            host,
+            port,
+            username,
+            password,
+            no_tls,
+            insecure,
+            output,
+            folders,
+            max_per_folder,
+            since,
+            checkpoint,
+        } => {
+            let pass = match password {
+                Some(p) => p.clone(),
+                None => match std::env::var("MAIL2RUST_IMAP_PASSWORD") {
+                    Ok(p) => p,
+                    Err(_) => {
+                        eprint!("Enter IMAP Password for {}: ", username);
+                        let mut line = String::new();
+                        std::io::stdin().read_line(&mut line)?;
+                        line.trim().to_string()
+                    }
+                },
+            };
+
+            let since_date = if let Some(s) = since {
+                Some(parse_cli_datetime(s, false)?.date_naive())
+            } else {
+                None
+            };
+
+            let folder_filter = if folders.is_empty() {
+                None
+            } else {
+                Some(folders.clone())
+            };
+
+            let use_tls = !no_tls;
+            let config = mail2rust_imap::ImapConfig {
+                host: host.clone(),
+                port: *port,
+                username: username.clone(),
+                password: pass,
+                use_tls,
+                insecure_certs: *insecure,
+                folder_filter,
+                max_messages_per_folder: *max_per_folder,
+                since_date,
+            };
+
+            println!("Connecting to IMAP {}:{} (TLS: {})...", host, port, use_tls);
+            let mut client = mail2rust_imap::ImapClient::new(config);
+            client.connect()?;
+            println!("Authenticated as {}", username);
+
+            let chk_path = checkpoint.as_ref().map(|p| p.as_path());
+            let mut chk = if let Some(p) = chk_path {
+                if p.exists() {
+                    println!("Resuming migration from checkpoint: {}", p.display());
+                    CheckpointManager::load(p)?
+                } else {
+                    CheckpointManager::new_checkpoint(
+                        &format!("imap://{}/{}", host, username),
+                        &output.display().to_string(),
+                    )
+                }
+            } else {
+                CheckpointManager::new_checkpoint(
+                    &format!("imap://{}/{}", host, username),
+                    &output.display().to_string(),
+                )
+            };
+
+            println!("Streaming mail directly to {}...", output.display());
+            let mut messages = Vec::new();
+            client.sync_all(&mut chk, |prog, msg| {
+                use std::io::Write;
+                print!(
+                    "\r[IMAP Sync] Folder: {:<20} | Msg #{:<5} | UID: {:<8}",
+                    prog.current_folder, prog.current_message_index, prog.current_uid
+                );
+                let _ = std::io::stdout().flush();
+                messages.push(msg);
+            })?;
+            println!("\nFetched {} messages from IMAP server.", messages.len());
+
+            apply_preprocessing(&cli, &mut messages)?;
+
+            let ext = output
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("pst")
+                .to_lowercase();
+            match ext.as_str() {
+                "mbox" => {
+                    MboxFileExporter::export_to_file(&messages, output, false)?;
+                    println!("Exported {} messages to MBOX: {}", messages.len(), output.display());
+                }
+                "eml" | "" if output.is_dir() => {
+                    let mut exporter = EmlExporter::new(output, EmlLayout::Folder).with_naming(EmlNaming::Subject);
+                    for m in &messages {
+                        exporter.export_message(m)?;
+                    }
+                    println!(
+                        "Exported {} messages to EML directory: {}",
+                        messages.len(),
+                        output.display()
+                    );
+                }
+                _ => {
+                    let file = File::create(output)?;
+                    let mut writer = PstWriter::new(file, true)?;
+                    let mut folder_map = std::collections::HashMap::new();
+
+                    for msg in &messages {
+                        let folder_name = msg.folder_path.last().map(|s| s.as_str()).unwrap_or("Inbox");
+                        let nid = if let Some(&id) = folder_map.get(folder_name) {
+                            id
+                        } else {
+                            let id = writer.add_folder(folder_name, None)?;
+                            folder_map.insert(folder_name.to_string(), id);
+                            id
+                        };
+                        writer.add_message(msg, nid)?;
+                    }
+                    writer.finalize()?;
+                    println!(
+                        "Exported {} messages to PST container: {}",
+                        messages.len(),
+                        output.display()
+                    );
+                }
+            }
+
+            if let Some(p) = chk_path {
+                chk.status = "completed".to_string();
+                CheckpointManager::save(&chk, p)?;
+                println!("Saved final migration checkpoint to: {}", p.display());
+            }
         }
     }
 

@@ -8,7 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.2.0] - 2026-11-07
 
 ### Added
-- **Multi-Crate Rust Workspace**: Architected 9 specialized crates (`mail2rust-core`, `mail2rust-pst`, `mail2rust-eml`, `mail2rust-mbox`, `mail2rust-filter`, `mail2rust-forensics`, `mail2rust-sync`, `mail2rust-cli`, `mail2rust-gui`).
+- **Multi-Crate Rust Workspace**: Architected 10 specialized crates (`mail2rust-core`, `mail2rust-pst`, `mail2rust-eml`, `mail2rust-mbox`, `mail2rust-filter`, `mail2rust-forensics`, `mail2rust-sync`, `mail2rust-imap`, `mail2rust-cli`, `mail2rust-gui`).
+- **Direct IMAP Live Ingestion (`mail2rust-imap`)**:
+  - Implemented direct IMAP streaming client with native SSL/TLS encryption (`native-tls` / SChannel / SecureTransport / OpenSSL).
+  - High-performance RFC 3501 protocol streaming with `BODY.PEEK[]` fetching (preserving unread/read server flags without side effects).
+  - Multi-folder discovery, delimiter hierarchy splitting (`/`, `.`, `\`), and recursive mailbox tree ingestion.
+  - Automatic IMAP flag mapping (`\Seen` unread state, `\Flagged`, `\Answered`, `\Draft`, `\Deleted`) and internal date fallback.
+  - Seamless integration with resumable delta sync checkpoints (`high_watermark_uid` tracking per folder).
+  - CLI subcommand `mail2rust imap --host <host> --username <user> --output <archive.pst>` with live progress display.
+  - Classic Win32 GUI dialog `Connect to IMAP Mailbox (Live Ingestion)` with credentials masking, TLS toggle, and real-time ingestion telemetry.
 - **Pure-Rust MS-PST and Offline OST Reader (`mail2rust-pst`)**:
   - Implemented pure-Rust bidirectional reading and extraction of `.pst` and `.ost` files without Outlook COM.
   - Implemented official Microsoft `[MS-PST]` 5.1 Permutative Encoding (`mpbbR` / `mpbbI`) decryption with 100% bijective roundtrip validation.
