@@ -27,22 +27,37 @@
 
 ![Desktop Main View](docs/screenshots/desktop-main.png)
 
-<details>
-<summary><b>Click to view more screenshots (PST Builder, Forensics, MAPI Inspector, Thread Splitter)</b></summary>
+<details open>
+<summary><b>Click to view more screenshots (Live IMAP Ingestion, Selective Export, Forensics, MAPI Inspector, Thread Splitter)</b></summary>
 
-| Direct PST Generation (Zero Outlook) | eDiscovery Forensics & Bates Stamping |
+| Direct IMAP Live Ingestion (TLS/SSL) | Selective Checked Items & Multi-Format Export |
 | :---: | :---: |
-| ![Direct PST Builder](docs/screenshots/direct-pst-modal.png) | ![Forensics Modal](docs/screenshots/forensics-modal.png) |
+| ![Live IMAP Ingestion](docs/screenshots/imap-modal.png) | ![Universal Export Modal](docs/screenshots/direct-pst-modal.png) |
 
 | Multi-Volume Thread Auto-Splitter | Raw MAPI & Hex Stream Inspector |
 | :---: | :---: |
 | ![Thread Splitter](docs/screenshots/auto-split-modal.png) | ![MAPI Inspector](docs/screenshots/mapi-inspector.png) |
 
-| Multi-Cloud Migration Studio | Rust Workspace Code Viewer |
+| eDiscovery Forensics & Bates Stamping | Rust Workspace Architecture |
 | :---: | :---: |
-| ![Cloud Migration](docs/screenshots/cloud-migration-modal.png) | ![Rust Codebase](docs/screenshots/rust-codebase-modal.png) |
+| ![Forensics Modal](docs/screenshots/forensics-modal.png) | ![Rust Codebase](docs/screenshots/rust-codebase-modal.png) |
 
 </details>
+
+---
+
+## Pre-Compiled Binaries & Direct Download
+
+Self-contained native executables with **zero external runtime dependencies** (no Microsoft Outlook, no MAPI DLLs, no Python, no Node.js) are compiled and published for every release:
+
+| Platform | Target Architecture | Distribution Package | Included Binaries |
+| :--- | :--- | :--- | :--- |
+| **Windows (64-bit)** | `x86_64-pc-windows-msvc` | [**`mail2rust-windows-x86_64.zip`**](https://github.com/adpaolucci/mail2rust/releases/latest) | `mail2rust.exe`, `mail2rust-gui.exe` |
+| **Linux (64-bit)** | `x86_64-unknown-linux-gnu` | [**`mail2rust-linux-x86_64.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest) | `mail2rust`, `mail2rust-gui` |
+| **macOS Apple Silicon** | `aarch64-apple-darwin` (M1/M2/M3/M4) | [**`mail2rust-macos-aarch64.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest) | `mail2rust`, `mail2rust-gui` |
+| **macOS Intel** | `x86_64-apple-darwin` | [**`mail2rust-macos-x86_64.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest) | `mail2rust`, `mail2rust-gui` |
+
+> Every release archive includes cryptographic `SHA256SUMS.txt` hashes and both the high-throughput CLI engine (`mail2rust`) and the native desktop management utility (`mail2rust-gui`).
 
 ---
 
@@ -52,16 +67,17 @@
 mail2rust/
 ├── Cargo.toml                     # Workspace root manifest
 ├── crates/
-│   ├── mail2rust-core/            # RFC 5322 MIME, headers, format sniffers (MBOX, Maildir, EMLX, MSG, OLM, MH, MMDF, Babyl)
-│   ├── mail2rust-pst/             # Pure Rust MS-PST writer, NDB/LTP layers, B-Trees, CRC-32, and validator
+│   ├── mail2rust-core/            # RFC 5322 MIME, headers, vCard (RFC 6350), iCalendar (RFC 5545), format sniffers
+│   ├── mail2rust-pst/             # Pure Rust MS-PST writer & reader, NDB/LTP layers, B-Trees, mpbbR decryption, and validator
 │   ├── mail2rust-eml/             # EML exporter (folder, year, month, flat layouts) & filename sanitizer
 │   ├── mail2rust-mbox/            # mboxrd exporter with >From escaping and optional gzip streaming
 │   ├── mail2rust-filter/          # Multi-criteria filtering, deduplication, thread clustering, auto-splitting
 │   ├── mail2rust-forensics/       # Bates stamping, SHA-256/MD5 hashing, legal hold, and audit manifests
 │   ├── mail2rust-sync/            # Incremental delta sync engine & checkpoint persistence
+│   ├── mail2rust-imap/            # Pure-Rust direct IMAP/TLS client, live mailbox streaming, folder discovery
 │   ├── mail2rust-cli/             # Unified command-line interface binary (`mail2rust`)
-│   └── mail2rust-gui/             # Native desktop GUI in 100% pure Rust (`mail2rust-gui`, zero Node/WebView2)
-└── tests/                         # End-to-end integration test suite
+│   └── mail2rust-gui/             # Classic Win32/MMC administrative management console GUI (`mail2rust-gui`)
+└── tests/                         # End-to-end integration and mutational fuzz test suites
 ```
 
 ---
@@ -69,6 +85,10 @@ mail2rust/
 ## Supported Formats
 
 ### Ingestion Formats
+- **Live IMAP Servers (`imap://`)**: Direct live mailbox streaming over SSL/TLS with non-destructive `BODY.PEEK[]` fetching and high-watermark delta sync.
+- **Microsoft Outlook PST & Offline OST (`.pst`, `.ost`)**: Pure-Rust B-Tree (NBT/BBT) extraction, official Microsoft `[MS-PST]` 5.1 Permutative Encoding (`mpbbR`) decryption, Property Context (`0xBC`) deserialization, and damaged block carving fallback.
+- **vCard Contacts (`.vcf`, RFC 6350 / RFC 2426)**: Ingests contacts into Outlook `Contacts` folder with `IPM.Contact` MAPI message class.
+- **iCalendar Appointments (`.ics`, RFC 5545)**: Ingests calendars into Outlook `Calendar` folder with `IPM.Appointment` MAPI message class.
 - **MBOX**: Standard `mboxo` / `mboxrd` (Thunderbird, Google Takeout, Postfix).
 - **Maildir / Maildir++**: Full `cur/`, `new/`, `tmp/` hierarchy with `:2,FRSPT` status flag translation.
 - **Apple Mail (`.emlx`)**: Byte-count header stripping, XML/binary `<plist>` flag decoding (`Read`, `Deleted`, `Replied`, `Flagged`).
@@ -214,6 +234,25 @@ mail2rust validate-pst "archive.pst"
 Launch the 100% pure Rust desktop workbench (zero Node.js or WebView2 dependencies):
 ```bash
 mail2rust gui
+```
+
+### 10. Direct IMAP Live Ingestion (`mail2rust imap`)
+Directly ingest mailboxes from any IMAP server over TLS/SSL into PST, MBOX, or EML containers:
+```bash
+# Ingest live Gmail account directly into a 64-bit Outlook PST
+mail2rust imap \
+  --host "imap.gmail.com" \
+  --port 993 \
+  --username "user@gmail.com" \
+  --output "gmail_backup.pst" \
+  --checkpoint "gmail_sync.json"
+
+# Ingest specific folders with delta sync tracking
+mail2rust imap \
+  --host "mail.company.com" \
+  --username "adpaolucci@company.com" \
+  --folders "INBOX,Sent,Archive" \
+  --output "company_archive.pst"
 ```
 
 ---
