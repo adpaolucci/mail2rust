@@ -8,6 +8,7 @@ members = [
     "crates/mail2rust-forensics",
     "crates/mail2rust-sync",
     "crates/mail2rust-cli",
+    "crates/mail2rust-gui",
 ]
 resolver = "2"
 

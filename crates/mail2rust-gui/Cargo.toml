@@ -1,0 +1,21 @@
+[package]
+name = "mail2rust-gui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Native cross-platform desktop graphical user interface for mail2rust in 100% pure Rust"
+
+[dependencies]
+mail2rust-core = { path = "../mail2rust-core" }
+mail2rust-pst = { path = "../mail2rust-pst" }
+mail2rust-eml = { path = "../mail2rust-eml" }
+mail2rust-mbox = { path = "../mail2rust-mbox" }
+mail2rust-filter = { path = "../mail2rust-filter" }
+mail2rust-forensics = { path = "../mail2rust-forensics" }
+mail2rust-sync = { path = "../mail2rust-sync" }
+chrono.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+eframe = { version = "0.30", default-features = false, features = ["default_fonts", "glow"] }

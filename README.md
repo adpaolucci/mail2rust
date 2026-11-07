@@ -59,8 +59,8 @@ mail2rust/
 │   ├── mail2rust-filter/          # Multi-criteria filtering, deduplication, thread clustering, auto-splitting
 │   ├── mail2rust-forensics/       # Bates stamping, SHA-256/MD5 hashing, legal hold, and audit manifests
 │   ├── mail2rust-sync/            # Incremental delta sync engine & checkpoint persistence
-│   └── mail2rust-cli/             # Unified command-line interface binary (`mail2rust`)
-├── src/                           # Desktop web workbench & UI prototype (React 19 + Tailwind v4)
+│   ├── mail2rust-cli/             # Unified command-line interface binary (`mail2rust`)
+│   └── mail2rust-gui/             # Native desktop GUI in 100% pure Rust (`mail2rust-gui`, zero Node/WebView2)
 └── tests/                         # End-to-end integration test suite
 ```
 
@@ -90,23 +90,34 @@ mail2rust/
 ### Prerequisites
 - [Rust toolchain](https://rustup.rs/) (1.80 or newer).
 
-### Build Release Binary
+### Build Release Binaries
 ```bash
 # Clone the repository
 git clone https://github.com/adpaolucci/mail2rust.git
 cd mail2rust
 
-# Build optimized release binary
+# Build optimized release binaries (both CLI and Native GUI)
 cargo build --release
 
-# The compiled executable is located at:
-# target/release/mail2rust.exe (Windows) or target/release/mail2rust (Linux/macOS)
+# The compiled executables are located at:
+# CLI:  target/release/mail2rust.exe (Windows) or target/release/mail2rust (Linux/macOS)
+# GUI:  target/release/mail2rust-gui.exe (Windows) or target/release/mail2rust-gui (Linux/macOS)
+```
+
+### Launch Native Pure-Rust GUI
+Launch the zero-dependency native 3-pane Outlook desktop GUI directly:
+```bash
+# Via CLI subcommand:
+mail2rust gui
+
+# Or run the GUI crate directly:
+cargo run -p mail2rust-gui --release
 ```
 
 ### Run Tests
 ```bash
 # Run all unit and integration tests across all workspace crates:
-cargo test
+cargo test --workspace
 ```
 
 ---
@@ -199,12 +210,19 @@ Verifies header magic, CRC-32 partial checksum, BREF root offsets, and format ve
 mail2rust validate-pst "archive.pst"
 ```
 
+### 9. Native Desktop GUI Studio
+Launch the 100% pure Rust desktop workbench (zero Node.js or WebView2 dependencies):
+```bash
+mail2rust gui
+```
+
 ---
 
 ## Feature Comparison Matrix: `mail2rust` vs `mail2mail`
 
 | Capability / Requirement | `mail2mail` (Python) | `mail2rust` (Rust) | Parity Status |
 | :--- | :---: | :---: | :---: |
+| **Native Desktop GUI** | Tkinter / Webview wrapper | **100% Pure Rust GUI (`eframe`/`egui`)** | **Exceeds** (Zero Node.js/Webview) |
 | **PST Writing** | Requires Windows Outlook MAPI COM DLLs | **100% Pure Rust [MS-PST] NDB Engine** | **Exceeds** (Works on Linux/macOS/Win) |
 | **PST CRC32 & B-Tree Validator** | No | **Yes (`validate-pst`)** | **Exceeds** |
 | **All Mailbox Formats (15+)** | Yes | **Yes** (MBOX, Maildir, EML, EMLX, MSG, OLM, MH, MMDF, Babyl) | **Parity** |

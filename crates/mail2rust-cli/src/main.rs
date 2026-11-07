@@ -190,6 +190,8 @@ enum Commands {
     Sniff {
         path: PathBuf,
     },
+    /// Launch the pure-Rust native GUI studio (zero Node.js or WebView2 dependencies)
+    Gui,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -199,6 +201,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!(version = "3.2.0", "Mail2Rust Engine Initialized");
 
     match &cli.command {
+        Commands::Gui => {
+            println!("Launching Mail2Rust Studio (Pure-Rust native GUI)...");
+            let current_exe = std::env::current_exe().unwrap_or_default();
+            let parent_dir = current_exe.parent().unwrap_or(Path::new(""));
+            let gui_exe_name = if cfg!(windows) { "mail2rust-gui.exe" } else { "mail2rust-gui" };
+            let candidate_path = parent_dir.join(gui_exe_name);
+
+            let mut cmd = if candidate_path.exists() {
+                std::process::Command::new(candidate_path)
+            } else {
+                std::process::Command::new(gui_exe_name)
+            };
+
+            let status = cmd.status()?;
+            if !status.success() {
+                eprintln!("Mail2Rust GUI exited with code: {:?}", status.code());
+            }
+        }
+
         Commands::Sniff { path } => {
             let format = FormatSniffer::sniff_path(path);
             println!("Target Path: {}", path.display());
