@@ -1,0 +1,6 @@
+{
+  "name": "Mail2Mail Studio Desktop",
+  "description": "Enterprise email migration, independent PST generator without Outlook, forensic eDiscovery, and multi-cloud sync suite.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
