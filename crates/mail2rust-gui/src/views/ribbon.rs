@@ -21,6 +21,10 @@ pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
                         state.active_modal = ActiveModal::ImapConnect;
                         ui.close_menu();
                     }
+                    if ui.button("IMAP-to-IMAP Account Sync (Server-to-Server)...").clicked() {
+                        state.active_modal = ActiveModal::ImapSync;
+                        ui.close_menu();
+                    }
                     if ui.button("Export Messages (PST/MBOX/EML)...  (Ctrl+E)").clicked() {
                         state.export_scope = ExportScope::All;
                         state.active_modal = ActiveModal::DirectPst;
@@ -114,6 +118,10 @@ pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
                 });
 
                 ui.menu_button("Tools", |ui| {
+                    if ui.button("IMAP-to-IMAP Account Sync (Server-to-Server)...").clicked() {
+                        state.active_modal = ActiveModal::ImapSync;
+                        ui.close_menu();
+                    }
                     if ui.button("Query & Date Filter Criteria...").clicked() {
                         state.active_modal = ActiveModal::FilterCriteria;
                         ui.close_menu();
@@ -163,6 +171,9 @@ pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
                 }
                 if win32_tool_button(ui, "IMAP...") {
                     state.active_modal = ActiveModal::ImapConnect;
+                }
+                if win32_tool_button(ui, "Sync IMAP...") {
+                    state.active_modal = ActiveModal::ImapSync;
                 }
                 if win32_tool_button(ui, "Export...") {
                     state.active_modal = ActiveModal::DirectPst;

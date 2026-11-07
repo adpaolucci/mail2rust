@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDate};
+use chrono::{DateTime, FixedOffset, NaiveDate};
 use imap::types::Flag;
 use imap::Session;
 use mail2rust_core::models::MapiProperty;
@@ -7,6 +7,7 @@ use mail2rust_core::EmailMessage;
 use mail2rust_sync::SyncCheckpoint;
 use native_tls::{TlsConnector, TlsStream};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
@@ -431,11 +432,334 @@ impl ImapClient {
 
         Ok(total_messages_migrated)
     }
+
+    pub fn create_folder(&mut self, folder: &str) -> Result<(), ImapClientError> {
+        let session = self
+            .session
+            .as_mut()
+            .ok_or_else(|| ImapClientError::ConnectionFailed("Not connected to IMAP server".to_string()))?;
+        match session.create(folder) {
+            Ok(_) => Ok(()),
+            Err(imap::Error::No(msg)) => {
+                let msg_lower = msg.information.to_lowercase();
+                if msg_lower.contains("already") || msg_lower.contains("exist") {
+                    debug!(folder = %folder, "Folder already exists on server");
+                    Ok(())
+                } else {
+                    Err(ImapClientError::ProtocolError(format!(
+                        "CREATE failed: {}",
+                        msg.information
+                    )))
+                }
+            }
+            Err(e) => Err(ImapClientError::from(e)),
+        }
+    }
+
+    pub fn append_message(
+        &mut self,
+        folder: &str,
+        raw_mime: &[u8],
+        flags: &[Flag],
+        date: Option<DateTime<FixedOffset>>,
+    ) -> Result<(), ImapClientError> {
+        let session = self
+            .session
+            .as_mut()
+            .ok_or_else(|| ImapClientError::ConnectionFailed("Not connected to IMAP server".to_string()))?;
+        let mut cmd = session.append(folder, raw_mime);
+        if !flags.is_empty() {
+            cmd.flags(flags.iter().cloned());
+        }
+        if let Some(d) = date {
+            cmd.internal_date(d);
+        }
+        cmd.finish()?;
+        Ok(())
+    }
+
+    pub fn fetch_folder_raw<F>(
+        &mut self,
+        folder_name: &str,
+        watermark: Option<u64>,
+        mut on_message: F,
+    ) -> Result<(usize, u64), ImapClientError>
+    where
+        F: FnMut(&[u8], Vec<Flag>, Option<DateTime<FixedOffset>>, u64, Option<String>) -> Result<(), ImapClientError>,
+    {
+        let session = self
+            .session
+            .as_mut()
+            .ok_or_else(|| ImapClientError::ConnectionFailed("Not connected to IMAP server".to_string()))?;
+
+        debug!(folder = folder_name, "Selecting IMAP folder for streaming");
+        let mailbox = session.select(folder_name)?;
+        let total_in_folder = mailbox.exists as usize;
+        if total_in_folder == 0 {
+            return Ok((0, watermark.unwrap_or(0)));
+        }
+
+        let query = if let Some(since) = self.config.since_date {
+            format!("SINCE {}", since.format("%d-%b-%Y"))
+        } else {
+            "ALL".to_string()
+        };
+
+        let uids_set = session.uid_search(&query)?;
+        let mut uids: Vec<u32> = uids_set.into_iter().collect();
+        uids.sort_unstable();
+
+        if let Some(wm) = watermark {
+            uids.retain(|&uid| (uid as u64) > wm);
+        }
+
+        if let Some(limit) = self.config.max_messages_per_folder {
+            if uids.len() > limit {
+                uids.truncate(limit);
+            }
+        }
+
+        if uids.is_empty() {
+            return Ok((0, watermark.unwrap_or(0)));
+        }
+
+        let mut migrated_count = 0;
+        let mut max_uid = watermark.unwrap_or(0);
+
+        for chunk in uids.chunks(50) {
+            let uid_query = chunk.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+            let fetches = session.uid_fetch(&uid_query, "(BODY.PEEK[] FLAGS INTERNALDATE UID ENVELOPE)")?;
+
+            for fetch in fetches.iter() {
+                let uid = fetch.uid.unwrap_or(0) as u64;
+                if uid > max_uid {
+                    max_uid = uid;
+                }
+
+                if let Some(body_bytes) = fetch.body() {
+                    let flags: Vec<Flag> = fetch.flags().to_vec();
+                    let date = fetch.internal_date();
+                    let subject = fetch
+                        .envelope()
+                        .and_then(|env| env.subject.as_ref().map(|s| String::from_utf8_lossy(s).to_string()));
+
+                    on_message(body_bytes, flags, date, uid, subject)?;
+                    migrated_count += 1;
+                }
+            }
+        }
+
+        Ok((migrated_count, max_uid))
+    }
 }
 
 impl Drop for ImapClient {
     fn drop(&mut self) {
         let _ = self.disconnect();
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImapMigrationConfig {
+    pub source: ImapConfig,
+    pub destination: ImapConfig,
+    pub folder_filter: Option<Vec<String>>,
+    pub folder_prefix: Option<String>,
+    pub folder_mapping: Option<HashMap<String, String>>,
+    pub preserve_flags: bool,
+    pub preserve_dates: bool,
+    pub create_missing_folders: bool,
+    pub dry_run: bool,
+}
+
+impl Default for ImapMigrationConfig {
+    fn default() -> Self {
+        Self {
+            source: ImapConfig::default(),
+            destination: ImapConfig::default(),
+            folder_filter: None,
+            folder_prefix: None,
+            folder_mapping: None,
+            preserve_flags: true,
+            preserve_dates: true,
+            create_missing_folders: true,
+            dry_run: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImapMigrationProgress {
+    pub current_source_folder: String,
+    pub current_target_folder: String,
+    pub folder_index: usize,
+    pub total_folders: usize,
+    pub message_index_in_folder: usize,
+    pub total_messages_in_folder: usize,
+    pub total_messages_migrated: usize,
+    pub total_bytes_transferred: usize,
+    pub current_subject: Option<String>,
+    pub current_uid: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ImapMigrationSummary {
+    pub total_folders_scanned: usize,
+    pub total_folders_migrated: usize,
+    pub total_messages_migrated: usize,
+    pub total_messages_skipped: usize,
+    pub total_bytes_transferred: usize,
+    pub duration_seconds: f64,
+    pub errors: Vec<String>,
+}
+
+pub struct ImapMigrator;
+
+impl ImapMigrator {
+    pub fn migrate<F>(config: &ImapMigrationConfig, mut on_progress: F) -> Result<ImapMigrationSummary, ImapClientError>
+    where
+        F: FnMut(&ImapMigrationProgress),
+    {
+        let start_time = std::time::Instant::now();
+        let mut summary = ImapMigrationSummary::default();
+
+        info!(
+            source_host = %config.source.host,
+            dest_host = %config.destination.host,
+            dry_run = config.dry_run,
+            "Starting direct server-to-server IMAP migration (zero local disk storage)"
+        );
+
+        let mut src_client = ImapClient::new(config.source.clone());
+        src_client.connect()?;
+
+        let mut dst_client = ImapClient::new(config.destination.clone());
+        if !config.dry_run {
+            dst_client.connect()?;
+        }
+
+        // List destination folders to avoid duplicate create attempts
+        let mut dest_folders: HashSet<String> = HashSet::new();
+        if !config.dry_run {
+            match dst_client.list_folders() {
+                Ok(folders) => {
+                    for f in folders {
+                        dest_folders.insert(f.name);
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "Could not list destination folders, will attempt creation on-demand");
+                }
+            }
+        }
+
+        let src_folders = src_client.list_folders()?;
+        summary.total_folders_scanned = src_folders.len();
+
+        let selectable_folders: Vec<_> = src_folders
+            .into_iter()
+            .filter(|f| f.selectable)
+            .filter(|f| {
+                if let Some(ref filter) = config.folder_filter {
+                    filter.iter().any(|name| f.name.eq_ignore_ascii_case(name))
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        let total_folders = selectable_folders.len();
+
+        for (folder_idx, folder_info) in selectable_folders.iter().enumerate() {
+            let src_folder = &folder_info.name;
+
+            // Target folder calculation
+            let dest_folder = if let Some(ref mapping) = config.folder_mapping {
+                mapping.get(src_folder).cloned().unwrap_or_else(|| {
+                    if let Some(ref pfx) = config.folder_prefix {
+                        format!("{}{}", pfx, src_folder)
+                    } else {
+                        src_folder.clone()
+                    }
+                })
+            } else if let Some(ref pfx) = config.folder_prefix {
+                format!("{}{}", pfx, src_folder)
+            } else {
+                src_folder.clone()
+            };
+
+            // Ensure destination folder exists
+            if !config.dry_run && config.create_missing_folders && !dest_folders.contains(&dest_folder) {
+                if let Err(e) = dst_client.create_folder(&dest_folder) {
+                    warn!(folder = %dest_folder, error = %e, "Create folder returned error (may already exist)");
+                } else {
+                    dest_folders.insert(dest_folder.clone());
+                }
+            }
+
+            info!(
+                source = %src_folder,
+                target = %dest_folder,
+                progress = format!("{}/{}", folder_idx + 1, total_folders),
+                "Migrating IMAP folder server-to-server"
+            );
+
+            let mut msg_idx = 0;
+            let res = src_client.fetch_folder_raw(src_folder, None, |raw_bytes, flags, date, uid, subject| {
+                msg_idx += 1;
+                summary.total_messages_migrated += 1;
+                summary.total_bytes_transferred += raw_bytes.len();
+
+                let progress = ImapMigrationProgress {
+                    current_source_folder: src_folder.clone(),
+                    current_target_folder: dest_folder.clone(),
+                    folder_index: folder_idx + 1,
+                    total_folders,
+                    message_index_in_folder: msg_idx,
+                    total_messages_in_folder: 0,
+                    total_messages_migrated: summary.total_messages_migrated,
+                    total_bytes_transferred: summary.total_bytes_transferred,
+                    current_subject: subject,
+                    current_uid: uid,
+                };
+
+                on_progress(&progress);
+
+                if !config.dry_run {
+                    let flags_to_pass = if config.preserve_flags { &flags[..] } else { &[] };
+                    let date_to_pass = if config.preserve_dates { date } else { None };
+                    dst_client.append_message(&dest_folder, raw_bytes, flags_to_pass, date_to_pass)?;
+                }
+
+                Ok(())
+            });
+
+            match res {
+                Ok((count, _)) => {
+                    summary.total_folders_migrated += 1;
+                    debug!(folder = %src_folder, count = count, "Folder migration complete");
+                }
+                Err(e) => {
+                    let err_msg = format!("Error migrating folder {}: {}", src_folder, e);
+                    warn!(%err_msg);
+                    summary.errors.push(err_msg);
+                }
+            }
+        }
+
+        let _ = src_client.disconnect();
+        let _ = dst_client.disconnect();
+
+        summary.duration_seconds = start_time.elapsed().as_secs_f64();
+        info!(
+            folders = summary.total_folders_migrated,
+            messages = summary.total_messages_migrated,
+            bytes = summary.total_bytes_transferred,
+            duration = format!("{:.2}s", summary.duration_seconds),
+            "IMAP server-to-server migration complete"
+        );
+
+        Ok(summary)
     }
 }
 
@@ -606,5 +930,207 @@ mod tests {
 
         client.disconnect().expect("Disconnect failed");
         handle.join().expect("Mock server thread panicked");
+    }
+
+    #[test]
+    fn test_imap_server_to_server_migration_e2e() {
+        // 1. Source Mock IMAP Server
+        let src_listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind src mock listener");
+        let src_addr = src_listener.local_addr().expect("Failed to get src local addr");
+
+        let src_handle = thread::spawn(move || {
+            let (mut socket, _) = src_listener.accept().expect("Failed to accept src");
+            let mut reader = BufReader::new(socket.try_clone().expect("Failed to clone socket"));
+
+            socket.write_all(b"* OK Mock Source IMAP Ready\r\n").unwrap();
+
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap() > 0 {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.is_empty() {
+                    line.clear();
+                    continue;
+                }
+                let tag = parts[0];
+                let cmd = parts.get(1).map(|c| c.to_uppercase()).unwrap_or_default();
+
+                match cmd.as_str() {
+                    "LOGIN" => {
+                        socket
+                            .write_all(format!("{} OK LOGIN completed\r\n", tag).as_bytes())
+                            .unwrap();
+                    }
+                    "LIST" => {
+                        socket
+                            .write_all(b"* LIST (\\HasNoChildren) \"/\" \"INBOX\"\r\n")
+                            .unwrap();
+                        socket
+                            .write_all(format!("{} OK LIST completed\r\n", tag).as_bytes())
+                            .unwrap();
+                    }
+                    "SELECT" => {
+                        socket.write_all(b"* 1 EXISTS\r\n").unwrap();
+                        socket.write_all(b"* 1 RECENT\r\n").unwrap();
+                        socket.write_all(b"* OK [UIDVALIDITY 1234] UIDs valid\r\n").unwrap();
+                        socket
+                            .write_all(format!("{} OK [READ-WRITE] SELECT completed\r\n", tag).as_bytes())
+                            .unwrap();
+                    }
+                    "UID" => {
+                        let sub_cmd = parts.get(2).map(|c| c.to_uppercase()).unwrap_or_default();
+                        if sub_cmd == "SEARCH" {
+                            socket.write_all(b"* SEARCH 88\r\n").unwrap();
+                            socket
+                                .write_all(format!("{} OK SEARCH completed\r\n", tag).as_bytes())
+                                .unwrap();
+                        } else if sub_cmd == "FETCH" {
+                            let raw_msg = "From: alice@source.corp\r\nTo: bob@dest.corp\r\nSubject: Direct Server Transfer\r\nDate: Sat, 07 Nov 2026 14:00:00 +0000\r\n\r\nZero local disk saving!";
+                            let resp = format!(
+                                "* 1 FETCH (UID 88 FLAGS (\\Seen \\Flagged) INTERNALDATE \"07-Nov-2026 14:00:00 +0000\" ENVELOPE (\"Sat, 07 Nov 2026 14:00:00 +0000\" \"Direct Server Transfer\" ((NIL NIL \"alice\" \"source.corp\")) NIL NIL NIL NIL NIL NIL NIL) BODY[] {{{}}}\r\n{})\r\n{} OK FETCH completed\r\n",
+                                raw_msg.len(),
+                                raw_msg,
+                                tag
+                            );
+                            socket.write_all(resp.as_bytes()).unwrap();
+                        }
+                    }
+                    "LOGOUT" => {
+                        socket.write_all(b"* BYE Source logging out\r\n").unwrap();
+                        socket
+                            .write_all(format!("{} OK LOGOUT completed\r\n", tag).as_bytes())
+                            .unwrap();
+                        break;
+                    }
+                    _ => {
+                        socket
+                            .write_all(format!("{} BAD Unsupported\r\n", tag).as_bytes())
+                            .unwrap();
+                    }
+                }
+                line.clear();
+            }
+        });
+
+        // 2. Destination Mock IMAP Server
+        let dst_listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind dst mock listener");
+        let dst_addr = dst_listener.local_addr().expect("Failed to get dst local addr");
+
+        let dst_handle = thread::spawn(move || {
+            let (mut socket, _) = dst_listener.accept().expect("Failed to accept dst");
+            let mut reader = BufReader::new(socket.try_clone().expect("Failed to clone socket"));
+
+            socket.write_all(b"* OK Mock Destination IMAP Ready\r\n").unwrap();
+
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap() > 0 {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.is_empty() {
+                    line.clear();
+                    continue;
+                }
+                let tag = parts[0];
+                let cmd = parts.get(1).map(|c| c.to_uppercase()).unwrap_or_default();
+
+                match cmd.as_str() {
+                    "LOGIN" => {
+                        socket
+                            .write_all(format!("{} OK LOGIN completed\r\n", tag).as_bytes())
+                            .unwrap();
+                    }
+                    "LIST" => {
+                        socket
+                            .write_all(b"* LIST (\\HasNoChildren) \"/\" \"INBOX\"\r\n")
+                            .unwrap();
+                        socket
+                            .write_all(format!("{} OK LIST completed\r\n", tag).as_bytes())
+                            .unwrap();
+                    }
+                    "CREATE" => {
+                        socket
+                            .write_all(format!("{} OK CREATE completed\r\n", tag).as_bytes())
+                            .unwrap();
+                    }
+                    "APPEND" => {
+                        let literal_size: usize = line
+                            .find('{')
+                            .and_then(|start| {
+                                line[start + 1..]
+                                    .find('}')
+                                    .map(|end| line[start + 1..start + 1 + end].parse().unwrap_or(0))
+                            })
+                            .unwrap_or(0);
+
+                        socket.write_all(b"+ Ready for literal data\r\n").unwrap();
+
+                        let mut literal_buf = vec![0u8; literal_size];
+                        std::io::Read::read_exact(&mut reader, &mut literal_buf).unwrap();
+
+                        socket
+                            .write_all(format!("{} OK [APPENDUID 1 9001] APPEND completed\r\n", tag).as_bytes())
+                            .unwrap();
+                    }
+                    "LOGOUT" => {
+                        socket.write_all(b"* BYE Destination logging out\r\n").unwrap();
+                        socket
+                            .write_all(format!("{} OK LOGOUT completed\r\n", tag).as_bytes())
+                            .unwrap();
+                        break;
+                    }
+                    _ => {
+                        socket
+                            .write_all(format!("{} BAD Unsupported\r\n", tag).as_bytes())
+                            .unwrap();
+                    }
+                }
+                line.clear();
+            }
+        });
+
+        // 3. Configure and execute server-to-server migration
+        let config = ImapMigrationConfig {
+            source: ImapConfig {
+                host: "127.0.0.1".to_string(),
+                port: src_addr.port(),
+                username: "src_user@corp.local".to_string(),
+                password: "src_pass".to_string(),
+                use_tls: false,
+                ..Default::default()
+            },
+            destination: ImapConfig {
+                host: "127.0.0.1".to_string(),
+                port: dst_addr.port(),
+                username: "dst_user@corp.local".to_string(),
+                password: "dst_pass".to_string(),
+                use_tls: false,
+                ..Default::default()
+            },
+            preserve_flags: true,
+            preserve_dates: true,
+            create_missing_folders: true,
+            dry_run: false,
+            ..Default::default()
+        };
+
+        let mut progress_events = Vec::new();
+        let summary = ImapMigrator::migrate(&config, |prog| {
+            progress_events.push(prog.clone());
+        })
+        .expect("IMAP server-to-server migration failed");
+
+        assert_eq!(summary.total_folders_migrated, 1);
+        assert_eq!(summary.total_messages_migrated, 1);
+        assert!(summary.total_bytes_transferred > 0);
+        assert!(summary.errors.is_empty());
+        assert_eq!(progress_events.len(), 1);
+        assert_eq!(progress_events[0].current_source_folder, "INBOX");
+        assert_eq!(progress_events[0].current_target_folder, "INBOX");
+        assert_eq!(progress_events[0].current_uid, 88);
+        assert_eq!(
+            progress_events[0].current_subject,
+            Some("Direct Server Transfer".to_string())
+        );
+
+        src_handle.join().expect("Source server thread panicked");
+        dst_handle.join().expect("Destination server thread panicked");
     }
 }

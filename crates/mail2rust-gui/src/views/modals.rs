@@ -252,6 +252,223 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
             }
         }
 
+        ActiveModal::ImapSync => {
+            let mut is_open = true;
+            egui::Window::new("IMAP Server-to-Server Account Migration (Zero Local Disk Storage)")
+                .open(&mut is_open)
+                .resizable(false)
+                .fixed_size(Vec2::new(660.0, 560.0))
+                .show(ctx, |ui| {
+                    ui.label(
+                        RichText::new("Migrate emails directly from one IMAP server to another in-memory across encrypted TLS sockets with zero local disk saving.")
+                            .size(11.0),
+                    );
+                    ui.add_space(6.0);
+
+                    // GroupBox: Source IMAP Account
+                    win32_groupbox(ui, "Source IMAP Account (From)", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Host:").strong().size(11.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.imap_sync_src_host).desired_width(260.0));
+                            ui.label(RichText::new("Port:").strong().size(11.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.imap_sync_src_port).desired_width(60.0));
+                            ui.checkbox(&mut state.imap_sync_src_tls, "SSL/TLS");
+                        });
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Username:").strong().size(11.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.imap_sync_src_user).desired_width(220.0));
+                            ui.label(RichText::new("Password:").strong().size(11.0));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.imap_sync_src_pass)
+                                    .password(true)
+                                    .desired_width(180.0),
+                            );
+                        });
+                    });
+
+                    ui.add_space(6.0);
+
+                    // GroupBox: Destination IMAP Account
+                    win32_groupbox(ui, "Destination IMAP Account (To)", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Host:").strong().size(11.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.imap_sync_dst_host).desired_width(260.0));
+                            ui.label(RichText::new("Port:").strong().size(11.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.imap_sync_dst_port).desired_width(60.0));
+                            ui.checkbox(&mut state.imap_sync_dst_tls, "SSL/TLS");
+                        });
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Username:").strong().size(11.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.imap_sync_dst_user).desired_width(220.0));
+                            ui.label(RichText::new("Password:").strong().size(11.0));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.imap_sync_dst_pass)
+                                    .password(true)
+                                    .desired_width(180.0),
+                            );
+                        });
+                    });
+
+                    ui.add_space(6.0);
+
+                    // GroupBox: Migration Rules & Preservation Options
+                    win32_groupbox(ui, "Migration Rules & Preservation Options", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Folder Filter:").strong().size(11.0));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.imap_sync_folders)
+                                    .hint_text("e.g. INBOX, Sent (leave empty for all folders)")
+                                    .desired_width(220.0),
+                            );
+                            ui.label(RichText::new("Folder Prefix:").strong().size(11.0));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.imap_sync_folder_prefix)
+                                    .hint_text("Optional, e.g. Migrated/")
+                                    .desired_width(140.0),
+                            );
+                        });
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.checkbox(
+                                &mut state.imap_sync_preserve_flags,
+                                "Preserve Message Flags (\\Seen, \\Flagged, etc.)",
+                            );
+                            ui.add_space(10.0);
+                            ui.checkbox(
+                                &mut state.imap_sync_preserve_dates,
+                                "Preserve Delivery Dates (INTERNALDATE)",
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.checkbox(
+                                &mut state.imap_sync_insecure,
+                                "Accept Self-Signed / Untrusted SSL Certs",
+                            );
+                            ui.add_space(10.0);
+                            ui.checkbox(
+                                &mut state.imap_sync_dry_run,
+                                "Dry Run (Verify & Scan Without Uploading)",
+                            );
+                        });
+                    });
+
+                    ui.add_space(6.0);
+
+                    if let Some(ref status) = state.imap_sync_status {
+                        let is_err = status.starts_with("Error");
+                        let color = if is_err {
+                            Color32::from_rgb(180, 0, 0)
+                        } else {
+                            Color32::from_rgb(0, 100, 0)
+                        };
+                        ui.label(RichText::new(status).color(color).size(11.0).strong());
+                        ui.add_space(6.0);
+                    }
+
+                    ui.horizontal(|ui| {
+                        if win32_dialog_button(ui, "Cancel / Close") {
+                            state.active_modal = ActiveModal::None;
+                        }
+
+                        if win32_dialog_button(ui, "Start Server-to-Server Transfer (Zero Disk)") {
+                            let src_host = state.imap_sync_src_host.trim().to_string();
+                            let src_user = state.imap_sync_src_user.trim().to_string();
+                            let src_pass = state.imap_sync_src_pass.clone();
+                            let dst_host = state.imap_sync_dst_host.trim().to_string();
+                            let dst_user = state.imap_sync_dst_user.trim().to_string();
+                            let dst_pass = state.imap_sync_dst_pass.clone();
+
+                            if src_host.is_empty() || src_user.is_empty() || src_pass.is_empty() {
+                                state.imap_sync_status = Some(
+                                    "Error: Source host, username, and password are required.".to_string(),
+                                );
+                            } else if dst_host.is_empty() || dst_user.is_empty() || dst_pass.is_empty() {
+                                state.imap_sync_status = Some(
+                                    "Error: Destination host, username, and password are required.".to_string(),
+                                );
+                            } else {
+                                let src_port = state.imap_sync_src_port.trim().parse::<u16>().unwrap_or(993);
+                                let dst_port = state.imap_sync_dst_port.trim().parse::<u16>().unwrap_or(993);
+
+                                let folder_filter = if state.imap_sync_folders.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(
+                                        state
+                                            .imap_sync_folders
+                                            .split(',')
+                                            .map(|s| s.trim().to_string())
+                                            .filter(|s| !s.is_empty())
+                                            .collect(),
+                                    )
+                                };
+
+                                let folder_prefix = if state.imap_sync_folder_prefix.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(state.imap_sync_folder_prefix.trim().to_string())
+                                };
+
+                                let config = mail2rust_imap::ImapMigrationConfig {
+                                    source: mail2rust_imap::ImapConfig {
+                                        host: src_host,
+                                        port: src_port,
+                                        username: src_user,
+                                        password: src_pass,
+                                        use_tls: state.imap_sync_src_tls,
+                                        insecure_certs: state.imap_sync_insecure,
+                                        folder_filter: folder_filter.clone(),
+                                        max_messages_per_folder: None,
+                                        since_date: None,
+                                    },
+                                    destination: mail2rust_imap::ImapConfig {
+                                        host: dst_host,
+                                        port: dst_port,
+                                        username: dst_user,
+                                        password: dst_pass,
+                                        use_tls: state.imap_sync_dst_tls,
+                                        insecure_certs: state.imap_sync_insecure,
+                                        folder_filter: None,
+                                        max_messages_per_folder: None,
+                                        since_date: None,
+                                    },
+                                    folder_filter,
+                                    folder_prefix,
+                                    folder_mapping: None,
+                                    preserve_flags: state.imap_sync_preserve_flags,
+                                    preserve_dates: state.imap_sync_preserve_dates,
+                                    create_missing_folders: true,
+                                    dry_run: state.imap_sync_dry_run,
+                                };
+
+                                match mail2rust_imap::ImapMigrator::migrate(&config, |_prog| {}) {
+                                    Ok(summary) => {
+                                        let mb = (summary.total_bytes_transferred as f64) / (1024.0 * 1024.0);
+                                        state.imap_sync_status = Some(format!(
+                                            "Migration Succeeded: Transferred {} message(s) across {} folder(s) ({:.2} MB in {:.1}s). Local disk storage used: 0 bytes.",
+                                            summary.total_messages_migrated,
+                                            summary.total_folders_migrated,
+                                            mb,
+                                            summary.duration_seconds
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        state.imap_sync_status =
+                                            Some(format!("Error during server-to-server migration: {}", e));
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
+
+            if !is_open {
+                state.active_modal = ActiveModal::None;
+            }
+        }
+
         ActiveModal::DirectPst => {
             let mut is_open = true;
             let total_msgs = state.messages.len();

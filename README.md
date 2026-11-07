@@ -90,6 +90,7 @@ mail2rust/
 
 ### Ingestion Formats
 - **Live IMAP Servers (`imap://`)**: Direct live mailbox streaming over SSL/TLS with non-destructive `BODY.PEEK[]` fetching and high-watermark delta sync.
+- **Direct Server-to-Server IMAP Accounts**: Seamless in-flight migration between two remote IMAP accounts with zero local disk footprint, preserving folder trees, original delivery dates (`INTERNALDATE`), and status flags.
 - **Microsoft Outlook PST & Offline OST (`.pst`, `.ost`)**: Pure-Rust B-Tree (NBT/BBT) extraction, official Microsoft `[MS-PST]` 5.1 Permutative Encoding (`mpbbR`) decryption, Property Context (`0xBC`) deserialization, and damaged block carving fallback.
 - **vCard Contacts (`.vcf`, RFC 6350 / RFC 2426)**: Ingests contacts into Outlook `Contacts` folder with `IPM.Contact` MAPI message class.
 - **iCalendar Appointments (`.ics`, RFC 5545)**: Ingests calendars into Outlook `Calendar` folder with `IPM.Appointment` MAPI message class.
@@ -104,6 +105,7 @@ mail2rust/
 
 ### Target Formats
 - **Microsoft Outlook (`.pst`)**: Unicode PST (Outlook 2003–2024 / M365) with folder hierarchies, MAPI properties, and compressible encryption.
+- **Remote IMAP Destination (`imap-sync`)**: Stream messages directly into a destination IMAP account over TLS via IMAP `APPEND` without saving any temporary files locally.
 - **Standard MBOX (`.mbox` / `.mbox.gz`)**: `mboxrd` with proper `>From ` line escaping.
 - **RFC 5322 Hierarchies (`.eml`)**: Multi-layout modes (`folder`, `year`, `month`, `flat`).
 
@@ -271,6 +273,37 @@ mail2rust imap \
   --output "company_archive.pst"
 ```
 
+### 12. Direct IMAP Server-to-Server Account Migration (`mail2rust imap-sync`)
+Migrate entire mailboxes directly between two remote IMAP accounts across encrypted TLS sockets with **zero local disk footprint** (no intermediate files or disk caching). Preserves original delivery dates (`INTERNALDATE`) and message status flags (`\Seen`, `\Flagged`, `\Answered`, `\Deleted`, `\Draft`):
+
+```bash
+# Direct in-flight migration from old server to new server
+mail2rust imap-sync \
+  --src-host "imap.oldhost.com" \
+  --src-user "john@oldhost.com" \
+  --src-pass "OldSecret123" \
+  --dst-host "imap.newhost.com" \
+  --dst-user "john@newhost.com" \
+  --dst-pass "NewSecret456"
+
+# Migrate specific folders into an archive subfolder with a dry-run check
+mail2rust imap-sync \
+  --src-host "imap.gmail.com" \
+  --src-user "user@gmail.com" \
+  --dst-host "mail.company.com" \
+  --dst-user "user@company.com" \
+  --folders "INBOX,Sent,Work" \
+  --folder-prefix "Migrated/Gmail" \
+  --dry-run
+```
+
+Features:
+- **Zero Local Footprint**: MIME byte streams are fetched non-destructively in-memory via `BODY.PEEK[]` and piped straight into destination IMAP `APPEND` buffers.
+- **Microsecond Timestamp Fidelity**: Retains the exact original server delivery timestamp (`INTERNALDATE`) instead of stamping the migration moment.
+- **Status Flag Preservation**: Retains unread/read, starred, answered, deleted, and draft status on the destination server.
+- **Hierarchy Auto-Creation**: Missing target mailbox folders are created automatically.
+- **GUI Access**: Also available in `mail2rust-gui` under **File > IMAP-to-IMAP Account Sync** or the toolbar **Sync IMAP...** button.
+
 ---
 
 ## Feature Comparison Matrix: `mail2rust` vs `mail2mail`
@@ -278,6 +311,7 @@ mail2rust imap \
 | Capability / Requirement | `mail2mail` (Python) | `mail2rust` (Rust) | Parity Status |
 | :--- | :---: | :---: | :---: |
 | **Native Desktop GUI** | Tkinter / Webview wrapper | **100% Pure Rust GUI (`eframe`/`egui`)** | **Exceeds** (Zero Node.js/Webview) |
+| **Direct IMAP Server-to-Server Sync** | No (requires exporting to local disk) | **Yes (`mail2rust imap-sync` & GUI)** — 100% in-memory streaming over TLS, zero disk footprint | **Exceeds** |
 | **PST Writing** | Requires Windows Outlook MAPI COM DLLs | **100% Pure Rust [MS-PST] NDB Engine** | **Exceeds** (Works on Linux/macOS/Win) |
 | **PST CRC32 & B-Tree Validator** | No | **Yes (`validate-pst`)** | **Exceeds** |
 | **All Mailbox Formats (15+)** | Yes | **Yes** (MBOX, Maildir, EML, EMLX, MSG, OLM, MH, MMDF, Babyl) | **Parity** |

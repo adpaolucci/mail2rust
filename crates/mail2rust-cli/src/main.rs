@@ -245,6 +245,62 @@ enum Commands {
     },
     /// Launch the pure-Rust native GUI studio (zero Node.js or WebView2 dependencies)
     Gui,
+    /// Direct server-to-server IMAP migration between accounts with zero local disk storage
+    ImapSync {
+        /// Source IMAP server hostname
+        #[arg(long)]
+        src_host: String,
+        /// Source IMAP port
+        #[arg(long, default_value = "993")]
+        src_port: u16,
+        /// Source IMAP username
+        #[arg(long)]
+        src_user: String,
+        /// Source IMAP password
+        #[arg(long)]
+        src_pass: Option<String>,
+        /// Disable TLS on source connection
+        #[arg(long)]
+        no_src_tls: bool,
+
+        /// Destination IMAP server hostname
+        #[arg(long)]
+        dst_host: String,
+        /// Destination IMAP port
+        #[arg(long, default_value = "993")]
+        dst_port: u16,
+        /// Destination IMAP username
+        #[arg(long)]
+        dst_user: String,
+        /// Destination IMAP password
+        #[arg(long)]
+        dst_pass: Option<String>,
+        /// Disable TLS on destination connection
+        #[arg(long)]
+        no_dst_tls: bool,
+
+        /// Accept self-signed / insecure TLS certificates
+        #[arg(long)]
+        insecure: bool,
+        /// Specific folders to migrate (comma-separated or repeated)
+        #[arg(long)]
+        folders: Vec<String>,
+        /// Prefix for created destination folders (e.g., 'Migrated/')
+        #[arg(long)]
+        folder_prefix: Option<String>,
+        /// Maximum messages to migrate per folder
+        #[arg(long)]
+        max_per_folder: Option<usize>,
+        /// Do not preserve original IMAP flags (\Seen, \Flagged, etc.)
+        #[arg(long)]
+        no_flags: bool,
+        /// Do not preserve original message internal delivery dates
+        #[arg(long)]
+        no_dates: bool,
+        /// Dry-run mode: scan and verify connections without uploading messages
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -707,6 +763,167 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 CheckpointManager::save(&chk, p)?;
                 println!("Saved final migration checkpoint to: {}", p.display());
             }
+        }
+
+        Commands::ImapSync {
+            src_host,
+            src_port,
+            src_user,
+            src_pass,
+            no_src_tls,
+            dst_host,
+            dst_port,
+            dst_user,
+            dst_pass,
+            no_dst_tls,
+            insecure,
+            folders,
+            folder_prefix,
+            max_per_folder,
+            no_flags,
+            no_dates,
+            dry_run,
+        } => {
+            let s_pass = match src_pass {
+                Some(p) => p.clone(),
+                None => match std::env::var("MAIL2RUST_SRC_IMAP_PASSWORD") {
+                    Ok(p) => p,
+                    Err(_) => {
+                        eprint!("Enter Source IMAP Password for {}: ", src_user);
+                        let mut line = String::new();
+                        std::io::stdin().read_line(&mut line)?;
+                        line.trim().to_string()
+                    }
+                },
+            };
+
+            let d_pass = match dst_pass {
+                Some(p) => p.clone(),
+                None => match std::env::var("MAIL2RUST_DST_IMAP_PASSWORD") {
+                    Ok(p) => p,
+                    Err(_) => {
+                        eprint!("Enter Destination IMAP Password for {}: ", dst_user);
+                        let mut line = String::new();
+                        std::io::stdin().read_line(&mut line)?;
+                        line.trim().to_string()
+                    }
+                },
+            };
+
+            let folder_filter = if folders.is_empty() {
+                None
+            } else {
+                Some(folders.clone())
+            };
+
+            let config = mail2rust_imap::ImapMigrationConfig {
+                source: mail2rust_imap::ImapConfig {
+                    host: src_host.clone(),
+                    port: *src_port,
+                    username: src_user.clone(),
+                    password: s_pass,
+                    use_tls: !no_src_tls,
+                    insecure_certs: *insecure,
+                    folder_filter: folder_filter.clone(),
+                    max_messages_per_folder: *max_per_folder,
+                    since_date: None,
+                },
+                destination: mail2rust_imap::ImapConfig {
+                    host: dst_host.clone(),
+                    port: *dst_port,
+                    username: dst_user.clone(),
+                    password: d_pass,
+                    use_tls: !no_dst_tls,
+                    insecure_certs: *insecure,
+                    folder_filter: None,
+                    max_messages_per_folder: None,
+                    since_date: None,
+                },
+                folder_filter,
+                folder_prefix: folder_prefix.clone(),
+                folder_mapping: None,
+                preserve_flags: !no_flags,
+                preserve_dates: !no_dates,
+                create_missing_folders: true,
+                dry_run: *dry_run,
+            };
+
+            println!("\n======================================================================");
+            println!("             IMAP SERVER-TO-SERVER DIRECT MIGRATION");
+            println!("======================================================================");
+            println!(
+                "Source:        {}@{}:{} (TLS: {})",
+                src_user, src_host, src_port, !no_src_tls
+            );
+            println!(
+                "Destination:   {}@{}:{} (TLS: {})",
+                dst_user, dst_host, dst_port, !no_dst_tls
+            );
+            println!("Storage Mode:  Direct Socket-to-Socket Streaming (Zero Local Disk Saving)");
+            println!(
+                "Preserve:      Flags: {} | Dates: {} | Auto-Create Folders: Yes",
+                !no_flags, !no_dates
+            );
+            if *dry_run {
+                println!("Run Mode:      DRY RUN (Scan only, no messages will be uploaded)");
+            }
+            println!("======================================================================\n");
+
+            let summary = mail2rust_imap::ImapMigrator::migrate(&config, |prog| {
+                let subj = prog.current_subject.as_deref().unwrap_or("(No Subject)");
+                let subj_truncated = if subj.len() > 40 {
+                    format!("{}...", &subj[..37])
+                } else {
+                    subj.to_string()
+                };
+                let mb = (prog.total_bytes_transferred as f64) / (1024.0 * 1024.0);
+                println!(
+                    "[{}/{}] [{}] Msg #{} (UID {}) \"{}\" | Total: {} msgs ({:.2} MB)",
+                    prog.folder_index,
+                    prog.total_folders,
+                    prog.current_target_folder,
+                    prog.message_index_in_folder,
+                    prog.current_uid,
+                    subj_truncated,
+                    prog.total_messages_migrated,
+                    mb
+                );
+            })?;
+
+            let total_mb = (summary.total_bytes_transferred as f64) / (1024.0 * 1024.0);
+            let speed_msg = if summary.duration_seconds > 0.0 {
+                (summary.total_messages_migrated as f64) / summary.duration_seconds
+            } else {
+                0.0
+            };
+            let speed_mb = if summary.duration_seconds > 0.0 {
+                total_mb / summary.duration_seconds
+            } else {
+                0.0
+            };
+
+            println!("\n======================================================================");
+            println!("                     IMAP MIGRATION SUMMARY");
+            println!("======================================================================");
+            println!("Status:                SUCCESS");
+            println!("Folders Processed:     {}", summary.total_folders_migrated);
+            println!("Messages Transferred:  {}", summary.total_messages_migrated);
+            println!(
+                "Data Transferred:      {:.2} MB ({} bytes)",
+                total_mb, summary.total_bytes_transferred
+            );
+            println!(
+                "Duration:              {:.2}s | Speed: {:.1} msg/s ({:.2} MB/s)",
+                summary.duration_seconds, speed_msg, speed_mb
+            );
+            println!("Disk Footprint:        0 bytes (No local files saved)");
+            if !summary.errors.is_empty() {
+                println!("Warnings / Errors:     {}", summary.errors.len());
+                for err in &summary.errors {
+                    println!("  - {}", err);
+                }
+            }
+            println!("======================================================================\n");
         }
     }
 

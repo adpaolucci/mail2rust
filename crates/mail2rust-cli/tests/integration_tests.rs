@@ -590,3 +590,201 @@ fn test_validate_all_sample_files() {
     let checkpoint = CheckpointManager::load(&checkpoint_path).expect("load checkpoint");
     assert_eq!(checkpoint.migrated_message_ids.len(), 3);
 }
+
+#[test]
+fn test_cli_imap_sync_server_to_server() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::process::Command;
+    use std::thread;
+
+    // 1. Source Mock IMAP Server
+    let src_listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind src mock listener");
+    let src_addr = src_listener.local_addr().expect("Failed to get src local addr");
+
+    let src_handle = thread::spawn(move || {
+        let (mut socket, _) = src_listener.accept().expect("Failed to accept src");
+        let mut reader = BufReader::new(socket.try_clone().expect("Failed to clone socket"));
+
+        socket.write_all(b"* OK Mock Source IMAP Ready\r\n").unwrap();
+
+        let mut line = String::new();
+        while reader.read_line(&mut line).unwrap() > 0 {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.is_empty() {
+                line.clear();
+                continue;
+            }
+            let tag = parts[0];
+            let cmd = parts.get(1).map(|c| c.to_uppercase()).unwrap_or_default();
+
+            match cmd.as_str() {
+                "LOGIN" => {
+                    socket
+                        .write_all(format!("{} OK LOGIN completed\r\n", tag).as_bytes())
+                        .unwrap();
+                }
+                "LIST" => {
+                    socket
+                        .write_all(b"* LIST (\\HasNoChildren) \"/\" \"INBOX\"\r\n")
+                        .unwrap();
+                    socket
+                        .write_all(format!("{} OK LIST completed\r\n", tag).as_bytes())
+                        .unwrap();
+                }
+                "SELECT" => {
+                    socket.write_all(b"* 1 EXISTS\r\n").unwrap();
+                    socket.write_all(b"* 1 RECENT\r\n").unwrap();
+                    socket.write_all(b"* OK [UIDVALIDITY 4321] UIDs valid\r\n").unwrap();
+                    socket
+                        .write_all(format!("{} OK [READ-WRITE] SELECT completed\r\n", tag).as_bytes())
+                        .unwrap();
+                }
+                "UID" => {
+                    let sub_cmd = parts.get(2).map(|c| c.to_uppercase()).unwrap_or_default();
+                    if sub_cmd == "SEARCH" {
+                        socket.write_all(b"* SEARCH 99\r\n").unwrap();
+                        socket
+                            .write_all(format!("{} OK SEARCH completed\r\n", tag).as_bytes())
+                            .unwrap();
+                    } else if sub_cmd == "FETCH" {
+                        let raw_msg = "From: ceo@alpha.corp\r\nTo: cto@beta.corp\r\nSubject: Server-to-Server Zero Disk Sync\r\nDate: Sat, 07 Nov 2026 15:00:00 +0000\r\n\r\nDirect socket streaming across servers!";
+                        let resp = format!(
+                            "* 1 FETCH (UID 99 FLAGS (\\Seen \\Flagged) INTERNALDATE \"07-Nov-2026 15:00:00 +0000\" ENVELOPE (\"Sat, 07 Nov 2026 15:00:00 +0000\" \"Server-to-Server Zero Disk Sync\" ((NIL NIL \"ceo\" \"alpha.corp\")) NIL NIL NIL NIL NIL NIL NIL) BODY[] {{{}}}\r\n{})\r\n{} OK FETCH completed\r\n",
+                            raw_msg.len(),
+                            raw_msg,
+                            tag
+                        );
+                        socket.write_all(resp.as_bytes()).unwrap();
+                    }
+                }
+                "LOGOUT" => {
+                    socket.write_all(b"* BYE Source logging out\r\n").unwrap();
+                    socket
+                        .write_all(format!("{} OK LOGOUT completed\r\n", tag).as_bytes())
+                        .unwrap();
+                    break;
+                }
+                _ => {
+                    socket
+                        .write_all(format!("{} BAD Unsupported\r\n", tag).as_bytes())
+                        .unwrap();
+                }
+            }
+            line.clear();
+        }
+    });
+
+    // 2. Destination Mock IMAP Server
+    let dst_listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind dst mock listener");
+    let dst_addr = dst_listener.local_addr().expect("Failed to get dst local addr");
+
+    let dst_handle = thread::spawn(move || {
+        let (mut socket, _) = dst_listener.accept().expect("Failed to accept dst");
+        let mut reader = BufReader::new(socket.try_clone().expect("Failed to clone socket"));
+
+        socket.write_all(b"* OK Mock Destination IMAP Ready\r\n").unwrap();
+
+        let mut line = String::new();
+        while reader.read_line(&mut line).unwrap() > 0 {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.is_empty() {
+                line.clear();
+                continue;
+            }
+            let tag = parts[0];
+            let cmd = parts.get(1).map(|c| c.to_uppercase()).unwrap_or_default();
+
+            match cmd.as_str() {
+                "LOGIN" => {
+                    socket
+                        .write_all(format!("{} OK LOGIN completed\r\n", tag).as_bytes())
+                        .unwrap();
+                }
+                "LIST" => {
+                    socket
+                        .write_all(b"* LIST (\\HasNoChildren) \"/\" \"INBOX\"\r\n")
+                        .unwrap();
+                    socket
+                        .write_all(format!("{} OK LIST completed\r\n", tag).as_bytes())
+                        .unwrap();
+                }
+                "CREATE" => {
+                    socket
+                        .write_all(format!("{} OK CREATE completed\r\n", tag).as_bytes())
+                        .unwrap();
+                }
+                "APPEND" => {
+                    let literal_size: usize = line
+                        .find('{')
+                        .and_then(|start| {
+                            line[start + 1..]
+                                .find('}')
+                                .map(|end| line[start + 1..start + 1 + end].parse().unwrap_or(0))
+                        })
+                        .unwrap_or(0);
+
+                    socket.write_all(b"+ Ready for literal data\r\n").unwrap();
+
+                    let mut literal_buf = vec![0u8; literal_size];
+                    std::io::Read::read_exact(&mut reader, &mut literal_buf).unwrap();
+
+                    socket
+                        .write_all(format!("{} OK [APPENDUID 1 7777] APPEND completed\r\n", tag).as_bytes())
+                        .unwrap();
+                }
+                "LOGOUT" => {
+                    socket.write_all(b"* BYE Destination logging out\r\n").unwrap();
+                    socket
+                        .write_all(format!("{} OK LOGOUT completed\r\n", tag).as_bytes())
+                        .unwrap();
+                    break;
+                }
+                _ => {
+                    socket
+                        .write_all(format!("{} BAD Unsupported\r\n", tag).as_bytes())
+                        .unwrap();
+                }
+            }
+            line.clear();
+        }
+    });
+
+    let bin_path = env!("CARGO_BIN_EXE_mail2rust");
+
+    let sync_out = Command::new(bin_path)
+        .args([
+            "imap-sync",
+            "--src-host",
+            "127.0.0.1",
+            "--src-port",
+            &src_addr.port().to_string(),
+            "--src-user",
+            "source_admin@alpha.corp",
+            "--src-pass",
+            "SecretPassAlpha",
+            "--no-src-tls",
+            "--dst-host",
+            "127.0.0.1",
+            "--dst-port",
+            &dst_addr.port().to_string(),
+            "--dst-user",
+            "dest_admin@beta.corp",
+            "--dst-pass",
+            "SecretPassBeta",
+            "--no-dst-tls",
+        ])
+        .output()
+        .expect("imap-sync command failed to execute");
+
+    src_handle.join().expect("Source mock thread panicked");
+    dst_handle.join().expect("Destination mock thread panicked");
+
+    assert!(sync_out.status.success());
+    let stdout = String::from_utf8_lossy(&sync_out.stdout);
+    assert!(stdout.contains("IMAP SERVER-TO-SERVER DIRECT MIGRATION"));
+    assert!(stdout.contains("Storage Mode:  Direct Socket-to-Socket Streaming (Zero Local Disk Saving)"));
+    assert!(stdout.contains("Disk Footprint:        0 bytes (No local files saved)"));
+    assert!(stdout.contains("Status:                SUCCESS"));
+    assert!(stdout.contains("Messages Transferred:  1"));
+}
