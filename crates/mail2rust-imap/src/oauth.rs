@@ -89,6 +89,7 @@ pub enum OAuthProvider {
     Google,
     Microsoft,
     Yahoo,
+    Proton,
 }
 
 impl OAuthProvider {
@@ -101,6 +102,8 @@ impl OAuthProvider {
             Some(OAuthProvider::Microsoft)
         } else if h.contains("yahoo") || h.contains("aol") {
             Some(OAuthProvider::Yahoo)
+        } else if h.contains("proton") {
+            Some(OAuthProvider::Proton)
         } else {
             None
         }
@@ -111,6 +114,7 @@ impl OAuthProvider {
             OAuthProvider::Google => "Google (Gmail / Google Workspace)",
             OAuthProvider::Microsoft => "Microsoft (Outlook.com / Office 365 / M365)",
             OAuthProvider::Yahoo => "Yahoo Mail (Yahoo / AOL)",
+            OAuthProvider::Proton => "Proton Mail (via Proton Mail Bridge)",
         }
     }
 
@@ -119,11 +123,15 @@ impl OAuthProvider {
             OAuthProvider::Google => "imap.gmail.com",
             OAuthProvider::Microsoft => "outlook.office365.com",
             OAuthProvider::Yahoo => "imap.mail.yahoo.com",
+            OAuthProvider::Proton => "127.0.0.1",
         }
     }
 
     pub fn default_imap_port(&self) -> u16 {
-        993
+        match self {
+            OAuthProvider::Proton => 1143,
+            _ => 993,
+        }
     }
 
     pub fn auth_url(&self) -> &'static str {
@@ -131,6 +139,7 @@ impl OAuthProvider {
             OAuthProvider::Google => "https://accounts.google.com/o/oauth2/v2/auth",
             OAuthProvider::Microsoft => "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
             OAuthProvider::Yahoo => "https://api.login.yahoo.com/oauth2/request_auth",
+            OAuthProvider::Proton => "https://account.proton.me",
         }
     }
 
@@ -139,6 +148,7 @@ impl OAuthProvider {
             OAuthProvider::Google => "https://oauth2.googleapis.com/token",
             OAuthProvider::Microsoft => "https://login.microsoftonline.com/common/oauth2/v2.0/token",
             OAuthProvider::Yahoo => "https://api.login.yahoo.com/oauth2/get_token",
+            OAuthProvider::Proton => "https://account.proton.me/token",
         }
     }
 
@@ -147,6 +157,7 @@ impl OAuthProvider {
             OAuthProvider::Google => "https://mail.google.com/",
             OAuthProvider::Microsoft => "https://outlook.office.com/IMAP.AccessAsUser.All offline_access",
             OAuthProvider::Yahoo => "mail-r mail-w",
+            OAuthProvider::Proton => "email",
         }
     }
 
@@ -174,6 +185,21 @@ impl OAuthProvider {
                  2. Scroll down and click 'Generate app password'.\n\
                  3. Enter 'Mail2Rust' and click 'Generate password'.\n\
                  4. Copy the 16-character code and use it with '--password' in Mail2Rust."
+            }
+            OAuthProvider::Proton => {
+                "Proton Mail (via Proton Mail Bridge):\n\
+                 Because Proton Mail uses client-side zero-access encryption (PGP),\n\
+                 direct external IMAP access to Proton cloud servers is not available.\n\
+                 Instead, use the official 'Proton Mail Bridge' desktop application:\n\
+                 1. Install & launch 'Proton Mail Bridge' (https://proton.me/mail/bridge).\n\
+                 2. Add your account inside Bridge and copy the local bridge credentials:\n\
+                    - Host:     127.0.0.1 (or localhost)\n\
+                    - Port:     1143\n\
+                    - Username: your Proton email (e.g. user@proton.me)\n\
+                    - Password: 16-character Bridge password generated in the app\n\
+                 3. In Mail2Rust, always add '--insecure' for Bridge's local TLS cert:\n\
+                    mail2rust imap --host 127.0.0.1 --port 1143 --username user@proton.me --password \"xxxx xxxx xxxx xxxx\" --insecure -o proton.pst\n\
+                 4. In the GUI: Click the 'Proton (Bridge)' preset in the IMAP dialog."
             }
         }
     }
@@ -359,17 +385,21 @@ pub fn diagnose_auth_failure(host: &str, error_msg: &str) -> String {
         diag.push_str("\n----------------------------------------------------------------------\n");
         diag.push_str(&format!("  DIAGNOSTIC ADVICE FOR {}:\n", provider.display_name().to_uppercase()));
         diag.push_str("----------------------------------------------------------------------\n");
-        diag.push_str(
-            "Modern email providers no longer allow your primary account password over IMAP.\n\
-             You can connect using either of two supported methods:\n\n\
-             METHOD 1: Generate a Provider 'App Password' (Quickest & Recommended):\n"
-        );
-        diag.push_str(provider.app_password_guide());
-        diag.push_str(
-            "\n\nMETHOD 2: Authenticate using OAuth 2.0 (XOAUTH2 / OAUTHBEARER):\n\
-             - Pass your access token via: --oauth-token <TOKEN> --auth-method xoauth2\n\
-             - Or use the built-in token helper: mail2rust oauth-login\n"
-        );
+        if provider == OAuthProvider::Proton {
+            diag.push_str(provider.app_password_guide());
+        } else {
+            diag.push_str(
+                "Modern email providers no longer allow your primary account password over IMAP.\n\
+                 You can connect using either of two supported methods:\n\n\
+                 METHOD 1: Generate a Provider 'App Password' (Quickest & Recommended):\n"
+            );
+            diag.push_str(provider.app_password_guide());
+            diag.push_str(
+                "\n\nMETHOD 2: Authenticate using OAuth 2.0 (XOAUTH2 / OAUTHBEARER):\n\
+                 - Pass your access token via: --oauth-token <TOKEN> --auth-method xoauth2\n\
+                 - Or use the built-in token helper: mail2rust oauth-login\n"
+            );
+        }
         diag.push_str("----------------------------------------------------------------------\n");
     }
 
@@ -415,6 +445,7 @@ mod tests {
         assert_eq!(OAuthProvider::from_host("imap.gmail.com"), Some(OAuthProvider::Google));
         assert_eq!(OAuthProvider::from_host("outlook.office365.com"), Some(OAuthProvider::Microsoft));
         assert_eq!(OAuthProvider::from_host("imap.mail.yahoo.com"), Some(OAuthProvider::Yahoo));
+        assert_eq!(OAuthProvider::from_host("imap.proton.me"), Some(OAuthProvider::Proton));
         assert_eq!(OAuthProvider::from_host("mail.custom-domain.net"), None);
     }
 

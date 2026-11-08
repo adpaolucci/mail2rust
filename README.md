@@ -359,6 +359,7 @@ mail2rust app-passwords
 mail2rust app-passwords google
 mail2rust app-passwords microsoft
 mail2rust app-passwords yahoo
+mail2rust app-passwords proton
 ```
 
 Use your generated 16-character App Password with `--password`:
@@ -402,9 +403,40 @@ For enterprise environments or automated pipelines using registered cloud client
      --dst-oauth-token "<OFFICE365_ACCESS_TOKEN>"
    ```
 
+#### Method 3: Proton Mail & Proton Mail Bridge Support
+Because Proton Mail enforces client-side zero-access encryption (OpenPGP), direct external IMAP connections to remote Proton cloud servers are intentionally not supported. Instead, Proton provides the official **Proton Mail Bridge** desktop application, which decrypts email locally with your private key and serves a standard IMAP endpoint:
+
+1. **Terminal Setup Guide**: Run `mail2rust app-passwords proton` for step-by-step instructions.
+2. **Ingest Live Decrypted Proton Mail**:
+   ```bash
+   # Connect to local Proton Mail Bridge (default port 1143 with self-signed TLS)
+   mail2rust imap \
+     --host "127.0.0.1" \
+     --port 1143 \
+     --username "user@proton.me" \
+     --password "<BRIDGE_GENERATED_PASSWORD>" \
+     --insecure \
+     -o "proton_archive.pst"
+   ```
+3. **Server-to-Server Migration Between Proton and Other Providers**:
+   ```bash
+   # In-memory migration from Gmail to Proton Mail (or vice-versa) with zero disk storage:
+   mail2rust imap-sync \
+     --src-host "imap.gmail.com" \
+     --src-user "user@gmail.com" \
+     --src-pass "<GMAIL_APP_PASSWORD>" \
+     --dst-host "127.0.0.1" \
+     --dst-port 1143 \
+     --dst-user "user@proton.me" \
+     --dst-pass "<BRIDGE_GENERATED_PASSWORD>" \
+     --insecure
+   ```
+4. **GUI Studio**: Click the **Proton (Bridge)** preset in the IMAP Connection or IMAP-to-IMAP Account Sync modals to automatically set host `127.0.0.1`, port `1143`, and self-signed TLS certificate acceptance.
+5. **Static Archive Ingestion**: Exported `.mbox` and `.eml` archives from the Proton Mail Export Tool can also be merged, converted, or audited directly via `mail2rust convert` and `mail2rust merge`.
+
 #### Automated Diagnostics & GUI Support
-- **Actionable Authentication Diagnostics**: When an IMAP login fails against Google, Microsoft, or Yahoo, Mail2Rust analyzes the response and automatically prints actionable guidance tailored to that specific provider.
-- **Native GUI Preset & Auth Selector**: In `mail2rust-gui`, the **Connect to IMAP Mailbox** and **IMAP-to-IMAP Account Sync** dialogs offer one-click presets for Gmail, Outlook, Yahoo, and iCloud, plus radio buttons to toggle between **Password / App Pass**, **OAuth 2.0 (XOAUTH2)**, and **OAUTHBEARER**.
+- **Actionable Authentication Diagnostics**: When an IMAP login fails against Google, Microsoft, Yahoo, or Proton, Mail2Rust analyzes the response and automatically prints actionable guidance tailored to that specific provider.
+- **Native GUI Preset & Auth Selector**: In `mail2rust-gui`, the **Connect to IMAP Mailbox** and **IMAP-to-IMAP Account Sync** dialogs offer one-click presets for **Gmail**, **Outlook**, **Yahoo**, **Proton (Bridge)**, and **iCloud**, plus radio buttons to toggle between **Password / App Pass**, **OAuth 2.0 (XOAUTH2)**, and **OAUTHBEARER**.
 
 ---
 

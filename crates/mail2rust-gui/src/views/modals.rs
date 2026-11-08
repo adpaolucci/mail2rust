@@ -116,6 +116,13 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                 state.imap_port = "993".to_string();
                                 state.imap_use_tls = true;
                             }
+                            if ui.small_button("Proton (Bridge)").clicked() {
+                                state.imap_host = "127.0.0.1".to_string();
+                                state.imap_port = "1143".to_string();
+                                state.imap_use_tls = true;
+                                state.imap_insecure_certs = true;
+                                state.imap_auth_method = "password".to_string();
+                            }
                             if ui.small_button("iCloud").clicked() {
                                 state.imap_host = "imap.mail.me.com".to_string();
                                 state.imap_port = "993".to_string();
@@ -347,6 +354,27 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                     // GroupBox: Source IMAP Account
                     win32_groupbox(ui, "Source IMAP Account (From)", |ui| {
                         ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset:").size(10.0));
+                            if ui.small_button("Gmail").clicked() {
+                                state.imap_sync_src_host = "imap.gmail.com".to_string();
+                                state.imap_sync_src_port = "993".to_string();
+                                state.imap_sync_src_tls = true;
+                            }
+                            if ui.small_button("Outlook").clicked() {
+                                state.imap_sync_src_host = "outlook.office365.com".to_string();
+                                state.imap_sync_src_port = "993".to_string();
+                                state.imap_sync_src_tls = true;
+                            }
+                            if ui.small_button("Proton (Bridge)").clicked() {
+                                state.imap_sync_src_host = "127.0.0.1".to_string();
+                                state.imap_sync_src_port = "1143".to_string();
+                                state.imap_sync_src_tls = true;
+                                state.imap_sync_insecure = true;
+                                state.imap_sync_src_auth_method = "password".to_string();
+                            }
+                        });
+                        ui.add_space(2.0);
+                        ui.horizontal(|ui| {
                             ui.label(RichText::new("Host:").strong().size(11.0));
                             ui.add(egui::TextEdit::singleline(&mut state.imap_sync_src_host).desired_width(260.0));
                             ui.label(RichText::new("Port:").strong().size(11.0));
@@ -386,6 +414,27 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
 
                     // GroupBox: Destination IMAP Account
                     win32_groupbox(ui, "Destination IMAP Account (To)", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset:").size(10.0));
+                            if ui.small_button("Gmail").clicked() {
+                                state.imap_sync_dst_host = "imap.gmail.com".to_string();
+                                state.imap_sync_dst_port = "993".to_string();
+                                state.imap_sync_dst_tls = true;
+                            }
+                            if ui.small_button("Outlook").clicked() {
+                                state.imap_sync_dst_host = "outlook.office365.com".to_string();
+                                state.imap_sync_dst_port = "993".to_string();
+                                state.imap_sync_dst_tls = true;
+                            }
+                            if ui.small_button("Proton (Bridge)").clicked() {
+                                state.imap_sync_dst_host = "127.0.0.1".to_string();
+                                state.imap_sync_dst_port = "1143".to_string();
+                                state.imap_sync_dst_tls = true;
+                                state.imap_sync_insecure = true;
+                                state.imap_sync_dst_auth_method = "password".to_string();
+                            }
+                        });
+                        ui.add_space(2.0);
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Host:").strong().size(11.0));
                             ui.add(egui::TextEdit::singleline(&mut state.imap_sync_dst_host).desired_width(260.0));

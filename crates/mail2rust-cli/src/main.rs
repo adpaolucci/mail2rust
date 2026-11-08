@@ -399,9 +399,9 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Print instructions for generating App Passwords for Google, Microsoft, and Yahoo
+    /// Print instructions for generating App Passwords for Google, Microsoft, Yahoo, or Proton Mail
     AppPasswords {
-        /// Specific provider to query: 'google', 'microsoft', 'yahoo', or 'all'
+        /// Specific provider to query: 'google', 'microsoft', 'yahoo', 'proton', or 'all'
         #[arg(default_value = "all")]
         provider: String,
     },
@@ -1199,6 +1199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let show_google = p_lower == "all" || p_lower == "google" || p_lower == "gmail";
             let show_ms = p_lower == "all" || p_lower == "microsoft" || p_lower == "outlook" || p_lower == "office365";
             let show_yahoo = p_lower == "all" || p_lower == "yahoo" || p_lower == "aol";
+            let show_proton = p_lower == "all" || p_lower == "proton" || p_lower == "protonmail" || p_lower == "bridge" || p_lower == "pm";
 
             if show_google {
                 println!("--- GOOGLE GMAIL & GOOGLE WORKSPACE ---");
@@ -1213,6 +1214,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if show_yahoo {
                 println!("--- YAHOO MAIL & AOL ---");
                 println!("{}", OAuthProvider::Yahoo.app_password_guide());
+                println!();
+            }
+            if show_proton {
+                println!("--- PROTON MAIL & PROTON MAIL BRIDGE ---");
+                println!("{}", OAuthProvider::Proton.app_password_guide());
                 println!();
             }
             println!("Once generated, supply it to Mail2Rust with:\n  --password \"xxxx xxxx xxxx xxxx\"");

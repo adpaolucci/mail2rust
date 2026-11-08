@@ -878,9 +878,11 @@ fn test_cli_oauth_and_app_passwords() {
     assert!(stdout.contains("GOOGLE GMAIL & GOOGLE WORKSPACE"));
     assert!(stdout.contains("MICROSOFT OUTLOOK.COM & OFFICE 365"));
     assert!(stdout.contains("YAHOO MAIL & AOL"));
+    assert!(stdout.contains("PROTON MAIL & PROTON MAIL BRIDGE"));
     assert!(stdout.contains("myaccount.google.com/apppasswords"));
     assert!(stdout.contains("account.live.com/proofs/manage/additional"));
     assert!(stdout.contains("login.yahoo.com/account/security"));
+    assert!(stdout.contains("1143"));
 
     // 2. Verify targeted provider guide
     let out_google = std::process::Command::new(cargo_bin)
@@ -892,6 +894,16 @@ fn test_cli_oauth_and_app_passwords() {
     let google_stdout = String::from_utf8_lossy(&out_google.stdout);
     assert!(google_stdout.contains("GOOGLE GMAIL & GOOGLE WORKSPACE"));
     assert!(!google_stdout.contains("YAHOO MAIL & AOL"));
+
+    let out_proton = std::process::Command::new(cargo_bin)
+        .arg("app-passwords")
+        .arg("proton")
+        .output()
+        .expect("failed to run app-passwords proton");
+    assert!(out_proton.status.success());
+    let proton_stdout = String::from_utf8_lossy(&out_proton.stdout);
+    assert!(proton_stdout.contains("PROTON MAIL & PROTON MAIL BRIDGE"));
+    assert!(proton_stdout.contains("proton.me/mail/bridge"));
 
     // 3. Verify IMAP CLI help exposes auth-method and oauth-token
     let imap_help = std::process::Command::new(cargo_bin)
