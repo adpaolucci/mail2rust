@@ -7,6 +7,7 @@ use mail2rust_mbox::MboxFileExporter;
 use mail2rust_pst::{PstValidator, PstWriter};
 use mail2rust_sync::CheckpointManager;
 use std::fs::File;
+use std::path::PathBuf;
 use tempfile::tempdir;
 
 fn create_sample_message(id: &str, thread_id: &str, subject: &str, body: &str) -> EmailMessage {
@@ -787,4 +788,76 @@ fn test_cli_imap_sync_server_to_server() {
     assert!(stdout.contains("Disk Footprint:        0 bytes (No local files saved)"));
     assert!(stdout.contains("Status:                SUCCESS"));
     assert!(stdout.contains("Messages Transferred:  1"));
+}
+
+#[test]
+fn test_cli_merge_multi_format_to_pst_and_mbox() {
+    let cargo_bin = env!("CARGO_BIN_EXE_mail2rust");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let samples_dir = workspace_root.join("samples");
+
+    let s1 = samples_dir.join("takeout").join("sample_google_takeout.zip");
+    let s2 = samples_dir.join("maildir");
+    let s3 = samples_dir.join("emlx").join("sample_apple_mail.emlx");
+    let s4 = samples_dir.join("contacts").join("sample_contacts.vcf");
+    let s5 = samples_dir.join("calendar").join("sample_calendar.ics");
+
+    assert!(s1.exists());
+    assert!(s2.exists());
+    assert!(s3.exists());
+    assert!(s4.exists());
+    assert!(s5.exists());
+
+    let temp = tempdir().expect("tempdir");
+    let merged_pst = temp.path().join("merged_all.pst");
+
+    // 1. Merge into a unified PST with 'combine' strategy
+    let merge_out = std::process::Command::new(cargo_bin)
+        .arg("merge")
+        .arg(&s1)
+        .arg(&s2)
+        .arg(&s3)
+        .arg(&s4)
+        .arg(&s5)
+        .arg("-o")
+        .arg(&merged_pst)
+        .arg("--folder-strategy")
+        .arg("combine")
+        .arg("--dedup")
+        .arg("message-id")
+        .output()
+        .expect("failed to execute merge command");
+
+    assert!(merge_out.status.success(), "Merge command failed: {:?}", String::from_utf8_lossy(&merge_out.stderr));
+    let stdout = String::from_utf8_lossy(&merge_out.stdout);
+    assert!(stdout.contains("MAILBOX MERGE & CONSOLIDATION SUMMARY"));
+    assert!(stdout.contains("Total Ingested Sources:      5"));
+    assert!(stdout.contains("Per-Source Ingestion Breakdown"));
+    assert!(stdout.contains("Merged output successfully saved to:"));
+
+    assert!(merged_pst.exists());
+    let r = File::open(&merged_pst).expect("open merged pst");
+    let val = PstValidator::validate(r).expect("validate merged pst");
+    assert!(val.is_valid);
+    assert!(val.crc_match);
+
+    let read_msgs = mail2rust_pst::PstReader::read_path(&merged_pst).expect("read merged pst");
+    // s1 (3) + s2 (2) + s3 (1) + s4 (2) + s5 (1) = 9 messages
+    assert_eq!(read_msgs.len(), 9);
+
+    // 2. Merge into MBOX with 'prefix' strategy and dry-run check
+    let dry_run_out = std::process::Command::new(cargo_bin)
+        .arg("merge")
+        .arg(&s1)
+        .arg(&s2)
+        .arg("-o")
+        .arg(temp.path().join("dummy.mbox"))
+        .arg("--dry-run")
+        .output()
+        .expect("failed dry run merge");
+    assert!(dry_run_out.status.success());
+    let dry_stdout = String::from_utf8_lossy(&dry_run_out.stdout);
+    assert!(dry_stdout.contains("Dry-run mode active: no target files written."));
+    assert!(!temp.path().join("dummy.mbox").exists());
 }

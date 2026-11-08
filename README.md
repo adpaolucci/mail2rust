@@ -304,6 +304,44 @@ Features:
 - **Hierarchy Auto-Creation**: Missing target mailbox folders are created automatically.
 - **GUI Access**: Also available in `mail2rust-gui` under **File > IMAP-to-IMAP Account Sync** or the toolbar **Sync IMAP...** button.
 
+### 13. Multi-Format Mailbox Merger & Consolidation (`mail2rust merge`)
+Consolidate disparate mailbox sources across completely different formats (e.g. an MBOX from Google Takeout, a Linux Maildir, an Apple Mail `.emlx` archive, Outlook `.msg` files, vCard contacts `.vcf`, and calendar `.ics` appointments) into a single unified container (PST, MBOX, or EML):
+
+```bash
+# Merge multiple disparate formats into a single unified Outlook PST
+mail2rust merge \
+  "Takeout.zip" \
+  "/var/mail/user_maildir" \
+  "archive_2022.mbox" \
+  "contacts.vcf" \
+  "calendar.ics" \
+  --output "ConsolidatedMailbox.pst" \
+  --folder-strategy combine \
+  --dedup message-id
+
+# Merge with source prefixing to keep archives partitioned
+mail2rust merge \
+  "GmailTakeout.zip" \
+  "WorkExchange.pst" \
+  --source-prefixes "Gmail,Work" \
+  --folder-strategy prefix \
+  --output "UnifiedArchive.pst"
+
+# Dry-run merge analysis and consolidation statistics
+mail2rust merge "source1.mbox" "source2.pst" "source3_dir" \
+  --output "out.pst" \
+  --dry-run
+```
+
+Key Merger Capabilities:
+- **Cross-Source Deduplication**: Eliminates cross-archive duplicates using RFC 5322 `Message-ID`, exact `SHA-256` payload hashes, or normalized body content, while merging flags (`\Seen`, `\Flagged`, etc.) from duplicate occurrences.
+- **Folder Organization Strategies**:
+  - `combine` (default): Combines matching folders across archives (e.g., all `Inbox` messages unify into one `Inbox`).
+  - `prefix`: Keeps archives partitioned under root labels (e.g., `[Gmail]/Inbox`, `[Work]/Inbox`).
+  - `flatten`: Merges all messages into a single root folder.
+- **Chronological Sorting**: Automatically orders the unified message timeline sequentially by date (UTC).
+- **GUI Studio Integration**: Open **File > Merge Mailboxes (Multi-Format)...** or click the toolbar **Merge...** button to merge and either export directly or load all unified mail directly into the interactive 3-pane workbench for immediate inspection.
+
 ---
 
 ## Feature Comparison Matrix: `mail2rust` vs `mail2mail`
@@ -311,6 +349,7 @@ Features:
 | Capability / Requirement | `mail2mail` (Python) | `mail2rust` (Rust) | Parity Status |
 | :--- | :---: | :---: | :---: |
 | **Native Desktop GUI** | Tkinter / Webview wrapper | **100% Pure Rust GUI (`eframe`/`egui`)** | **Exceeds** (Zero Node.js/Webview) |
+| **Multi-Format Mailbox Merger** | Manual individual conversions | **Yes (`mail2rust merge` & GUI)** — Merge PST, MBOX, Maildir, EMLX, MSG, OLM, VCF, ICS, and Takeout ZIP with cross-source deduplication | **Exceeds** |
 | **Direct IMAP Server-to-Server Sync** | No (requires exporting to local disk) | **Yes (`mail2rust imap-sync` & GUI)** — 100% in-memory streaming over TLS, zero disk footprint | **Exceeds** |
 | **PST Writing** | Requires Windows Outlook MAPI COM DLLs | **100% Pure Rust [MS-PST] NDB Engine** | **Exceeds** (Works on Linux/macOS/Win) |
 | **PST CRC32 & B-Tree Validator** | No | **Yes (`validate-pst`)** | **Exceeds** |

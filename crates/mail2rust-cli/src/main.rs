@@ -1,6 +1,8 @@
 use chrono::Datelike;
 use clap::{Parser, Subcommand, ValueEnum};
-use mail2rust_core::{init_logging, EmailMessage, FormatSniffer};
+use mail2rust_core::{
+    init_logging, EmailMessage, FormatSniffer, MailboxMerger, MergeFolderStrategy, MergeOptions, MergeSourceConfig,
+};
 use mail2rust_eml::{EmlExporter, EmlLayout, EmlNaming};
 use mail2rust_filter::{
     parse_cli_datetime, parse_size_bytes, DateFilter, DedupEngine, DedupStrategy, FolderFilter, SplitConfig, SplitMode,
@@ -86,6 +88,18 @@ enum CliDedupStrategy {
     Sha256,
     MessageId,
     Content,
+    None,
+}
+
+impl From<CliDedupStrategy> for DedupStrategy {
+    fn from(val: CliDedupStrategy) -> Self {
+        match val {
+            CliDedupStrategy::Sha256 => DedupStrategy::Sha256,
+            CliDedupStrategy::MessageId => DedupStrategy::MessageId,
+            CliDedupStrategy::Content => DedupStrategy::NormalizedContent,
+            CliDedupStrategy::None => DedupStrategy::None,
+        }
+    }
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -298,6 +312,52 @@ enum Commands {
         #[arg(long)]
         no_dates: bool,
         /// Dry-run mode: scan and verify connections without uploading messages
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Merge disparate mailbox files, directories, and formats into a unified container
+    Merge {
+        /// Source mailbox paths to merge (files, directories, or archives)
+        #[arg(required = true, num_args = 2..)]
+        sources: Vec<PathBuf>,
+
+        /// Destination output path (.pst, .mbox, directory for .eml)
+        #[arg(short, long, alias = "destination", required = true)]
+        output: PathBuf,
+
+        /// Folder organization strategy: 'combine' (merge matching folders), 'prefix' (prefix with source alias), 'flatten'
+        #[arg(long, default_value = "combine")]
+        folder_strategy: String,
+
+        /// Custom source aliases / prefixes (comma-separated, matched by position to sources)
+        #[arg(long)]
+        source_prefixes: Option<String>,
+
+        /// Sort messages chronologically by date
+        #[arg(long, default_value = "true")]
+        sort_by_date: bool,
+
+        /// Target format override ('pst', 'mbox', 'eml')
+        #[arg(long)]
+        format: Option<String>,
+
+        /// PST split size if target is PST (e.g. '20GB', '500MB')
+        #[arg(long, alias = "split-pst")]
+        max_pst_size: Option<String>,
+
+        /// PST encryption mode: 'none', 'permute', 'cyclic'
+        #[arg(long, default_value = "permute")]
+        encryption: CliPstEncryption,
+
+        /// Optional password for PST output
+        #[arg(long)]
+        password: Option<String>,
+
+        /// EML layout if destination is EML: 'folder', 'year', 'month', 'flat'
+        #[arg(long, default_value = "folder")]
+        eml_layout: String,
+
+        /// Dry-run mode: analyze sources and display merge summary without writing
         #[arg(long)]
         dry_run: bool,
     },
@@ -925,8 +985,189 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             println!("======================================================================\n");
         }
+
+        Commands::Merge {
+            sources,
+            output,
+            folder_strategy,
+            source_prefixes,
+            sort_by_date,
+            format,
+            max_pst_size,
+            encryption,
+            password,
+            eml_layout,
+            dry_run,
+        } => {
+            run_merge_conversion(
+                &cli,
+                sources,
+                output,
+                folder_strategy,
+                source_prefixes.as_deref(),
+                *sort_by_date,
+                format.as_deref(),
+                max_pst_size.as_deref(),
+                (*encryption).into(),
+                password.as_deref(),
+                eml_layout,
+                *dry_run,
+            )?;
+        }
     }
 
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_merge_conversion(
+    cli: &Cli,
+    sources: &[PathBuf],
+    destination: &Path,
+    folder_strategy_str: &str,
+    source_prefixes: Option<&str>,
+    sort_by_date: bool,
+    format_override: Option<&str>,
+    max_pst_size: Option<&str>,
+    encryption: PstEncryption,
+    password: Option<&str>,
+    eml_layout_str: &str,
+    dry_run: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let folder_strategy: MergeFolderStrategy = folder_strategy_str
+        .parse()
+        .map_err(|e: String| format!("Invalid --folder-strategy: {}", e))?;
+
+    let dedup_strategy = cli
+        .dedup
+        .map(Into::into)
+        .unwrap_or(DedupStrategy::MessageId);
+
+    let prefix_list: Vec<&str> = if let Some(prefixes) = source_prefixes {
+        prefixes.split(',').map(|s| s.trim()).collect()
+    } else {
+        Vec::new()
+    };
+
+    let mut configs = Vec::new();
+    for (i, src) in sources.iter().enumerate() {
+        let mut cfg = MergeSourceConfig::new(src);
+        if let Some(&p) = prefix_list.get(i) {
+            if !p.is_empty() {
+                cfg.alias = Some(p.to_string());
+                cfg.custom_prefix = Some(p.to_string());
+            }
+        }
+        configs.push(cfg);
+    }
+
+    let options = MergeOptions {
+        folder_strategy,
+        dedup_strategy,
+        sort_by_date,
+        dry_run: dry_run || cli.dry_run,
+    };
+
+    println!(
+        "\nStarting Multi-Format Mailbox Merge across {} sources...",
+        configs.len()
+    );
+    let (mut merged_messages, report) = MailboxMerger::merge_sources(&configs, &options, ingest_source)?;
+
+    println!("{}", report.format_summary());
+
+    if options.dry_run {
+        println!("Dry-run mode active: no target files written.\n");
+        return Ok(());
+    }
+
+    // Apply global CLI date filters if specified
+    apply_preprocessing(cli, &mut merged_messages)?;
+
+    let dest_ext = destination
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let is_pst = if let Some(fmt) = format_override {
+        fmt.eq_ignore_ascii_case("pst")
+    } else {
+        dest_ext == "pst"
+    };
+
+    let is_mbox = if let Some(fmt) = format_override {
+        fmt.eq_ignore_ascii_case("mbox")
+    } else {
+        dest_ext == "mbox" || dest_ext == "gz"
+    };
+
+    if is_pst {
+        let max_bytes = if let Some(sz) = max_pst_size {
+            parse_size_bytes(sz).unwrap_or(20 * 1024 * 1024 * 1024)
+        } else {
+            20 * 1024 * 1024 * 1024
+        };
+
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let total_bytes: usize = merged_messages.iter().map(|m| m.size_bytes).sum();
+        if total_bytes > max_bytes && max_bytes > 0 {
+            let prefix = destination
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("MergedArchive");
+            let parent_dir = destination.parent().unwrap_or_else(|| Path::new("."));
+            let cfg = SplitConfig {
+                max_volume_bytes: max_bytes,
+                cluster_threads: true,
+                file_prefix: prefix.to_string(),
+                target_ext: "pst".to_string(),
+            };
+            let volumes = VolumeSplitter::split_with_mode(&merged_messages, &cfg, &SplitMode::Size);
+            for vol in &volumes {
+                let out_file = parent_dir.join(&vol.file_name);
+                write_single_pst(&vol.messages, &out_file, encryption, password, None, false)?;
+            }
+            println!("Exported {} merged PST volumes successfully", volumes.len());
+        } else {
+            write_single_pst(&merged_messages, destination, encryption, password, None, false)?;
+            println!(
+                "Merged output successfully saved to: {}",
+                destination.display()
+            );
+        }
+    } else if is_mbox {
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let compress = dest_ext == "gz" || destination.to_string_lossy().ends_with(".mbox.gz");
+        MboxFileExporter::export_to_file_options(&merged_messages, destination, compress, false)?;
+        println!(
+            "Merged output successfully saved to: {}",
+            destination.display()
+        );
+    } else {
+        // EML directory tree
+        let layout = match eml_layout_str.to_lowercase().as_str() {
+            "year" => EmlLayout::Year,
+            "month" => EmlLayout::Month,
+            "flat" => EmlLayout::Flat,
+            _ => EmlLayout::Folder,
+        };
+        let mut exporter = EmlExporter::new(destination, layout);
+        for m in &merged_messages {
+            exporter.export_message(m)?;
+        }
+        println!(
+            "Merged output successfully saved to: {}",
+            destination.display()
+        );
+    }
+
+    println!("======================================================================\n");
     Ok(())
 }
 
@@ -1320,11 +1561,7 @@ fn apply_preprocessing(cli: &Cli, messages: &mut Vec<EmailMessage>) -> Result<()
 
     // 5. Deduplication
     if let Some(strat) = cli.dedup {
-        let rs_strat = match strat {
-            CliDedupStrategy::Sha256 => DedupStrategy::Sha256,
-            CliDedupStrategy::MessageId => DedupStrategy::MessageId,
-            CliDedupStrategy::Content => DedupStrategy::NormalizedContent,
-        };
+        let rs_strat: DedupStrategy = strat.into();
         let (unique, dups) = DedupEngine::deduplicate(std::mem::take(messages), rs_strat);
         info!(
             unique = unique.len(),

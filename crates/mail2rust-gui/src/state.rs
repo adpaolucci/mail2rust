@@ -42,6 +42,7 @@ pub enum ActiveModal {
     OpenMailbox,
     ImapConnect,
     ImapSync,
+    MergeMailboxes,
     DirectPst,
     AutoSplit,
     FilterCriteria,
@@ -116,6 +117,17 @@ pub struct AppState {
     pub imap_sync_preserve_dates: bool,
     pub imap_sync_dry_run: bool,
     pub imap_sync_status: Option<String>,
+
+    // Multi-Format Merge States
+    pub merge_source_paths: Vec<String>,
+    pub merge_source_input: String,
+    pub merge_dest_path: String,
+    pub merge_folder_strategy: String,
+    pub merge_dedup_strategy: String,
+    pub merge_export_format: ExportFormat,
+    pub merge_sort_by_date: bool,
+    pub merge_status: Option<String>,
+    pub merge_report_text: Option<String>,
 
     // Modal Form States
     #[allow(dead_code)]
@@ -202,6 +214,16 @@ impl Default for AppState {
             imap_sync_preserve_dates: true,
             imap_sync_dry_run: false,
             imap_sync_status: None,
+
+            merge_source_paths: Vec::new(),
+            merge_source_input: String::new(),
+            merge_dest_path: "merged_archive.pst".to_string(),
+            merge_folder_strategy: "combine".to_string(),
+            merge_dedup_strategy: "message-id".to_string(),
+            merge_export_format: ExportFormat::Pst,
+            merge_sort_by_date: true,
+            merge_status: None,
+            merge_report_text: None,
 
             pst_source_path: String::new(),
             pst_dest_path: String::new(),

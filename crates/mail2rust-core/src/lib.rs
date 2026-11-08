@@ -1,9 +1,13 @@
+pub mod dedup;
 pub mod logging;
+pub mod merger;
 pub mod models;
 pub mod readers;
 pub mod sniffer;
 
+pub use dedup::{DedupEngine, DedupStrategy};
 pub use logging::init_logging;
+pub use merger::{MailboxMerger, MergeFolderStrategy, MergeOptions, MergeReport, MergeSourceConfig, SourceMergeStats};
 pub use models::{Attachment, EmailAddress, EmailMessage, Importance, MailboxFolder, MapiProperty, MessageFlags};
 pub use readers::archive::ArchiveReader;
 pub use readers::babyl::BabylReader;

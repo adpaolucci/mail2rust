@@ -1,8 +1,7 @@
 use chrono::{DateTime, Datelike, TimeZone, Utc};
 use mail2rust_core::{EmailMessage, Importance};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use tracing::info;
 
 // ----------------------- Human-Friendly Size Parsing -----------------------
@@ -385,51 +384,7 @@ impl FilterEngine {
 
 // ----------------------- Deduplication -----------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DedupStrategy {
-    #[default]
-    Sha256,
-    MessageId,
-    NormalizedContent,
-}
-
-pub struct DedupEngine;
-
-impl DedupEngine {
-    pub fn deduplicate(messages: Vec<EmailMessage>, strategy: DedupStrategy) -> (Vec<EmailMessage>, Vec<EmailMessage>) {
-        let mut seen = HashSet::new();
-        let mut unique = Vec::new();
-        let mut duplicates = Vec::new();
-
-        for msg in messages {
-            let key = match strategy {
-                DedupStrategy::Sha256 => msg.sha256.clone(),
-                DedupStrategy::MessageId => msg.message_id.clone(),
-                DedupStrategy::NormalizedContent => {
-                    let mut h = Sha256::new();
-                    h.update(msg.from.email.to_lowercase().as_bytes());
-                    h.update(msg.subject.trim().to_lowercase().as_bytes());
-                    h.update(msg.body_text.trim().as_bytes());
-                    format!("{:x}", h.finalize())
-                }
-            };
-
-            if seen.contains(&key) {
-                duplicates.push(msg);
-            } else {
-                seen.insert(key);
-                unique.push(msg);
-            }
-        }
-
-        info!(
-            unique = unique.len(),
-            duplicates = duplicates.len(),
-            "Deduplication finished"
-        );
-        (unique, duplicates)
-    }
-}
+pub use mail2rust_core::{DedupEngine, DedupStrategy};
 
 // ----------------------- Volume Splitting -----------------------
 

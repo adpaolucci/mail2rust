@@ -1,5 +1,8 @@
 use crate::state::{ActiveModal, AppState, ExportFormat, ExportScope};
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
+use mail2rust_core::{
+    DedupStrategy, EmailMessage, FormatSniffer, MailboxMerger, MergeFolderStrategy, MergeOptions, MergeSourceConfig,
+};
 use mail2rust_eml::{EmlExporter, EmlLayout};
 use mail2rust_filter::{SplitConfig, VolumeSplitter};
 use mail2rust_forensics::ForensicEngine;
@@ -457,6 +460,308 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                     Err(e) => {
                                         state.imap_sync_status =
                                             Some(format!("Error during server-to-server migration: {}", e));
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
+
+            if !is_open {
+                state.active_modal = ActiveModal::None;
+            }
+        }
+
+        ActiveModal::MergeMailboxes => {
+            let mut is_open = true;
+            egui::Window::new("Merge Mailboxes (Multi-Format Consolidation)")
+                .open(&mut is_open)
+                .resizable(false)
+                .fixed_size(Vec2::new(680.0, 580.0))
+                .show(ctx, |ui| {
+                    ui.label(
+                        RichText::new("Consolidate disparate mailbox formats (PST, MBOX, Maildir, EMLX, MSG, OLM, VCF, ICS, Takeout ZIP) into a unified destination container or directly into the workbench.")
+                            .size(11.0),
+                    );
+                    ui.add_space(4.0);
+
+                    // GroupBox: Source Mailbox Inputs
+                    win32_groupbox(ui, "Source Mailbox Inputs (Heterogeneous Formats)", |ui| {
+                        // Table / List of added sources
+                        egui::ScrollArea::vertical().max_height(110.0).show(ui, |ui| {
+                            if state.merge_source_paths.is_empty() {
+                                ui.label(
+                                    RichText::new("No sources added yet. Use the input field below or click 'Add Samples' to test.")
+                                        .italics()
+                                        .color(Color32::from_rgb(128, 128, 128)),
+                                );
+                            } else {
+                                let mut remove_idx = None;
+                                for (i, p_str) in state.merge_source_paths.iter().enumerate() {
+                                    ui.horizontal(|ui| {
+                                        let p = Path::new(p_str);
+                                        let fmt = FormatSniffer::sniff_path(p);
+                                        ui.label(format!("{}.", i + 1));
+                                        ui.label(
+                                            RichText::new(format!("[{}]", fmt.name()))
+                                                .strong()
+                                                .color(Color32::from_rgb(0, 102, 204)),
+                                        );
+                                        ui.label(p_str);
+                                        if ui.small_button("X").clicked() {
+                                            remove_idx = Some(i);
+                                        }
+                                    });
+                                }
+                                if let Some(idx) = remove_idx {
+                                    state.merge_source_paths.remove(idx);
+                                }
+                            }
+                        });
+
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label("Path:");
+                            ui.add(egui::TextEdit::singleline(&mut state.merge_source_input).desired_width(360.0));
+                            if ui.button("Add Source").clicked() && !state.merge_source_input.trim().is_empty() {
+                                state.merge_source_paths.push(state.merge_source_input.trim().to_string());
+                                state.merge_source_input.clear();
+                            }
+                        });
+
+                        ui.horizontal(|ui| {
+                            if ui.button("Add All Sample Formats").clicked() {
+                                let samples = std::path::Path::new("samples");
+                                if samples.exists() {
+                                    let candidates = vec![
+                                        "samples/takeout/sample_google_takeout.zip",
+                                        "samples/maildir",
+                                        "samples/emlx/sample_apple_mail.emlx",
+                                        "samples/contacts/sample_contacts.vcf",
+                                        "samples/calendar/sample_calendar.ics",
+                                        "samples/mbox/sample_mailbox.mbox",
+                                    ];
+                                    for c in candidates {
+                                        if Path::new(c).exists() && !state.merge_source_paths.contains(&c.to_string()) {
+                                            state.merge_source_paths.push(c.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                            if ui.button("Clear Sources").clicked() {
+                                state.merge_source_paths.clear();
+                            }
+                            ui.label(format!("Total Sources: {}", state.merge_source_paths.len()));
+                        });
+                    });
+
+                    ui.add_space(4.0);
+
+                    // GroupBox: Merge & Consolidation Rules
+                    win32_groupbox(ui, "Consolidation & Deduplication Rules", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Folder Organization:");
+                            ui.radio_value(&mut state.merge_folder_strategy, "combine".to_string(), "Combine matching folders");
+                            ui.radio_value(&mut state.merge_folder_strategy, "prefix".to_string(), "Partition with source prefix");
+                            ui.radio_value(&mut state.merge_folder_strategy, "flatten".to_string(), "Flatten to root");
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Cross-Source Deduplication:");
+                            ui.radio_value(&mut state.merge_dedup_strategy, "message-id".to_string(), "Message-ID");
+                            ui.radio_value(&mut state.merge_dedup_strategy, "sha256".to_string(), "SHA-256 Hash");
+                            ui.radio_value(&mut state.merge_dedup_strategy, "content".to_string(), "Normalized Content");
+                            ui.radio_value(&mut state.merge_dedup_strategy, "none".to_string(), "Disabled");
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut state.merge_sort_by_date, "Sort all merged messages chronologically by date (UTC)");
+                        });
+                    });
+
+                    ui.add_space(4.0);
+
+                    // GroupBox: Destination / Output
+                    win32_groupbox(ui, "Destination Output Container", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Output Format:");
+                            ui.radio_value(&mut state.merge_export_format, ExportFormat::Pst, "Outlook PST (.pst)");
+                            ui.radio_value(&mut state.merge_export_format, ExportFormat::Mbox, "MBOX (.mbox)");
+                            ui.radio_value(&mut state.merge_export_format, ExportFormat::Eml, "EML Tree Directory");
+                        });
+
+                        ui.horizontal(|ui| {
+                            let label_text = match state.merge_export_format {
+                                ExportFormat::Pst => "Target PST:",
+                                ExportFormat::Mbox => "Target MBOX:",
+                                ExportFormat::Eml => "Target EML Folder:",
+                            };
+                            ui.label(label_text);
+                            ui.add(egui::TextEdit::singleline(&mut state.merge_dest_path).desired_width(360.0));
+                        });
+                    });
+
+                    // Status / Report Message
+                    if let Some(ref st) = state.merge_status {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(st).color(Color32::from_rgb(0, 102, 0)).strong());
+                    }
+
+                    if let Some(ref rep) = state.merge_report_text {
+                        ui.add_space(4.0);
+                        egui::ScrollArea::vertical().max_height(100.0).show(ui, |ui| {
+                            ui.label(RichText::new(rep).monospace().size(10.0));
+                        });
+                    }
+
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Close").clicked() {
+                            state.active_modal = ActiveModal::None;
+                        }
+
+                        // Button 1: Merge & Load into Workbench
+                        if ui.button("Merge & Load into Workbench").clicked() {
+                            if state.merge_source_paths.is_empty() {
+                                state.merge_status = Some("Please add at least one source mailbox.".to_string());
+                            } else {
+                                let configs: Vec<MergeSourceConfig> = state.merge_source_paths
+                                    .iter()
+                                    .map(MergeSourceConfig::new)
+                                    .collect();
+                                let folder_strategy: MergeFolderStrategy = state.merge_folder_strategy.parse().unwrap_or(MergeFolderStrategy::Combine);
+                                let dedup_strategy = match state.merge_dedup_strategy.as_str() {
+                                    "sha256" => DedupStrategy::Sha256,
+                                    "content" => DedupStrategy::NormalizedContent,
+                                    "none" => DedupStrategy::None,
+                                    _ => DedupStrategy::MessageId,
+                                };
+                                let options = MergeOptions {
+                                    folder_strategy,
+                                    dedup_strategy,
+                                    sort_by_date: state.merge_sort_by_date,
+                                    dry_run: false,
+                                };
+
+                                let ingester = |p: &Path| -> Result<Vec<EmailMessage>, Box<dyn std::error::Error>> {
+                                    let fmt = FormatSniffer::sniff_path(p);
+                                    if fmt == mail2rust_core::MailboxFormat::Pst || fmt == mail2rust_core::MailboxFormat::Ost {
+                                        return mail2rust_pst::PstReader::read_path(p).map_err(|e| Box::new(e) as Box<dyn std::error::Error>);
+                                    }
+                                    mail2rust_core::ingest_path(p)
+                                };
+
+                                match MailboxMerger::merge_sources(&configs, &options, ingester) {
+                                    Ok((merged_msgs, report)) => {
+                                        let count = merged_msgs.len();
+                                        state.messages = merged_msgs;
+                                        state.rebuild_folders_from_messages();
+                                        state.merge_report_text = Some(report.format_summary());
+                                        state.merge_status = Some(format!("Successfully merged {} sources into workbench ({} messages loaded)!", configs.len(), count));
+                                    }
+                                    Err(e) => {
+                                        state.merge_status = Some(format!("Error merging sources: {}", e));
+                                    }
+                                }
+                            }
+                        }
+
+                        // Button 2: Merge & Export to File
+                        if ui.button("Merge & Export to File...").clicked() {
+                            if state.merge_source_paths.is_empty() {
+                                state.merge_status = Some("Please add at least one source mailbox.".to_string());
+                            } else if state.merge_dest_path.trim().is_empty() {
+                                state.merge_status = Some("Please specify a destination target path.".to_string());
+                            } else {
+                                let configs: Vec<MergeSourceConfig> = state.merge_source_paths
+                                    .iter()
+                                    .map(MergeSourceConfig::new)
+                                    .collect();
+                                let folder_strategy: MergeFolderStrategy = state.merge_folder_strategy.parse().unwrap_or(MergeFolderStrategy::Combine);
+                                let dedup_strategy = match state.merge_dedup_strategy.as_str() {
+                                    "sha256" => DedupStrategy::Sha256,
+                                    "content" => DedupStrategy::NormalizedContent,
+                                    "none" => DedupStrategy::None,
+                                    _ => DedupStrategy::MessageId,
+                                };
+                                let options = MergeOptions {
+                                    folder_strategy,
+                                    dedup_strategy,
+                                    sort_by_date: state.merge_sort_by_date,
+                                    dry_run: false,
+                                };
+
+                                let ingester = |p: &Path| -> Result<Vec<EmailMessage>, Box<dyn std::error::Error>> {
+                                    let fmt = FormatSniffer::sniff_path(p);
+                                    if fmt == mail2rust_core::MailboxFormat::Pst || fmt == mail2rust_core::MailboxFormat::Ost {
+                                        return mail2rust_pst::PstReader::read_path(p).map_err(|e| Box::new(e) as Box<dyn std::error::Error>);
+                                    }
+                                    mail2rust_core::ingest_path(p)
+                                };
+
+                                match MailboxMerger::merge_sources(&configs, &options, ingester) {
+                                    Ok((merged_msgs, report)) => {
+                                        let dest = Path::new(&state.merge_dest_path);
+                                        if let Some(parent) = dest.parent() {
+                                            let _ = std::fs::create_dir_all(parent);
+                                        }
+
+                                        match state.merge_export_format {
+                                            ExportFormat::Pst => {
+                                                match File::create(dest) {
+                                                    Ok(f) => {
+                                                        match PstWriter::new(f, true) {
+                                                            Ok(mut w) => {
+                                                                let mut f_map = std::collections::HashMap::new();
+                                                                let root_id = w.add_folder("Inbox", None).unwrap_or(0x8000);
+                                                                f_map.insert("Inbox".to_string(), root_id);
+                                                                for m in &merged_msgs {
+                                                                    let fnid = m.folder_path.last().cloned().unwrap_or_else(|| "Inbox".to_string());
+                                                                    let nid = match f_map.get(&fnid) {
+                                                                        Some(&id) => id,
+                                                                        None => {
+                                                                            let id = w.add_folder(&fnid, None).unwrap_or(root_id);
+                                                                            f_map.insert(fnid, id);
+                                                                            id
+                                                                        }
+                                                                    };
+                                                                    let _ = w.add_message(m, nid);
+                                                                }
+                                                                let _ = w.finalize();
+                                                                state.merge_report_text = Some(report.format_summary());
+                                                                state.merge_status = Some(format!("Export Succeeded: Saved {} merged messages to PST: {}", merged_msgs.len(), dest.display()));
+                                                            }
+                                                            Err(e) => state.merge_status = Some(format!("Error creating PST writer: {}", e)),
+                                                        }
+                                                    }
+                                                    Err(e) => state.merge_status = Some(format!("Error creating file: {}", e)),
+                                                }
+                                            }
+                                            ExportFormat::Mbox => {
+                                                match mail2rust_mbox::MboxFileExporter::export_to_file_options(&merged_msgs, dest, false, false) {
+                                                    Ok(count) => {
+                                                        state.merge_report_text = Some(report.format_summary());
+                                                        state.merge_status = Some(format!("Export Succeeded: Saved {} merged messages to MBOX: {}", count, dest.display()));
+                                                    }
+                                                    Err(e) => state.merge_status = Some(format!("Error exporting MBOX: {}", e)),
+                                                }
+                                            }
+                                            ExportFormat::Eml => {
+                                                let mut exp = mail2rust_eml::EmlExporter::new(dest, mail2rust_eml::EmlLayout::Folder);
+                                                let mut exported = 0;
+                                                for m in &merged_msgs {
+                                                    if exp.export_message(m).is_ok() {
+                                                        exported += 1;
+                                                    }
+                                                }
+                                                state.merge_report_text = Some(report.format_summary());
+                                                state.merge_status = Some(format!("Export Succeeded: Saved {} merged EML messages to: {}", exported, dest.display()));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        state.merge_status = Some(format!("Error merging sources: {}", e));
                                     }
                                 }
                             }
