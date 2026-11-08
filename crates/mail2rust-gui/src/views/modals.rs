@@ -20,7 +20,7 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
             egui::Window::new("Open Mailbox Archive / Directory")
                 .open(&mut is_open)
                 .resizable(false)
-                .fixed_size(Vec2::new(520.0, 220.0))
+                .fixed_size(Vec2::new(560.0, 230.0))
                 .show(ctx, |ui| {
                     ui.label("Ingest messages from MBOX, Maildir, Apple Mail EMLX, Google Takeout .zip, EML folder, OLM, or MSG.");
                     ui.add_space(6.0);
@@ -29,7 +29,57 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                     win32_groupbox(ui, "Source Archive / Folder Path", |ui| {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Path:").strong().size(11.0));
-                            ui.add(egui::TextEdit::singleline(&mut state.open_mailbox_path).desired_width(380.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.open_mailbox_path).desired_width(260.0));
+                            if win32_dialog_button(ui, "Browse File...") {
+                                let mut dialog = rfd::FileDialog::new()
+                                    .set_title("Select Mailbox Archive File")
+                                    .add_filter(
+                                        "All Supported Mail Files (*.pst, *.ost, *.mbox, *.eml, *.emlx, *.msg, *.olm, *.zip, *.gz)",
+                                        &["pst", "ost", "mbox", "mbx", "eml", "emlx", "msg", "olm", "zip", "gz", "bz2", "xz", "tar", "tgz"],
+                                    )
+                                    .add_filter("Outlook PST / OST (*.pst, *.ost)", &["pst", "ost"])
+                                    .add_filter("MBOX Mailbox (*.mbox, *.mbx)", &["mbox", "mbx"])
+                                    .add_filter("Individual Email Messages (*.eml, *.emlx, *.msg)", &["eml", "emlx", "msg"])
+                                    .add_filter("Outlook for Mac (*.olm)", &["olm"])
+                                    .add_filter("Compressed Archives (*.zip, *.tar, *.gz, *.bz2, *.xz)", &["zip", "tar", "gz", "bz2", "xz", "tgz"])
+                                    .add_filter("All Files (*.*)", &["*"]);
+
+                                if !state.open_mailbox_path.is_empty() {
+                                    let p = Path::new(&state.open_mailbox_path);
+                                    if p.is_file() {
+                                        if let Some(parent) = p.parent() {
+                                            if parent.exists() {
+                                                dialog = dialog.set_directory(parent);
+                                            }
+                                        }
+                                    } else if p.is_dir() {
+                                        dialog = dialog.set_directory(p);
+                                    }
+                                }
+
+                                if let Some(picked) = dialog.pick_file() {
+                                    state.open_mailbox_path = picked.to_string_lossy().to_string();
+                                }
+                            }
+                            if win32_dialog_button(ui, "Browse Folder...") {
+                                let mut dialog = rfd::FileDialog::new()
+                                    .set_title("Select Mailbox Directory (Thunderbird Profile, Maildir, EML Tree)");
+
+                                if !state.open_mailbox_path.is_empty() {
+                                    let p = Path::new(&state.open_mailbox_path);
+                                    if p.is_dir() {
+                                        dialog = dialog.set_directory(p);
+                                    } else if let Some(parent) = p.parent() {
+                                        if parent.exists() {
+                                            dialog = dialog.set_directory(parent);
+                                        }
+                                    }
+                                }
+
+                                if let Some(picked) = dialog.pick_folder() {
+                                    state.open_mailbox_path = picked.to_string_lossy().to_string();
+                                }
+                            }
                         });
                     });
 
@@ -55,24 +105,8 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                             if path.is_empty() {
                                 state.open_mailbox_status = Some("Error: Please specify a valid file or folder path.".to_string());
                             } else {
-                                let p = Path::new(&path);
-                                let fmt = mail2rust_core::FormatSniffer::sniff_path(p);
-                                let result = if fmt == mail2rust_core::MailboxFormat::Pst || fmt == mail2rust_core::MailboxFormat::Ost {
-                                    mail2rust_pst::PstReader::read_path(p).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
-                                } else {
-                                    mail2rust_core::ingest_path(p)
-                                };
-
-                                match result {
-                                    Ok(msgs) => {
-                                        let count = msgs.len();
-                                        state.messages = msgs;
-                                        state.rebuild_folders_from_messages();
-                                        state.open_mailbox_status = Some(format!(
-                                            "Loaded {} message(s) across {} folder(s).",
-                                            count, state.folders.len()
-                                        ));
-                                    }
+                                match state.ingest_from_path(Path::new(&path)) {
+                                    Ok(_) => {}
                                     Err(e) => {
                                         state.open_mailbox_status = Some(format!("Error: {}", e));
                                     }
@@ -731,10 +765,41 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             ui.label("Path:");
-                            ui.add(egui::TextEdit::singleline(&mut state.merge_source_input).desired_width(360.0));
-                            if ui.button("Add Source").clicked() && !state.merge_source_input.trim().is_empty() {
+                            ui.add(egui::TextEdit::singleline(&mut state.merge_source_input).desired_width(240.0));
+                            if ui.button("Add Path").clicked() && !state.merge_source_input.trim().is_empty() {
                                 state.merge_source_paths.push(state.merge_source_input.trim().to_string());
                                 state.merge_source_input.clear();
+                            }
+                            if win32_dialog_button(ui, "Browse File(s)...") {
+                                let files = rfd::FileDialog::new()
+                                    .set_title("Select Mailbox Files to Merge")
+                                    .add_filter(
+                                        "All Supported Mail Files (*.pst, *.ost, *.mbox, *.eml, *.emlx, *.msg, *.olm, *.zip)",
+                                        &["pst", "ost", "mbox", "mbx", "eml", "emlx", "msg", "olm", "zip", "gz", "bz2", "xz"],
+                                    )
+                                    .add_filter("Outlook PST (*.pst, *.ost)", &["pst", "ost"])
+                                    .add_filter("MBOX Mailbox (*.mbox, *.mbx)", &["mbox", "mbx"])
+                                    .add_filter("All Files (*.*)", &["*"])
+                                    .pick_files();
+                                if let Some(picked_files) = files {
+                                    for f in picked_files {
+                                        let s = f.to_string_lossy().to_string();
+                                        if !state.merge_source_paths.contains(&s) {
+                                            state.merge_source_paths.push(s);
+                                        }
+                                    }
+                                }
+                            }
+                            if win32_dialog_button(ui, "Browse Folder...") {
+                                let folder = rfd::FileDialog::new()
+                                    .set_title("Select Mailbox Directory to Merge (Thunderbird / Maildir / EML Tree)")
+                                    .pick_folder();
+                                if let Some(f) = folder {
+                                    let s = f.to_string_lossy().to_string();
+                                    if !state.merge_source_paths.contains(&s) {
+                                        state.merge_source_paths.push(s);
+                                    }
+                                }
                             }
                         });
 
@@ -806,7 +871,36 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                 ExportFormat::Eml => "Target EML Folder:",
                             };
                             ui.label(label_text);
-                            ui.add(egui::TextEdit::singleline(&mut state.merge_dest_path).desired_width(360.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.merge_dest_path).desired_width(300.0));
+                            if win32_dialog_button(ui, "Browse...") {
+                                match state.merge_export_format {
+                                    ExportFormat::Pst => {
+                                        let dlg = rfd::FileDialog::new()
+                                            .set_title("Select Destination Merged PST File")
+                                            .add_filter("Outlook PST (*.pst)", &["pst"])
+                                            .set_file_name("merged_archive.pst");
+                                        if let Some(dest) = dlg.save_file() {
+                                            state.merge_dest_path = dest.to_string_lossy().to_string();
+                                        }
+                                    }
+                                    ExportFormat::Mbox => {
+                                        let dlg = rfd::FileDialog::new()
+                                            .set_title("Select Destination Merged MBOX File")
+                                            .add_filter("MBOX Mailbox (*.mbox)", &["mbox"])
+                                            .set_file_name("merged_archive.mbox");
+                                        if let Some(dest) = dlg.save_file() {
+                                            state.merge_dest_path = dest.to_string_lossy().to_string();
+                                        }
+                                    }
+                                    ExportFormat::Eml => {
+                                        let dlg = rfd::FileDialog::new()
+                                            .set_title("Select Destination EML Directory");
+                                        if let Some(dest) = dlg.pick_folder() {
+                                            state.merge_dest_path = dest.to_string_lossy().to_string();
+                                        }
+                                    }
+                                }
+                            }
                         });
                     });
 
@@ -1028,7 +1122,38 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                 ExportFormat::Eml => "Destination EML Folder:",
                             };
                             ui.label(RichText::new(label_text).size(11.0).strong());
-                            ui.add(egui::TextEdit::singleline(&mut state.pst_dest_path).desired_width(360.0));
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(&mut state.pst_dest_path).desired_width(280.0));
+                                if win32_dialog_button(ui, "Browse...") {
+                                    match state.export_format {
+                                        ExportFormat::Pst => {
+                                            let dlg = rfd::FileDialog::new()
+                                                .set_title("Select Destination Outlook PST File")
+                                                .add_filter("Outlook Personal Storage Table (*.pst)", &["pst"])
+                                                .set_file_name("Export.pst");
+                                            if let Some(dest) = dlg.save_file() {
+                                                state.pst_dest_path = dest.to_string_lossy().to_string();
+                                            }
+                                        }
+                                        ExportFormat::Mbox => {
+                                            let dlg = rfd::FileDialog::new()
+                                                .set_title("Select Destination MBOX File")
+                                                .add_filter("MBOX Mailbox (*.mbox)", &["mbox"])
+                                                .set_file_name("Export.mbox");
+                                            if let Some(dest) = dlg.save_file() {
+                                                state.pst_dest_path = dest.to_string_lossy().to_string();
+                                            }
+                                        }
+                                        ExportFormat::Eml => {
+                                            let dlg = rfd::FileDialog::new()
+                                                .set_title("Select Destination EML Directory");
+                                            if let Some(dest) = dlg.pick_folder() {
+                                                state.pst_dest_path = dest.to_string_lossy().to_string();
+                                            }
+                                        }
+                                    }
+                                }
+                            });
                             ui.end_row();
 
                             if state.export_format == ExportFormat::Pst {
@@ -1344,7 +1469,18 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                             ui.end_row();
 
                             ui.label(RichText::new("Manifest CSV:").size(11.0).strong());
-                            ui.add(egui::TextEdit::singleline(&mut state.manifest_csv_path).desired_width(320.0));
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(&mut state.manifest_csv_path).desired_width(240.0));
+                                if win32_dialog_button(ui, "Browse...") {
+                                    let dlg = rfd::FileDialog::new()
+                                        .set_title("Select Destination Manifest CSV File")
+                                        .add_filter("CSV Spreadsheet (*.csv)", &["csv"])
+                                        .set_file_name("forensic_manifest.csv");
+                                    if let Some(dest) = dlg.save_file() {
+                                        state.manifest_csv_path = dest.to_string_lossy().to_string();
+                                    }
+                                }
+                            });
                             ui.end_row();
                         });
                     });
@@ -1454,7 +1590,7 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
             egui::Window::new("MS-PST Container Validator")
                 .open(&mut is_open)
                 .resizable(false)
-                .fixed_size(Vec2::new(500.0, 310.0))
+                .fixed_size(Vec2::new(540.0, 310.0))
                 .show(ctx, |ui| {
                     ui.label("Validate [MS-PST] NDB header magic, version, CRC-32 partial checksum, and B-Trees.");
                     ui.add_space(6.0);
@@ -1462,7 +1598,16 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                     win32_groupbox(ui, "PST File Target & Authentication", |ui| {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("File:").strong().size(11.0));
-                            ui.add(egui::TextEdit::singleline(&mut state.validate_pst_path).desired_width(340.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.validate_pst_path).desired_width(260.0));
+                            if win32_dialog_button(ui, "Browse...") {
+                                let dlg = rfd::FileDialog::new()
+                                    .set_title("Select PST or OST File to Validate")
+                                    .add_filter("Outlook Storage Files (*.pst, *.ost)", &["pst", "ost"])
+                                    .add_filter("All Files (*.*)", &["*"]);
+                                if let Some(dest) = dlg.pick_file() {
+                                    state.validate_pst_path = dest.to_string_lossy().to_string();
+                                }
+                            }
                         });
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Password:").strong().size(11.0));

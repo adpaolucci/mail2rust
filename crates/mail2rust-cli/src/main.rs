@@ -14,6 +14,7 @@ use mail2rust_mbox::{MboxFileExporter, MboxWriter};
 use mail2rust_pst::{PstEncryption, PstReader, PstValidator, PstWriter};
 use mail2rust_sync::CheckpointManager;
 use std::fs::File;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::info;
@@ -41,7 +42,7 @@ mod samples;
 #[command(
     name = "mail2rust",
     author = "Anthony D. Paolucci <adpaolucci@gmail.com>",
-    version = "3.4.0",
+    version = "3.5.0",
     about = "Universal high-performance offline email & mailbox converter in 100% pure Rust"
 )]
 struct Cli {
@@ -102,6 +103,10 @@ struct Cli {
     #[arg(long, global = true)]
     include_deleted: bool,
 
+    /// Launch native host OS file/folder picker dialog if paths are omitted
+    #[arg(long, global = true, alias = "browse")]
+    pick: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -147,8 +152,10 @@ impl From<CliPstEncryption> for PstEncryption {
 enum Commands {
     /// Convert any email/mailbox format to another (auto-detects source & destination)
     Convert {
-        source: PathBuf,
-        destination: PathBuf,
+        #[arg(value_name = "SOURCE")]
+        source: Option<PathBuf>,
+        #[arg(value_name = "DESTINATION")]
+        destination: Option<PathBuf>,
         #[arg(long, alias = "split-pst")]
         max_pst_size: Option<String>,
         #[arg(long)]
@@ -178,8 +185,10 @@ enum Commands {
     },
     /// Convert any source into Microsoft Outlook PST (pure Rust, zero Outlook required)
     Pst {
-        source: PathBuf,
-        destination: PathBuf,
+        #[arg(value_name = "SOURCE")]
+        source: Option<PathBuf>,
+        #[arg(value_name = "DESTINATION")]
+        destination: Option<PathBuf>,
         #[arg(long, default_value = "20")]
         max_pst_gb: usize,
         #[arg(long, alias = "split-pst")]
@@ -205,8 +214,10 @@ enum Commands {
     },
     /// Convert any source into clean EML files with customizable directory layout
     Eml {
-        source: PathBuf,
-        destination: PathBuf,
+        #[arg(value_name = "SOURCE")]
+        source: Option<PathBuf>,
+        #[arg(value_name = "DESTINATION")]
+        destination: Option<PathBuf>,
         #[arg(long, default_value = "folder")]
         layout: String,
         #[arg(long, default_value = "subject")]
@@ -223,9 +234,11 @@ enum Commands {
     /// High-throughput zero-copy regex e-Discovery search and extraction
     Search {
         /// Source directory, Thunderbird profile, MBOX, or PST
-        source: PathBuf,
+        #[arg(value_name = "SOURCE")]
+        source: Option<PathBuf>,
         /// Destination directory for matched messages and deliverables
-        destination: PathBuf,
+        #[arg(value_name = "DESTINATION")]
+        destination: Option<PathBuf>,
         /// Path to search rules file (.toml, .json, or .rules text)
         #[arg(long, short = 'r')]
         rules: Option<PathBuf>,
@@ -250,8 +263,10 @@ enum Commands {
     },
     /// Convert any source into standard mboxrd MBOX file
     Mbox {
-        source: PathBuf,
-        destination: PathBuf,
+        #[arg(value_name = "SOURCE")]
+        source: Option<PathBuf>,
+        #[arg(value_name = "DESTINATION")]
+        destination: Option<PathBuf>,
         #[arg(long)]
         compress: bool,
         #[arg(long)]
@@ -290,7 +305,8 @@ enum Commands {
     },
     /// Validate MS-PST container header magic, version, CRC-32 checksum, and B-Trees
     ValidatePst {
-        pst_file: PathBuf,
+        #[arg(value_name = "PST_FILE")]
+        pst_file: Option<PathBuf>,
         #[arg(long)]
         password: Option<String>,
     },
@@ -326,7 +342,25 @@ enum Commands {
         checkpoint: Option<PathBuf>,
     },
     /// Sniff file or folder to identify mailbox format and magic byte signature
-    Sniff { path: PathBuf },
+    Sniff {
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+    },
+    /// Launch native host OS file/folder picker dialog and output the selected path
+    Pick {
+        /// Dialog type to launch: 'file', 'files', 'folder', or 'save'
+        #[arg(short, long, default_value = "file")]
+        kind: String,
+        /// Dialog window title
+        #[arg(long)]
+        title: Option<String>,
+        /// Default file extension for save dialog (e.g. "pst", "mbox", "csv")
+        #[arg(long, default_value = "pst")]
+        ext: String,
+        /// Initial folder to browse
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
     /// Generate a comprehensive multi-format sample and demo suite
     GenerateSamples {
         #[arg(short, long, alias = "output", default_value = "samples")]
@@ -503,6 +537,118 @@ enum Commands {
     },
 }
 
+fn pick_source_dialog(title_opt: Option<&str>) -> Option<PathBuf> {
+    if std::io::stdin().is_terminal() {
+        eprintln!("\nSelect source mail container type:");
+        eprintln!("  [1] Mailbox Archive File (.pst, .mbox, .eml, .msg, .olm, .zip, etc.)");
+        eprintln!("  [2] Directory (Thunderbird profile, Maildir, EML folder tree)");
+        eprint!("Choice [1/2] (default: 1): ");
+        let mut choice = String::new();
+        let _ = std::io::stdin().read_line(&mut choice);
+        let trimmed = choice.trim().to_lowercase();
+        if trimmed == "2" || trimmed == "d" || trimmed == "dir" || trimmed == "folder" {
+            return rfd::FileDialog::new()
+                .set_title(title_opt.unwrap_or("Select Mailbox Directory"))
+                .pick_folder();
+        }
+    }
+    rfd::FileDialog::new()
+        .set_title(title_opt.unwrap_or("Select Mailbox Archive File"))
+        .add_filter(
+            "All Supported Mail Files (*.pst, *.ost, *.mbox, *.eml, *.emlx, *.msg, *.olm, *.zip, *.gz)",
+            &[
+                "pst", "ost", "mbox", "mbx", "eml", "emlx", "msg", "olm", "zip", "gz", "bz2", "xz", "tar", "tgz",
+            ],
+        )
+        .add_filter("Outlook PST / OST (*.pst, *.ost)", &["pst", "ost"])
+        .add_filter("MBOX Mailbox (*.mbox, *.mbx)", &["mbox", "mbx"])
+        .add_filter("Email Files (*.eml, *.emlx, *.msg)", &["eml", "emlx", "msg"])
+        .add_filter("All Files (*.*)", &["*"])
+        .pick_file()
+}
+
+fn pick_save_dialog(default_ext: &str, title_opt: Option<&str>) -> Option<PathBuf> {
+    let clean_ext = default_ext.trim_start_matches('.');
+    let mut dlg = rfd::FileDialog::new()
+        .set_title(title_opt.unwrap_or("Select Destination Output File"))
+        .set_file_name(format!(
+            "output.{}",
+            if clean_ext.is_empty() { "pst" } else { clean_ext }
+        ));
+    if clean_ext.eq_ignore_ascii_case("pst") {
+        dlg = dlg.add_filter("Outlook PST (*.pst)", &["pst"]);
+    } else if clean_ext.eq_ignore_ascii_case("mbox") {
+        dlg = dlg.add_filter("MBOX Mailbox (*.mbox)", &["mbox"]);
+    } else if clean_ext.eq_ignore_ascii_case("csv") {
+        dlg = dlg.add_filter("CSV Spreadsheet (*.csv)", &["csv"]);
+    }
+    dlg = dlg.add_filter("All Files (*.*)", &["*"]);
+    dlg.save_file()
+}
+
+fn resolve_source(source: Option<&PathBuf>, pick: bool, title: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(s) = source {
+        return Ok(s.clone());
+    }
+    if pick || std::io::stdin().is_terminal() {
+        println!("Opening native host OS picker for source mail file or directory...");
+        if let Some(picked) = pick_source_dialog(Some(title)) {
+            return Ok(picked);
+        }
+        return Err("Operation cancelled: No source selected.".into());
+    }
+    Err("A source path is required. (Hint: pass --pick to select via native file dialog)".into())
+}
+
+fn resolve_destination(
+    destination: Option<&PathBuf>,
+    pick: bool,
+    default_ext: &str,
+    is_dir: bool,
+    title: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(d) = destination {
+        return Ok(d.clone());
+    }
+    if pick || std::io::stdin().is_terminal() {
+        println!("Opening native host OS picker for destination...");
+        if is_dir {
+            if let Some(folder) = rfd::FileDialog::new().set_title(title).pick_folder() {
+                return Ok(folder);
+            }
+        } else if let Some(file) = pick_save_dialog(default_ext, Some(title)) {
+            return Ok(file);
+        }
+        return Err("Operation cancelled: No destination selected.".into());
+    }
+    Err("A destination path is required. (Hint: pass --pick to select via native file dialog)".into())
+}
+
+fn resolve_file(
+    file_opt: Option<&PathBuf>,
+    pick: bool,
+    ext: &str,
+    title: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(f) = file_opt {
+        return Ok(f.clone());
+    }
+    if pick || std::io::stdin().is_terminal() {
+        println!("Opening native host OS file picker...");
+        let mut dlg = rfd::FileDialog::new().set_title(title);
+        let clean_ext = ext.trim_start_matches('.');
+        if !clean_ext.is_empty() {
+            dlg = dlg.add_filter(format!("*.{} Files", clean_ext), &[clean_ext]);
+        }
+        dlg = dlg.add_filter("All Files (*.*)", &["*"]);
+        if let Some(picked) = dlg.pick_file() {
+            return Ok(picked);
+        }
+        return Err("Operation cancelled: No file selected.".into());
+    }
+    Err("A file path is required. (Hint: pass --pick to select via native file dialog)".into())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_signal_handler();
     let cli = Cli::parse();
@@ -555,8 +701,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Sniff { path } => {
-            let format = FormatSniffer::sniff_path(path);
-            println!("Target Path: {}", path.display());
+            let p = resolve_source(path.as_ref(), cli.pick, "Select Mail File or Directory to Sniff")?;
+            let format = FormatSniffer::sniff_path(&p);
+            println!("Target Path: {}", p.display());
             println!("Identified Format: {}", format.name());
             println!("Format Type: {:?}", format);
         }
@@ -574,11 +721,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::ValidatePst { pst_file, password } => {
-            info!(path = ?pst_file, "Running MS-PST specification validation");
-            let file = File::open(pst_file)?;
+            let pst = resolve_file(
+                pst_file.as_ref(),
+                cli.pick,
+                "pst",
+                "Select PST / OST Container to Validate",
+            )?;
+            info!(path = ?pst, "Running MS-PST specification validation");
+            let file = File::open(&pst)?;
             let report = PstValidator::validate(file)?;
             println!("\n=== MS-PST Validation Report ===");
-            println!("File: {}", pst_file.display());
+            println!("File: {}", pst.display());
             println!("Specification Valid: {}", report.is_valid);
             println!("Magic: {}", report.magic);
             println!("Format: {}", report.format);
@@ -597,7 +750,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 report.bbt_root_bid, report.bbt_root_offset
             );
 
-            if let Ok(file_for_reader) = File::open(pst_file) {
+            if let Ok(file_for_reader) = File::open(&pst) {
                 if let Ok(mut reader) = PstReader::open(file_for_reader) {
                     let has_pwd = reader.is_password_protected();
                     println!("Password Protected: {}", has_pwd);
@@ -641,13 +794,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             html_index,
             manifest_csv,
         } => {
+            let src = resolve_source(source.as_ref(), cli.pick, "Select Mail Source File or Directory")?;
+            let dst = resolve_destination(
+                destination.as_ref(),
+                cli.pick,
+                "pst",
+                false,
+                "Select Output Destination",
+            )?;
+
             if search_rules.is_some() || search_pattern.is_some() {
                 let patterns: Vec<String> = search_pattern.iter().cloned().collect();
-                let fmt = destination.extension().and_then(|e| e.to_str()).unwrap_or("eml");
+                let fmt = dst.extension().and_then(|e| e.to_str()).unwrap_or("eml");
                 return run_search_discovery(
                     &cli,
-                    source,
-                    destination,
+                    &src,
+                    &dst,
                     search_rules.as_deref(),
                     &patterns,
                     fmt,
@@ -658,11 +820,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
-            let dest_ext = destination
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_lowercase();
+            let dest_ext = dst.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
             let dest_is_pst = dest_ext == "pst";
             let dest_is_mbox = dest_ext == "mbox" || dest_ext == "gz";
 
@@ -674,8 +832,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 run_pst_conversion(
                     &cli,
-                    source,
-                    destination,
+                    &src,
+                    &dst,
                     max_gb,
                     split_by.as_deref(),
                     *splits,
@@ -687,12 +845,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )?;
             } else if dest_is_mbox {
                 let compress = dest_ext == "gz";
-                run_mbox_conversion(&cli, source, destination, compress, false)?;
+                run_mbox_conversion(&cli, &src, &dst, compress, false)?;
             } else {
                 run_eml_conversion(
                     &cli,
-                    source,
-                    destination,
+                    &src,
+                    &dst,
                     "folder",
                     "subject",
                     0,
@@ -717,6 +875,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             encryption,
             password,
         } => {
+            let src = resolve_source(source.as_ref(), cli.pick, "Select Mail Source File or Directory")?;
+            let dst = resolve_destination(destination.as_ref(), cli.pick, "pst", false, "Select Output PST File")?;
             let effective_gb = if let Some(ref sz) = max_pst_size {
                 parse_size_bytes(sz).unwrap_or(max_pst_gb * 1024 * 1024 * 1024) / (1024 * 1024 * 1024)
             } else {
@@ -729,8 +889,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             run_pst_conversion(
                 &cli,
-                source,
-                destination,
+                &src,
+                &dst,
                 effective_gb,
                 split_by.as_deref(),
                 *splits,
@@ -751,10 +911,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             html_index,
             manifest_csv,
         } => {
+            let src = resolve_source(source.as_ref(), cli.pick, "Select Mail Source File or Directory")?;
+            let dst = resolve_destination(destination.as_ref(), cli.pick, "", true, "Select Output EML Directory")?;
             run_eml_conversion(
                 &cli,
-                source,
-                destination,
+                &src,
+                &dst,
                 layout,
                 naming,
                 *max_per_dir,
@@ -774,10 +936,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             encryption,
             password,
         } => {
+            let src = resolve_source(
+                source.as_ref(),
+                cli.pick,
+                "Select Mail Source File or Directory to Search",
+            )?;
+            let dst = resolve_destination(
+                destination.as_ref(),
+                cli.pick,
+                "",
+                true,
+                "Select Output Deliverables Directory",
+            )?;
             run_search_discovery(
                 &cli,
-                source,
-                destination,
+                &src,
+                &dst,
                 rules.as_deref(),
                 pattern,
                 format,
@@ -795,7 +969,77 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             append,
             split_size: _,
         } => {
-            run_mbox_conversion(&cli, source, destination, *compress, *append)?;
+            let src = resolve_source(source.as_ref(), cli.pick, "Select Mail Source File or Directory")?;
+            let dst = resolve_destination(destination.as_ref(), cli.pick, "mbox", false, "Select Output MBOX File")?;
+            run_mbox_conversion(&cli, &src, &dst, *compress, *append)?;
+        }
+
+        Commands::Pick { kind, title, ext, dir } => {
+            let mut dlg = rfd::FileDialog::new();
+            if let Some(ref t) = title {
+                dlg = dlg.set_title(t);
+            }
+            if let Some(ref d) = dir {
+                dlg = dlg.set_directory(d);
+            }
+            match kind.to_lowercase().as_str() {
+                "folder" | "dir" | "directory" => {
+                    if let Some(folder) = dlg.pick_folder() {
+                        println!("{}", folder.display());
+                    } else {
+                        std::process::exit(1);
+                    }
+                }
+                "save" => {
+                    let clean_ext = ext.trim_start_matches('.');
+                    let filter_label = format!("*.{} Files", clean_ext);
+                    dlg = dlg
+                        .add_filter(&filter_label, &[clean_ext])
+                        .add_filter("All Files (*.*)", &["*"])
+                        .set_file_name(format!("output.{}", clean_ext));
+                    if let Some(file) = dlg.save_file() {
+                        println!("{}", file.display());
+                    } else {
+                        std::process::exit(1);
+                    }
+                }
+                "files" | "multi" => {
+                    dlg = dlg
+                        .add_filter(
+                            "All Supported Mail Files (*.pst, *.ost, *.mbox, *.eml, *.emlx, *.msg, *.olm, *.zip, *.gz)",
+                            &[
+                                "pst", "ost", "mbox", "mbx", "eml", "emlx", "msg", "olm", "zip", "gz", "bz2", "xz",
+                                "tar", "tgz",
+                            ],
+                        )
+                        .add_filter("All Files (*.*)", &["*"]);
+                    if let Some(files) = dlg.pick_files() {
+                        for f in files {
+                            println!("{}", f.display());
+                        }
+                    } else {
+                        std::process::exit(1);
+                    }
+                }
+                _ => {
+                    dlg = dlg
+                        .add_filter(
+                            "All Supported Mail Files (*.pst, *.ost, *.mbox, *.eml, *.emlx, *.msg, *.olm, *.zip, *.gz)",
+                            &[
+                                "pst", "ost", "mbox", "mbx", "eml", "emlx", "msg", "olm", "zip", "gz", "bz2", "xz",
+                                "tar", "tgz",
+                            ],
+                        )
+                        .add_filter("Outlook PST / OST (*.pst, *.ost)", &["pst", "ost"])
+                        .add_filter("MBOX Mailbox (*.mbox, *.mbx)", &["mbox", "mbx"])
+                        .add_filter("All Files (*.*)", &["*"]);
+                    if let Some(file) = dlg.pick_file() {
+                        println!("{}", file.display());
+                    } else {
+                        std::process::exit(1);
+                    }
+                }
+            }
         }
 
         Commands::Split {

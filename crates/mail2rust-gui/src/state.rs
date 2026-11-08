@@ -384,6 +384,26 @@ impl AppState {
         self.selected_message_id = self.messages.first().map(|m| m.id.clone());
     }
 
+    pub fn ingest_from_path(&mut self, p: &std::path::Path) -> Result<usize, Box<dyn std::error::Error>> {
+        let fmt = mail2rust_core::FormatSniffer::sniff_path(p);
+        let msgs = if fmt == mail2rust_core::MailboxFormat::Pst || fmt == mail2rust_core::MailboxFormat::Ost {
+            mail2rust_pst::PstReader::read_path(p).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?
+        } else {
+            mail2rust_core::ingest_path(p)?
+        };
+        let count = msgs.len();
+        self.messages = msgs;
+        self.rebuild_folders_from_messages();
+        self.open_mailbox_path = p.to_string_lossy().to_string();
+        self.open_mailbox_status = Some(format!(
+            "Loaded {} message(s) across {} folder(s) from: {}",
+            count,
+            self.folders.len(),
+            p.display()
+        ));
+        Ok(count)
+    }
+
     pub fn filtered_messages(&self) -> Vec<&EmailMessage> {
         let q = self.search_query.to_lowercase();
         let mut list: Vec<&EmailMessage> = self

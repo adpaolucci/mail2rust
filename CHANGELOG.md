@@ -5,6 +5,24 @@ All notable changes to `mail2rust` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-11-08
+
+### Added
+- **Native Host OS File & Folder Pickers (`mail2rust-gui` & `mail2rust-cli`)**:
+  - Integrated `rfd` (Rusty File Dialogs) providing genuine host OS file dialogs (Win32 `IFileDialog` Common Item Dialogs on Windows, Cocoa `NSOpenPanel`/`NSSavePanel` on macOS, and XDG Desktop Portals on Linux).
+  - **Mail2Rust Studio GUI**:
+    - Added "📁 Browse File..." and "📂 Browse Folder..." dialog buttons to the Open Mailbox Archive modal with format filters (`*.pst`, `*.ost`, `*.mbox`, `*.eml`, `*.emlx`, `*.msg`, `*.olm`, `*.zip`, `*.gz`, `*.bz2`, `*.xz`).
+    - Added multi-file selection ("📁 Browse File(s)...") and directory selection ("📂 Browse Folder...") to the Merge Mailboxes modal.
+    - Added native Save As file dialogs to the Merge Mailboxes output, Direct PST Export modal, and Forensic Manifest CSV modal.
+    - Added native File Open dialog to the PST Validator modal.
+    - Added 1-click "Open File..." and "Open Folder..." toolbar buttons and menu shortcuts for immediate native file manager selection.
+  - **Mail2Rust CLI**:
+    - Added dedicated `mail2rust pick` subcommand (`--kind file|files|folder|save`) allowing scripts, workflows, and users to launch native dialogs and receive chosen paths on standard output.
+    - Added global `--pick` (alias `--browse`) flag: prompts or launches native dialogs automatically when source or destination arguments are omitted.
+    - Supported positional argument omission in interactive terminal sessions for `convert`, `pst`, `eml`, `mbox`, `search`, `sniff`, and `validate-pst`.
+
+---
+
 ## [3.4.0] - 2026-11-08
 
 ### Added

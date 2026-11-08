@@ -13,7 +13,31 @@ pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
         .show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
-                    if ui.button("Open Mailbox Archive...  (Ctrl+O)").clicked() {
+                    if ui.button("Open Mailbox File... (Native Picker)  (Ctrl+O)").clicked() {
+                        let dialog = rfd::FileDialog::new()
+                            .set_title("Open Mailbox File")
+                            .add_filter(
+                                "All Supported Mail Files (*.pst, *.ost, *.mbox, *.eml, *.emlx, *.msg, *.olm, *.zip, *.gz)",
+                                &["pst", "ost", "mbox", "mbx", "eml", "emlx", "msg", "olm", "zip", "gz", "bz2", "xz", "tar", "tgz"],
+                            )
+                            .add_filter("Outlook PST / OST (*.pst, *.ost)", &["pst", "ost"])
+                            .add_filter("MBOX Mailbox (*.mbox, *.mbx)", &["mbox", "mbx"])
+                            .add_filter("Email Files (*.eml, *.emlx, *.msg)", &["eml", "emlx", "msg"])
+                            .add_filter("All Files (*.*)", &["*"]);
+                        if let Some(picked) = dialog.pick_file() {
+                            let _ = state.ingest_from_path(&picked);
+                        }
+                        ui.close_menu();
+                    }
+                    if ui.button("Open Mailbox Directory... (Native Picker)  (Ctrl+Shift+O)").clicked() {
+                        let dialog = rfd::FileDialog::new()
+                            .set_title("Open Mailbox Directory (Thunderbird Profile, Maildir, EML Tree)");
+                        if let Some(picked) = dialog.pick_folder() {
+                            let _ = state.ingest_from_path(&picked);
+                        }
+                        ui.close_menu();
+                    }
+                    if ui.button("Open Mailbox Archive Wizard...").clicked() {
                         state.active_modal = ActiveModal::OpenMailbox;
                         ui.close_menu();
                     }
@@ -174,7 +198,31 @@ pub fn render_ribbon(ctx: &egui::Context, state: &mut AppState) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(3.0, 0.0);
 
-                if win32_tool_button(ui, "Open...") {
+                if win32_tool_button(ui, "Open File...") {
+                    let dialog = rfd::FileDialog::new()
+                        .set_title("Open Mailbox File")
+                        .add_filter(
+                            "All Supported Mail Files (*.pst, *.ost, *.mbox, *.eml, *.emlx, *.msg, *.olm, *.zip, *.gz)",
+                            &[
+                                "pst", "ost", "mbox", "mbx", "eml", "emlx", "msg", "olm", "zip", "gz", "bz2", "xz",
+                                "tar", "tgz",
+                            ],
+                        )
+                        .add_filter("Outlook PST / OST (*.pst, *.ost)", &["pst", "ost"])
+                        .add_filter("MBOX Mailbox (*.mbox, *.mbx)", &["mbox", "mbx"])
+                        .add_filter("All Files (*.*)", &["*"]);
+                    if let Some(picked) = dialog.pick_file() {
+                        let _ = state.ingest_from_path(&picked);
+                    }
+                }
+                if win32_tool_button(ui, "Open Folder...") {
+                    let dialog = rfd::FileDialog::new()
+                        .set_title("Open Mailbox Directory (Thunderbird Profile, Maildir, EML Tree)");
+                    if let Some(picked) = dialog.pick_folder() {
+                        let _ = state.ingest_from_path(&picked);
+                    }
+                }
+                if win32_tool_button(ui, "Wizard...") {
                     state.active_modal = ActiveModal::OpenMailbox;
                 }
                 if win32_tool_button(ui, "IMAP...") {
