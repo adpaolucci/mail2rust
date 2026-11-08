@@ -128,6 +128,11 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                 state.imap_port = "993".to_string();
                                 state.imap_use_tls = true;
                             }
+                            if ui.small_button("Fastmail").clicked() {
+                                state.imap_host = "imap.fastmail.com".to_string();
+                                state.imap_port = "993".to_string();
+                                state.imap_use_tls = true;
+                            }
                         });
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
@@ -372,6 +377,11 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                 state.imap_sync_insecure = true;
                                 state.imap_sync_src_auth_method = "password".to_string();
                             }
+                            if ui.small_button("Fastmail").clicked() {
+                                state.imap_sync_src_host = "imap.fastmail.com".to_string();
+                                state.imap_sync_src_port = "993".to_string();
+                                state.imap_sync_src_tls = true;
+                            }
                         });
                         ui.add_space(2.0);
                         ui.horizontal(|ui| {
@@ -432,6 +442,11 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                 state.imap_sync_dst_tls = true;
                                 state.imap_sync_insecure = true;
                                 state.imap_sync_dst_auth_method = "password".to_string();
+                            }
+                            if ui.small_button("Fastmail").clicked() {
+                                state.imap_sync_dst_host = "imap.fastmail.com".to_string();
+                                state.imap_sync_dst_port = "993".to_string();
+                                state.imap_sync_dst_tls = true;
                             }
                         });
                         ui.add_space(2.0);

@@ -8,7 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.3.0] - 2026-11-07
 
 ### Added
-- **Modern OAuth 2.0 & Provider App Passwords (Google, Microsoft, Yahoo)**:
+- **Fastmail & JMAP (RFC 8620 / RFC 8621) Native Client (`mail2rust jmap`)**:
+  - Implemented pure-Rust, zero-external-dependency JMAP client in `mail2rust-imap` supporting Fastmail and standard JMAP servers (Stalwart, Apache James, Cyrus).
+  - Implemented automatic JMAP session discovery (`/jmap/session`), mailbox listing (`Mailbox/get`), email ID querying (`Email/query`), and batch email item retrieval (`Email/get`).
+  - Added direct mapping of JMAP JSON payloads (including keywords `$seen`, `$flagged`, `$answered`, `$draft`, threads, and structured body values) to unified `EmailMessage` models.
+  - Added CLI subcommand `mail2rust jmap --session-url <url> --token <token> -o <out.pst>` with folder filtering and incremental delta sync checkpointing.
+  - Added Fastmail presets in GUI IMAP Connection and Account Sync dialogs.
+- **Modern OAuth 2.0 & Provider App Passwords (Google, Microsoft, Yahoo, Proton, Apple, Fastmail, Zoho)**:
   - Implemented SASL `XOAUTH2` and `OAUTHBEARER` (RFC 7628) authenticators in `mail2rust-imap`.
   - Added interactive browser OAuth 2.0 authorization helper (`mail2rust oauth-login`) with local loopback server (`127.0.0.1:8089/callback`) and native TLS code exchange.
   - Added built-in Provider App Password guide (`mail2rust app-passwords [google|microsoft|yahoo|all]`) with direct URLs and 16-character code setup instructions.

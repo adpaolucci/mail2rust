@@ -19,6 +19,9 @@ pub use oauth::{
     OAuthBearerAuthenticator, OAuthProvider, OAuthTokenResponse, XOAuth2Authenticator,
 };
 
+pub mod jmap;
+pub use jmap::{JmapClient, JmapError, JmapMailbox, JmapSession};
+
 #[derive(Debug)]
 pub enum ImapClientError {
     ConnectionFailed(String),

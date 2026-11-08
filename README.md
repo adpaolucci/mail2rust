@@ -342,6 +342,31 @@ Key Merger Capabilities:
 - **Chronological Sorting**: Automatically orders the unified message timeline sequentially by date (UTC).
 - **GUI Studio Integration**: Open **File > Merge Mailboxes (Multi-Format)...** or click the toolbar **Merge...** button to merge and either export directly or load all unified mail directly into the interactive 3-pane workbench for immediate inspection.
 
+### 14. Native Fastmail & JMAP (RFC 8620 / 8621) Ingestion (`mail2rust jmap`)
+Fastmail and modern email servers (Stalwart, Apache James, Cyrus) support **JMAP** (JSON Meta Application Protocol, RFC 8620 / RFC 8621), the modern IETF JSON-over-HTTP replacement for IMAP. `mail2rust` includes a pure-Rust, zero-external-dependency JMAP client for high-throughput batch synchronization directly into PST, MBOX, or EML:
+
+```bash
+# Ingest entire Fastmail account via JMAP with API Bearer token
+mail2rust jmap \
+  --token "fmu1-xxxx-xxxx-xxxx" \
+  -o "fastmail_backup.pst"
+
+# Sync specific mailboxes with incremental delta synchronization
+mail2rust jmap \
+  --session-url "https://api.fastmail.com/jmap/session" \
+  --token "fmu1-xxxx-xxxx-xxxx" \
+  --folders "Inbox,Archive" \
+  --checkpoint "fastmail_checkpoint.json" \
+  -o "fastmail_archive.pst"
+```
+
+Advantages of Native JMAP Ingestion:
+- **Stateless HTTP/HTTPS Transport**: Eliminates IMAP stateful TCP connection drops and renegotiation timeouts during large mailbox migrations.
+- **Batch Processing**: Retrieves up to 200–500 emails per atomic JSON call with server-side property filtering.
+- **Direct Body Text/HTML Extraction**: Reads text and HTML payloads directly from structured JSON without downloading redundant MIME wrapper overhead.
+- **Delta Sync Checkpointing**: Full resume support using `mail2rust-sync` checkpoint state.
+- **Fastmail IMAP Compatibility**: Fastmail users can also connect via traditional IMAP (`imap.fastmail.com:993`) using Fastmail App Passwords.
+
 ---
 
 ### 14. Modern OAuth 2.0 & Provider App Passwords (Google, Microsoft, Yahoo)
@@ -436,7 +461,7 @@ Because Proton Mail enforces client-side zero-access encryption (OpenPGP), direc
 
 #### Automated Diagnostics & GUI Support
 - **Actionable Authentication Diagnostics**: When an IMAP login fails against Google, Microsoft, Yahoo, or Proton, Mail2Rust analyzes the response and automatically prints actionable guidance tailored to that specific provider.
-- **Native GUI Preset & Auth Selector**: In `mail2rust-gui`, the **Connect to IMAP Mailbox** and **IMAP-to-IMAP Account Sync** dialogs offer one-click presets for **Gmail**, **Outlook**, **Yahoo**, **Proton (Bridge)**, and **iCloud**, plus radio buttons to toggle between **Password / App Pass**, **OAuth 2.0 (XOAUTH2)**, and **OAUTHBEARER**.
+- **Native GUI Preset & Auth Selector**: In `mail2rust-gui`, the **Connect to IMAP Mailbox** and **IMAP-to-IMAP Account Sync** dialogs offer one-click presets for **Gmail**, **Outlook**, **Yahoo**, **Proton (Bridge)**, **iCloud**, and **Fastmail**, plus radio buttons to toggle between **Password / App Pass**, **OAuth 2.0 (XOAUTH2)**, and **OAUTHBEARER**.
 
 ---
 
@@ -445,6 +470,7 @@ Because Proton Mail enforces client-side zero-access encryption (OpenPGP), direc
 | Capability / Requirement | `mail2mail` (Python) | `mail2rust` (Rust) | Parity Status |
 | :--- | :---: | :---: | :---: |
 | **Native Desktop GUI** | Tkinter / Webview wrapper | **100% Pure Rust GUI (`eframe`/`egui`)** | **Exceeds** (Zero Node.js/Webview) |
+| **Fastmail & JMAP (RFC 8620 / 8621)** | No | **Yes (`mail2rust jmap`)** — Pure Rust JSON-over-HTTP client | **Exceeds** |
 | **OAuth 2.0 & App Password Diagnostics** | Basic | **Yes (`XOAUTH2`, `OAUTHBEARER`, `oauth-login`, `app-passwords`, automated error diagnostics & GUI)** | **Exceeds** |
 | **Multi-Format Mailbox Merger** | Manual individual conversions | **Yes (`mail2rust merge` & GUI)** — Merge PST, MBOX, Maildir, EMLX, MSG, OLM, VCF, ICS, and Takeout ZIP with cross-source deduplication | **Exceeds** |
 | **Direct IMAP Server-to-Server Sync** | No (requires exporting to local disk) | **Yes (`mail2rust imap-sync` & GUI)** — 100% in-memory streaming over TLS, zero disk footprint | **Exceeds** |

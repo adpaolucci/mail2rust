@@ -399,6 +399,28 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Ingest mail directly from Fastmail or any RFC 8620/8621 JMAP server into PST, MBOX, or EML
+    Jmap {
+        /// JMAP session URL (default: Fastmail https://api.fastmail.com/jmap/session)
+        #[arg(long, default_value = "https://api.fastmail.com/jmap/session")]
+        session_url: String,
+
+        /// JMAP API Bearer token (e.g. Fastmail API token)
+        #[arg(short, long, default_value = "")]
+        token: String,
+
+        /// Destination output path (.pst, .mbox, directory for .eml)
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Specific folders/mailboxes to migrate (case-insensitive name match)
+        #[arg(long)]
+        folders: Vec<String>,
+
+        /// Path to checkpoint file for resume and incremental delta synchronization
+        #[arg(long)]
+        checkpoint: Option<PathBuf>,
+    },
     /// Print instructions for generating App Passwords for Google, Microsoft, Yahoo, or Proton Mail
     AppPasswords {
         /// Specific provider to query: 'google', 'microsoft', 'yahoo', 'proton', or 'all'
@@ -1184,6 +1206,125 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  mail2rust imap --host {} --username <YOUR_EMAIL> --auth-method xoauth2 --oauth-token \"{}\" -o mailbox.pst\n",
                 prov.default_imap_host(), tokens.access_token);
             println!("======================================================================\n");
+        }
+
+        Commands::Jmap {
+            session_url,
+            token,
+            output,
+            folders,
+            checkpoint,
+        } => {
+            let tok = if !token.is_empty() {
+                token.clone()
+            } else {
+                match std::env::var("MAIL2RUST_JMAP_TOKEN") {
+                    Ok(t) => t,
+                    Err(_) => {
+                        eprint!("Enter JMAP API Bearer Token: ");
+                        let mut line = String::new();
+                        std::io::stdin().read_line(&mut line)?;
+                        line.trim().to_string()
+                    }
+                }
+            };
+
+            println!("Connecting to JMAP session: {}...", session_url);
+            let mut client = mail2rust_imap::jmap::JmapClient::new(session_url, &tok);
+            client.connect()?;
+            println!("Authenticated to JMAP account: {}", client.account_id().unwrap_or("primary"));
+
+            let chk_path = checkpoint.as_ref().map(|p| p.as_path());
+            let mut chk = if let Some(p) = chk_path {
+                if p.exists() {
+                    println!("Resuming migration from checkpoint: {}", p.display());
+                    CheckpointManager::load(p)?
+                } else {
+                    CheckpointManager::new_checkpoint(
+                        session_url,
+                        &output.display().to_string(),
+                    )
+                }
+            } else {
+                CheckpointManager::new_checkpoint(
+                    session_url,
+                    &output.display().to_string(),
+                )
+            };
+
+            let folder_filter = if folders.is_empty() {
+                None
+            } else {
+                Some(folders.as_slice())
+            };
+
+            println!("Streaming JMAP messages to {}...", output.display());
+            let mut messages = Vec::new();
+            let count = client.sync_all(folder_filter, &mut chk, |msg| {
+                use std::io::Write;
+                print!(
+                    "\r[JMAP Ingestion] Msg #{:<5} | Subject: {:<40}",
+                    messages.len() + 1,
+                    msg.subject.chars().take(38).collect::<String>()
+                );
+                let _ = std::io::stdout().flush();
+                messages.push(msg);
+            })?;
+            println!("\nFetched {} messages from JMAP server ({} newly synced).", messages.len(), count);
+
+            apply_preprocessing(&cli, &mut messages)?;
+
+            let ext = output
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("pst")
+                .to_lowercase();
+            match ext.as_str() {
+                "mbox" => {
+                    MboxFileExporter::export_to_file(&messages, output, false)?;
+                    println!("Exported {} messages to MBOX: {}", messages.len(), output.display());
+                }
+                "eml" | "" if output.is_dir() => {
+                    let mut exporter = EmlExporter::new(output, EmlLayout::Folder).with_naming(EmlNaming::Subject);
+                    for m in &messages {
+                        exporter.export_message(m)?;
+                    }
+                    println!(
+                        "Exported {} messages to EML directory: {}",
+                        messages.len(),
+                        output.display()
+                    );
+                }
+                _ => {
+                    let file = File::create(output)?;
+                    let mut writer = PstWriter::new(file, true)?;
+                    let mut folder_map = std::collections::HashMap::new();
+
+                    for msg in &messages {
+                        let folder_name = msg.folder_path.last().map(|s| s.as_str()).unwrap_or("Inbox");
+                        let nid = if let Some(&id) = folder_map.get(folder_name) {
+                            id
+                        } else {
+                            let id = writer.add_folder(folder_name, None)?;
+                            folder_map.insert(folder_name.to_string(), id);
+                            id
+                        };
+                        writer.add_message(msg, nid)?;
+                    }
+                    writer.finalize()?;
+                    println!(
+                        "Exported {} messages to PST container: {}",
+                        messages.len(),
+                        output.display()
+                    );
+                }
+            }
+
+            if let Some(p) = chk_path {
+                chk.status = "completed".to_string();
+                CheckpointManager::save(&chk, p)?;
+                println!("Saved final migration checkpoint to: {}", p.display());
+            }
         }
 
         Commands::AppPasswords { provider } => {

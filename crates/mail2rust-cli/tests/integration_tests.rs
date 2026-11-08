@@ -1069,3 +1069,251 @@ Subfolder message inside Projects.sbd container.\r\n";
         titan_msg.folder_path
     );
 }
+
+#[test]
+fn test_cli_jmap_ingestion_and_help() {
+    let cargo_bin = env!("CARGO_BIN_EXE_mail2rust");
+
+    // 1. Verify JMAP CLI help output
+    let jmap_help = std::process::Command::new(cargo_bin)
+        .arg("jmap")
+        .arg("--help")
+        .output()
+        .expect("jmap help");
+    assert!(jmap_help.status.success());
+    let jmap_stdout = String::from_utf8_lossy(&jmap_help.stdout);
+    assert!(jmap_stdout.contains("--session-url"));
+    assert!(jmap_stdout.contains("--token"));
+    assert!(jmap_stdout.contains("--folders"));
+    assert!(jmap_stdout.contains("--checkpoint"));
+
+    // 2. Start mock JMAP server and run CLI ingestion to PST
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind listener");
+    let port = listener.local_addr().unwrap().port();
+
+    std::thread::spawn(move || {
+        use std::io::{BufRead, Read, Write};
+
+        // 1. Session request
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut reader = std::io::BufReader::new(socket.try_clone().unwrap());
+        let mut line = String::new();
+        while reader.read_line(&mut line).unwrap() > 0 {
+            if line == "\r\n" || line == "\n" {
+                break;
+            }
+            line.clear();
+        }
+
+        let session_json = serde_json::json!({
+            "apiUrl": format!("http://127.0.0.1:{}/jmap/api", port),
+            "downloadUrl": format!("http://127.0.0.1:{}/jmap/download/{{accountId}}/{{blobId}}/{{name}}", port),
+            "primaryAccounts": {
+                "urn:ietf:params:jmap:mail": "acc_fastmail_test"
+            },
+            "accounts": {
+                "acc_fastmail_test": {
+                    "name": "tester@fastmail.com",
+                    "isPersonal": true
+                }
+            }
+        });
+
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            session_json.to_string().len(),
+            session_json
+        );
+        socket.write_all(resp.as_bytes()).unwrap();
+        socket.flush().unwrap();
+        drop(socket);
+
+        // 2. Mailbox/get request
+        let (mut socket2, _) = listener.accept().unwrap();
+        let mut reader2 = std::io::BufReader::new(socket2.try_clone().unwrap());
+        line.clear();
+        let mut content_len = 0;
+        while reader2.read_line(&mut line).unwrap() > 0 {
+            if line.to_lowercase().starts_with("content-length:") {
+                content_len = line.split(':').nth(1).unwrap().trim().parse().unwrap_or(0);
+            }
+            if line == "\r\n" || line == "\n" {
+                break;
+            }
+            line.clear();
+        }
+        let mut body_bytes = vec![0u8; content_len];
+        reader2.read_exact(&mut body_bytes).unwrap();
+
+        let mailbox_resp = serde_json::json!({
+            "methodResponses": [
+                [
+                    "Mailbox/get",
+                    {
+                        "accountId": "acc_fastmail_test",
+                        "state": "state_1",
+                        "list": [
+                            {
+                                "id": "mb_inbox",
+                                "name": "Inbox",
+                                "totalEmails": 1,
+                                "unreadEmails": 0
+                            }
+                        ]
+                    },
+                    "m0"
+                ]
+            ]
+        });
+        let resp2 = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            mailbox_resp.to_string().len(),
+            mailbox_resp
+        );
+        socket2.write_all(resp2.as_bytes()).unwrap();
+        socket2.flush().unwrap();
+        drop(socket2);
+
+        // 3. Email/query request
+        let (mut socket3, _) = listener.accept().unwrap();
+        let mut reader3 = std::io::BufReader::new(socket3.try_clone().unwrap());
+        line.clear();
+        content_len = 0;
+        while reader3.read_line(&mut line).unwrap() > 0 {
+            if line.to_lowercase().starts_with("content-length:") {
+                content_len = line.split(':').nth(1).unwrap().trim().parse().unwrap_or(0);
+            }
+            if line == "\r\n" || line == "\n" {
+                break;
+            }
+            line.clear();
+        }
+        let mut body_bytes3 = vec![0u8; content_len];
+        reader3.read_exact(&mut body_bytes3).unwrap();
+
+        let query_resp = serde_json::json!({
+            "methodResponses": [
+                [
+                    "Email/query",
+                    {
+                        "accountId": "acc_fastmail_test",
+                        "ids": ["jmap_cli_msg_01"],
+                        "total": 1
+                    },
+                    "q0"
+                ]
+            ]
+        });
+        let resp3 = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            query_resp.to_string().len(),
+            query_resp
+        );
+        socket3.write_all(resp3.as_bytes()).unwrap();
+        socket3.flush().unwrap();
+        drop(socket3);
+
+        // 4. Email/get request
+        let (mut socket4, _) = listener.accept().unwrap();
+        let mut reader4 = std::io::BufReader::new(socket4.try_clone().unwrap());
+        line.clear();
+        content_len = 0;
+        while reader4.read_line(&mut line).unwrap() > 0 {
+            if line.to_lowercase().starts_with("content-length:") {
+                content_len = line.split(':').nth(1).unwrap().trim().parse().unwrap_or(0);
+            }
+            if line == "\r\n" || line == "\n" {
+                break;
+            }
+            line.clear();
+        }
+        let mut body_bytes4 = vec![0u8; content_len];
+        reader4.read_exact(&mut body_bytes4).unwrap();
+
+        let get_resp = serde_json::json!({
+            "methodResponses": [
+                [
+                    "Email/get",
+                    {
+                        "accountId": "acc_fastmail_test",
+                        "list": [
+                            {
+                                "id": "jmap_cli_msg_01",
+                                "blobId": "blob_cli_01",
+                                "threadId": "thread_fastmail_cli",
+                                "mailboxIds": {
+                                    "mb_inbox": true
+                                },
+                                "keywords": {
+                                    "$seen": true
+                                },
+                                "size": 320,
+                                "receivedAt": "2026-11-07T18:00:00Z",
+                                "messageId": ["<fastmail-cli-01@fastmail.com>"],
+                                "subject": "Fastmail JMAP CLI Ingestion Test",
+                                "from": [
+                                    {
+                                        "name": "Fastmail Ops",
+                                        "email": "ops@fastmail.com"
+                                    }
+                                ],
+                                "to": [
+                                    {
+                                        "name": "User",
+                                        "email": "tester@fastmail.com"
+                                    }
+                                ],
+                                "textBody": [
+                                    {
+                                        "partId": "txt_1",
+                                        "size": 35,
+                                        "type": "text/plain"
+                                    }
+                                ],
+                                "bodyValues": {
+                                    "txt_1": {
+                                        "value": "JMAP HTTP JSON Sync Verified!"
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    "e0"
+                ]
+            ]
+        });
+        let resp4 = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            get_resp.to_string().len(),
+            get_resp
+        );
+        socket4.write_all(resp4.as_bytes()).unwrap();
+        socket4.flush().unwrap();
+        drop(socket4);
+    });
+
+    let temp = tempdir().expect("tempdir");
+    let out_pst = temp.path().join("jmap_export.pst");
+    let session_url = format!("http://127.0.0.1:{}/jmap/session", port);
+
+    let jmap_cmd = std::process::Command::new(cargo_bin)
+        .arg("jmap")
+        .arg("--session-url")
+        .arg(&session_url)
+        .arg("--token")
+        .arg("fmu1-mock-bearer-token")
+        .arg("-o")
+        .arg(&out_pst)
+        .output()
+        .expect("execute jmap command");
+
+    assert!(jmap_cmd.status.success(), "JMAP CLI failed: {:?}", String::from_utf8_lossy(&jmap_cmd.stderr));
+    assert!(out_pst.exists(), "Output PST should exist");
+
+    let read_msgs = mail2rust_pst::PstReader::read_path(&out_pst).expect("read pst");
+    assert_eq!(read_msgs.len(), 1);
+    assert_eq!(read_msgs[0].subject, "Fastmail JMAP CLI Ingestion Test");
+    assert_eq!(read_msgs[0].from.email, "ops@fastmail.com");
+    assert_eq!(read_msgs[0].body_text, "JMAP HTTP JSON Sync Verified!");
+    assert_eq!(read_msgs[0].source_format, "Microsoft Outlook PST (Unicode)");
+}
