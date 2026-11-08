@@ -10,6 +10,7 @@ members = [
     "crates/mail2rust-imap",
     "crates/mail2rust-cli",
     "crates/mail2rust-gui",
+    "crates/mail2rust-mcp",
 ]
 resolver = "2"
 
@@ -45,6 +46,7 @@ mail2rust-filter = { path = "crates/mail2rust-filter" }
 mail2rust-forensics = { path = "crates/mail2rust-forensics" }
 mail2rust-sync = { path = "crates/mail2rust-sync" }
 mail2rust-imap = { path = "crates/mail2rust-imap" }
+mail2rust-mcp = { path = "crates/mail2rust-mcp" }
 
 [profile.release]
 opt-level = 3

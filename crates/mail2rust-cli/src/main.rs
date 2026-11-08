@@ -427,10 +427,36 @@ enum Commands {
         #[arg(default_value = "all")]
         provider: String,
     },
+    /// Run Model Context Protocol (MCP) server over standard I/O (JSON-RPC)
+    Mcp {
+        /// Print tools manifest in JSON schema format and exit
+        #[arg(long)]
+        tools: bool,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+
+    if let Commands::Mcp { tools } = &cli.command {
+        if *tools {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&mail2rust_mcp::get_tools_manifest())?
+            );
+            return Ok(());
+        }
+        let filter = tracing_subscriber::EnvFilter::try_new(&cli.log_level)
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_env_filter(filter)
+            .init();
+
+        mail2rust_mcp::run_stdio_server()?;
+        return Ok(());
+    }
+
     init_logging(&cli.log_level, cli.log_file.as_deref())?;
 
     info!(version = env!("CARGO_PKG_VERSION"), "Mail2Rust Engine Initialized");
@@ -1398,6 +1424,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Once generated, supply it to Mail2Rust with:\n  --password \"xxxx xxxx xxxx xxxx\"");
             println!("======================================================================\n");
         }
+        Commands::Mcp { .. } => unreachable!(),
     }
 
     Ok(())

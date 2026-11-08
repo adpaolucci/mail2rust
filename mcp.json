@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "mail2rust": {
+      "command": "mail2rust",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "RUST_LOG": "warn"
+      }
+    }
+  }
+}

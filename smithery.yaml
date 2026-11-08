@@ -1,0 +1,29 @@
+# Smithery configuration for mail2rust
+# https://smithery.ai
+name: mail2rust-mcp
+version: "3.3.0"
+description: "Universal offline email migration, forensic auditing, and MS-PST binary engine in 100% pure Rust (zero Outlook/MAPI dependencies)"
+repository: "https://github.com/adpaolucci/mail2rust"
+license: "MIT OR Apache-2.0"
+
+entrypoint:
+  type: stdio
+  command: mail2rust-mcp
+
+build:
+  type: cargo
+  crate: mail2rust-mcp
+
+tools:
+  - name: mail2rust_sniff
+    description: "Inspect magic bytes and identify mailbox format (PST, OST, MBOX, EML, EMLX, MSG, OLM, Maildir)."
+  - name: mail2rust_validate_pst
+    description: "Validate 64-bit Unicode MS-PST binary integrity, CRC-32 header, and B-Trees without Outlook."
+  - name: mail2rust_convert
+    description: "Convert mailbox between formats (MBOX to PST, PST to EML tree, EML to PST, Maildir to PST)."
+  - name: mail2rust_audit
+    description: "Perform forensic audit on mailbox: compute SHA-256 hashes, Bates stamping, and chain of custody."
+  - name: mail2rust_split
+    description: "Split oversized mailbox into chunked volume archives preserving folder hierarchies."
+  - name: mail2rust_merge
+    description: "Merge multiple disparate mailbox archives into a unified container with cross-archive deduplication."

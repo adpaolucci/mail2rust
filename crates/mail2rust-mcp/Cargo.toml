@@ -1,0 +1,30 @@
+[package]
+name = "mail2rust-mcp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Model Context Protocol (MCP) server for mail2rust email migration, forensic analysis, and PST conversion"
+
+[[bin]]
+name = "mail2rust-mcp"
+path = "src/main.rs"
+
+[dependencies]
+mail2rust-core = { workspace = true }
+mail2rust-pst = { workspace = true }
+mail2rust-eml = { workspace = true }
+mail2rust-mbox = { workspace = true }
+mail2rust-filter = { workspace = true }
+mail2rust-forensics = { workspace = true }
+mail2rust-sync = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.17"

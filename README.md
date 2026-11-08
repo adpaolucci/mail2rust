@@ -79,6 +79,7 @@ mail2rust/
 │   ├── mail2rust-forensics/       # Bates stamping, SHA-256/MD5 hashing, legal hold, and audit manifests
 │   ├── mail2rust-sync/            # Incremental delta sync engine & checkpoint persistence
 │   ├── mail2rust-imap/            # Pure-Rust direct IMAP/TLS client, live mailbox streaming, folder discovery
+│   ├── mail2rust-mcp/             # Model Context Protocol (MCP) server for Claude, Cursor, Antigravity, and AutoGPT
 │   ├── mail2rust-cli/             # Unified command-line interface binary (`mail2rust`)
 │   └── mail2rust-gui/             # Classic Win32/MMC administrative management console GUI (`mail2rust-gui`)
 └── tests/                         # End-to-end integration and mutational fuzz test suites
@@ -465,10 +466,48 @@ Because Proton Mail enforces client-side zero-access encryption (OpenPGP), direc
 
 ---
 
+### 16. Model Context Protocol (MCP) for Autonomous AI Agents (`mail2rust mcp`)
+
+`mail2rust` includes a built-in [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server allowing LLM agents (Claude Desktop, Cursor, Google Antigravity, Windsurf, AutoGPT) to inspect, validate, convert, audit, split, and merge mailbox datasets using standardized JSON-RPC 2.0 tools over `stdio`.
+
+#### Available Agent Tools
+1. **`mail2rust_sniff`**: Magic-byte sniffing and classification across 15+ formats.
+2. **`mail2rust_validate_pst`**: Validates 64-bit Unicode MS-PST binary integrity, CRC-32 header, and B-Trees without Microsoft Outlook.
+3. **`mail2rust_convert`**: Converts between PST, MBOX, and EML hierarchies with optional SHA-256 deduplication.
+4. **`mail2rust_audit`**: Computes cryptographic fingerprints (SHA-256 / MD5), applies Bates numbering, and outputs forensic CSV manifests.
+5. **`mail2rust_split`**: Splits large archives (>20GB or >50GB) into chunked volume archives preserving folder trees.
+6. **`mail2rust_merge`**: Merges disparate archives into a unified container with cross-archive deduplication.
+
+#### Launching the MCP Server
+```bash
+# Run stdio MCP server (logs automatically stream to stderr, keeping stdout clean)
+mail2rust mcp
+
+# Inspect tool JSON schemas
+mail2rust mcp --tools
+```
+
+#### Quick Configuration for AI Clients
+Add to `claude_desktop_config.json` or `.cursor/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "mail2rust": {
+      "command": "mail2rust",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+Or use the standalone `mail2rust-mcp` binary package configured in [`smithery.yaml`](smithery.yaml).
+
+---
+
 ## Feature Comparison Matrix: `mail2rust` vs `mail2mail`
 
 | Capability / Requirement | `mail2mail` (Python) | `mail2rust` (Rust) | Parity Status |
 | :--- | :---: | :---: | :---: |
+| **Model Context Protocol (MCP)** | No | **Yes (`mail2rust mcp` / `mail2rust-mcp`)** — Native JSON-RPC stdio tools for AI agents | **Exceeds** |
 | **Native Desktop GUI** | Tkinter / Webview wrapper | **100% Pure Rust GUI (`eframe`/`egui`)** | **Exceeds** (Zero Node.js/Webview) |
 | **Fastmail & JMAP (RFC 8620 / 8621)** | No | **Yes (`mail2rust jmap`)** — Pure Rust JSON-over-HTTP client | **Exceeds** |
 | **OAuth 2.0 & App Password Diagnostics** | Basic | **Yes (`XOAUTH2`, `OAUTHBEARER`, `oauth-login`, `app-passwords`, automated error diagnostics & GUI)** | **Exceeds** |
