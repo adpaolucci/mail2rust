@@ -879,9 +879,15 @@ fn test_cli_oauth_and_app_passwords() {
     assert!(stdout.contains("MICROSOFT OUTLOOK.COM & OFFICE 365"));
     assert!(stdout.contains("YAHOO MAIL & AOL"));
     assert!(stdout.contains("PROTON MAIL & PROTON MAIL BRIDGE"));
+    assert!(stdout.contains("APPLE ICLOUD MAIL"));
+    assert!(stdout.contains("FASTMAIL"));
+    assert!(stdout.contains("ZOHO MAIL"));
     assert!(stdout.contains("myaccount.google.com/apppasswords"));
     assert!(stdout.contains("account.live.com/proofs/manage/additional"));
     assert!(stdout.contains("login.yahoo.com/account/security"));
+    assert!(stdout.contains("appleid.apple.com"));
+    assert!(stdout.contains("fastmail.com"));
+    assert!(stdout.contains("accounts.zoho.com"));
     assert!(stdout.contains("1143"));
 
     // 2. Verify targeted provider guide
@@ -904,6 +910,36 @@ fn test_cli_oauth_and_app_passwords() {
     let proton_stdout = String::from_utf8_lossy(&out_proton.stdout);
     assert!(proton_stdout.contains("PROTON MAIL & PROTON MAIL BRIDGE"));
     assert!(proton_stdout.contains("proton.me/mail/bridge"));
+
+    let out_apple = std::process::Command::new(cargo_bin)
+        .arg("app-passwords")
+        .arg("apple")
+        .output()
+        .expect("failed to run app-passwords apple");
+    assert!(out_apple.status.success());
+    let apple_stdout = String::from_utf8_lossy(&out_apple.stdout);
+    assert!(apple_stdout.contains("APPLE ICLOUD MAIL"));
+    assert!(apple_stdout.contains("appleid.apple.com"));
+
+    let out_fastmail = std::process::Command::new(cargo_bin)
+        .arg("app-passwords")
+        .arg("fastmail")
+        .output()
+        .expect("failed to run app-passwords fastmail");
+    assert!(out_fastmail.status.success());
+    let fastmail_stdout = String::from_utf8_lossy(&out_fastmail.stdout);
+    assert!(fastmail_stdout.contains("FASTMAIL"));
+    assert!(fastmail_stdout.contains("Settings > Password & Security"));
+
+    let out_zoho = std::process::Command::new(cargo_bin)
+        .arg("app-passwords")
+        .arg("zoho")
+        .output()
+        .expect("failed to run app-passwords zoho");
+    assert!(out_zoho.status.success());
+    let zoho_stdout = String::from_utf8_lossy(&out_zoho.stdout);
+    assert!(zoho_stdout.contains("ZOHO MAIL"));
+    assert!(zoho_stdout.contains("accounts.zoho.com"));
 
     // 3. Verify IMAP CLI help exposes auth-method and oauth-token
     let imap_help = std::process::Command::new(cargo_bin)
@@ -940,4 +976,96 @@ fn test_cli_oauth_and_app_passwords() {
     assert!(oauth_stdout.contains("--provider"));
     assert!(oauth_stdout.contains("--client-id"));
     assert!(oauth_stdout.contains("--client-secret"));
+}
+
+#[test]
+fn test_thunderbird_profile_and_msf_exclusion() {
+    let cargo_bin = env!("CARGO_BIN_EXE_mail2rust");
+    let temp = tempdir().expect("tempdir");
+    let base = temp.path();
+
+    // Replicate real Mozilla Thunderbird profile tree:
+    // Mail/Local Folders/
+    //   Inbox (raw MBOX, 2 messages, no extension)
+    //   Inbox.msf (Thunderbird Mork index cache, should be skipped)
+    //   Projects.sbd/
+    //     Titan (raw MBOX, 1 message, no extension)
+    //     Titan.msf (index cache, should be skipped)
+    let local_folders = base.join("Mail").join("Local Folders");
+    let projects_sbd = local_folders.join("Projects.sbd");
+    std::fs::create_dir_all(&projects_sbd).expect("create_dir_all");
+
+    let mbox_inbox_data = b"From alice@example.com Sat Nov  7 12:00:00 2026\r\n\
+From: Alice <alice@example.com>\r\n\
+To: Bob <bob@example.com>\r\n\
+Subject: Thunderbird Message 1\r\n\
+Date: Sat, 07 Nov 2026 12:00:00 +0000\r\n\
+Message-ID: <tb-msg-01@domain.local>\r\n\
+\r\n\
+First Thunderbird local message.\r\n\
+\r\n\
+From charlie@example.com Sat Nov  7 12:05:00 2026\r\n\
+From: Charlie <charlie@example.com>\r\n\
+To: Bob <bob@example.com>\r\n\
+Subject: Thunderbird Message 2\r\n\
+Date: Sat, 07 Nov 2026 12:05:00 +0000\r\n\
+Message-ID: <tb-msg-02@domain.local>\r\n\
+\r\n\
+Second Thunderbird local message.\r\n";
+
+    let mbox_titan_data = b"From dev@example.com Sat Nov  7 12:10:00 2026\r\n\
+From: Dev Lead <dev@example.com>\r\n\
+To: Team <team@example.com>\r\n\
+Subject: Project Titan Update\r\n\
+Date: Sat, 07 Nov 2026 12:10:00 +0000\r\n\
+Message-ID: <tb-msg-03@domain.local>\r\n\
+\r\n\
+Subfolder message inside Projects.sbd container.\r\n";
+
+    let mock_msf_data = b"// <!-- <mdb:mork:z v=\"1.4\"/> -->\n\
+< <(a=c)> // (f=iso-8859-1)\n\
+  (B8=totalMessages)(B9=numUnseenMessages) >\n\
+{1:^80 (flags=0) (B8=2) (B9=0)}\n";
+
+    std::fs::write(local_folders.join("Inbox"), mbox_inbox_data).expect("write inbox mbox");
+    std::fs::write(local_folders.join("Inbox.msf"), mock_msf_data).expect("write inbox msf");
+    std::fs::write(projects_sbd.join("Titan"), mbox_titan_data).expect("write titan mbox");
+    std::fs::write(projects_sbd.join("Titan.msf"), mock_msf_data).expect("write titan msf");
+
+    let out_pst = base.join("thunderbird_migrated.pst");
+
+    // Convert the entire Thunderbird Local Folders hierarchy to Outlook PST
+    let convert_out = std::process::Command::new(cargo_bin)
+        .arg("convert")
+        .arg(&local_folders)
+        .arg(&out_pst)
+        .output()
+        .expect("convert thunderbird command");
+
+    assert!(convert_out.status.success(), "Conversion failed: {:?}", String::from_utf8_lossy(&convert_out.stderr));
+
+    // Validate the resulting PST container
+    assert!(out_pst.exists());
+    let r = std::fs::File::open(&out_pst).expect("open converted pst");
+    let val = PstValidator::validate(r).expect("validate pst");
+    assert!(val.is_valid);
+    assert!(val.crc_match);
+
+    // Read messages and verify:
+    // 1. Exactly 3 messages ingested (not 2, and not 4 with .msf garbage)
+    let read_msgs = mail2rust_pst::PstReader::read_path(&out_pst).expect("read pst");
+    assert_eq!(read_msgs.len(), 3);
+
+    // 2. Verify subfolder path was normalized from 'Projects.sbd' to 'Projects'
+    let titan_msg = read_msgs.iter().find(|m| m.subject == "Project Titan Update").expect("titan msg");
+    assert!(
+        titan_msg.folder_path.contains(&"Projects".to_string()),
+        "Expected folder path to contain normalized 'Projects', got {:?}",
+        titan_msg.folder_path
+    );
+    assert!(
+        !titan_msg.folder_path.iter().any(|f| f.ends_with(".sbd")),
+        "Folder path should not contain raw .sbd extension: {:?}",
+        titan_msg.folder_path
+    );
 }

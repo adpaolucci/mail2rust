@@ -844,6 +844,10 @@ mod tests {
             ImapClient::split_folder_hierarchy("INBOX.Work.Projects", Some(".")),
             vec!["INBOX", "Work", "Projects"]
         );
+        assert_eq!(
+            ImapClient::split_folder_hierarchy("INBOX\\Exchange\\Archive", Some("\\")),
+            vec!["INBOX", "Exchange", "Archive"]
+        );
         assert_eq!(ImapClient::split_folder_hierarchy("", None), vec!["Inbox"]);
     }
 

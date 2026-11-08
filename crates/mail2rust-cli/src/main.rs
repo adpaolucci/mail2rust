@@ -1200,6 +1200,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let show_ms = p_lower == "all" || p_lower == "microsoft" || p_lower == "outlook" || p_lower == "office365";
             let show_yahoo = p_lower == "all" || p_lower == "yahoo" || p_lower == "aol";
             let show_proton = p_lower == "all" || p_lower == "proton" || p_lower == "protonmail" || p_lower == "bridge" || p_lower == "pm";
+            let show_apple = p_lower == "all" || p_lower == "apple" || p_lower == "icloud" || p_lower == "me";
+            let show_fastmail = p_lower == "all" || p_lower == "fastmail";
+            let show_zoho = p_lower == "all" || p_lower == "zoho";
 
             if show_google {
                 println!("--- GOOGLE GMAIL & GOOGLE WORKSPACE ---");
@@ -1219,6 +1222,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if show_proton {
                 println!("--- PROTON MAIL & PROTON MAIL BRIDGE ---");
                 println!("{}", OAuthProvider::Proton.app_password_guide());
+                println!();
+            }
+            if show_apple {
+                println!("--- APPLE ICLOUD MAIL ---");
+                println!("{}", OAuthProvider::Apple.app_password_guide());
+                println!();
+            }
+            if show_fastmail {
+                println!("--- FASTMAIL ---");
+                println!("{}", OAuthProvider::Fastmail.app_password_guide());
+                println!();
+            }
+            if show_zoho {
+                println!("--- ZOHO MAIL ---");
+                println!("{}", OAuthProvider::Zoho.app_password_guide());
                 println!();
             }
             println!("Once generated, supply it to Mail2Rust with:\n  --password \"xxxx xxxx xxxx xxxx\"");

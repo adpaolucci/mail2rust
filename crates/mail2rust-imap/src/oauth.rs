@@ -90,6 +90,9 @@ pub enum OAuthProvider {
     Microsoft,
     Yahoo,
     Proton,
+    Apple,
+    Fastmail,
+    Zoho,
 }
 
 impl OAuthProvider {
@@ -104,6 +107,12 @@ impl OAuthProvider {
             Some(OAuthProvider::Yahoo)
         } else if h.contains("proton") {
             Some(OAuthProvider::Proton)
+        } else if h.contains("mail.me.com") || h.contains("icloud.com") || h.contains("apple") {
+            Some(OAuthProvider::Apple)
+        } else if h.contains("fastmail") {
+            Some(OAuthProvider::Fastmail)
+        } else if h.contains("zoho") {
+            Some(OAuthProvider::Zoho)
         } else {
             None
         }
@@ -115,6 +124,9 @@ impl OAuthProvider {
             OAuthProvider::Microsoft => "Microsoft (Outlook.com / Office 365 / M365)",
             OAuthProvider::Yahoo => "Yahoo Mail (Yahoo / AOL)",
             OAuthProvider::Proton => "Proton Mail (via Proton Mail Bridge)",
+            OAuthProvider::Apple => "Apple iCloud Mail",
+            OAuthProvider::Fastmail => "Fastmail",
+            OAuthProvider::Zoho => "Zoho Mail",
         }
     }
 
@@ -124,6 +136,9 @@ impl OAuthProvider {
             OAuthProvider::Microsoft => "outlook.office365.com",
             OAuthProvider::Yahoo => "imap.mail.yahoo.com",
             OAuthProvider::Proton => "127.0.0.1",
+            OAuthProvider::Apple => "imap.mail.me.com",
+            OAuthProvider::Fastmail => "imap.fastmail.com",
+            OAuthProvider::Zoho => "imap.zoho.com",
         }
     }
 
@@ -140,6 +155,9 @@ impl OAuthProvider {
             OAuthProvider::Microsoft => "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
             OAuthProvider::Yahoo => "https://api.login.yahoo.com/oauth2/request_auth",
             OAuthProvider::Proton => "https://account.proton.me",
+            OAuthProvider::Apple => "https://appleid.apple.com",
+            OAuthProvider::Fastmail => "https://api.fastmail.com/oauth/authorize",
+            OAuthProvider::Zoho => "https://accounts.zoho.com/oauth/v2/auth",
         }
     }
 
@@ -149,6 +167,9 @@ impl OAuthProvider {
             OAuthProvider::Microsoft => "https://login.microsoftonline.com/common/oauth2/v2.0/token",
             OAuthProvider::Yahoo => "https://api.login.yahoo.com/oauth2/get_token",
             OAuthProvider::Proton => "https://account.proton.me/token",
+            OAuthProvider::Apple => "https://appleid.apple.com/auth/token",
+            OAuthProvider::Fastmail => "https://api.fastmail.com/oauth/token",
+            OAuthProvider::Zoho => "https://accounts.zoho.com/oauth/v2/token",
         }
     }
 
@@ -158,6 +179,9 @@ impl OAuthProvider {
             OAuthProvider::Microsoft => "https://outlook.office.com/IMAP.AccessAsUser.All offline_access",
             OAuthProvider::Yahoo => "mail-r mail-w",
             OAuthProvider::Proton => "email",
+            OAuthProvider::Apple => "email",
+            OAuthProvider::Fastmail => "https://www.fastmail.com/dev/scope/mail",
+            OAuthProvider::Zoho => "ZohoMail.messages.ALL",
         }
     }
 
@@ -200,6 +224,33 @@ impl OAuthProvider {
                  3. In Mail2Rust, always add '--insecure' for Bridge's local TLS cert:\n\
                     mail2rust imap --host 127.0.0.1 --port 1143 --username user@proton.me --password \"xxxx xxxx xxxx xxxx\" --insecure -o proton.pst\n\
                  4. In the GUI: Click the 'Proton (Bridge)' preset in the IMAP dialog."
+            }
+            OAuthProvider::Apple => {
+                "Apple iCloud Mail App-Specific Passwords:\n\
+                 Apple IDs require two-factor authentication and an App-Specific Password for IMAP access:\n\
+                 1. Sign in to your Apple Account at https://appleid.apple.com\n\
+                 2. Under 'Sign-In and Security', select 'App-Specific Passwords'.\n\
+                 3. Click 'Generate an app-specific password', enter 'Mail2Rust', and click 'Continue'.\n\
+                 4. Copy the generated 16-character password (e.g., abcd-efgh-ijkl-mnop).\n\
+                 5. Use it with '--password \"abcd-efgh-ijkl-mnop\"' in Mail2Rust."
+            }
+            OAuthProvider::Fastmail => {
+                "Fastmail App Passwords:\n\
+                 Fastmail accounts with 2FA require a dedicated App Password for IMAP access:\n\
+                 1. Log in to Fastmail at https://www.fastmail.com\n\
+                 2. Navigate to Settings > Password & Security > Manage App Passwords.\n\
+                 3. Click 'New App Password'.\n\
+                 4. Name it 'Mail2Rust' and ensure 'Mail (IMAP/POP/SMTP)' is selected.\n\
+                 5. Copy the generated password and use it with '--password' in Mail2Rust."
+            }
+            OAuthProvider::Zoho => {
+                "Zoho Mail Application-Specific Passwords:\n\
+                 Zoho accounts with Two-Factor Authentication require an Application-Specific Password:\n\
+                 1. Log in to your Zoho Account at https://accounts.zoho.com\n\
+                 2. In the left menu, click 'Security' > 'Application-Specific Passwords'.\n\
+                 3. Click 'Generate New Password'.\n\
+                 4. Enter 'Mail2Rust' as the Device/App name and click 'Generate'.\n\
+                 5. Copy the generated code and use it with '--password' in Mail2Rust."
             }
         }
     }
@@ -446,6 +497,9 @@ mod tests {
         assert_eq!(OAuthProvider::from_host("outlook.office365.com"), Some(OAuthProvider::Microsoft));
         assert_eq!(OAuthProvider::from_host("imap.mail.yahoo.com"), Some(OAuthProvider::Yahoo));
         assert_eq!(OAuthProvider::from_host("imap.proton.me"), Some(OAuthProvider::Proton));
+        assert_eq!(OAuthProvider::from_host("imap.mail.me.com"), Some(OAuthProvider::Apple));
+        assert_eq!(OAuthProvider::from_host("imap.fastmail.com"), Some(OAuthProvider::Fastmail));
+        assert_eq!(OAuthProvider::from_host("imap.zoho.com"), Some(OAuthProvider::Zoho));
         assert_eq!(OAuthProvider::from_host("mail.custom-domain.net"), None);
     }
 

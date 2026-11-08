@@ -101,10 +101,18 @@ pub fn ingest_path(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::erro
                         continue;
                     }
                     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-                    let folder = match path.strip_prefix(source) {
+                    let mut folder: Vec<String> = match path.strip_prefix(source) {
                         Ok(rel) => rel
                             .parent()
-                            .map(|p| p.iter().filter_map(|s| s.to_str().map(|x| x.to_string())).collect())
+                            .map(|p| {
+                                p.iter()
+                                    .filter_map(|s| {
+                                        s.to_str().map(|x| {
+                                            x.strip_suffix(".sbd").unwrap_or(x).to_string()
+                                        })
+                                    })
+                                    .collect()
+                            })
                             .unwrap_or_default(),
                         Err(_) => vec!["Inbox".to_string()],
                     };
@@ -125,6 +133,15 @@ pub fn ingest_path(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::erro
                         } else if ext == "ics" || ext == "ical" {
                             if let Ok(ev) = IcalReader::parse(&bytes, vec!["Calendar".to_string()]) {
                                 messages.extend(ev);
+                            }
+                        } else if ext == "mbox" || (ext.is_empty() && bytes.starts_with(b"From ")) {
+                            // Thunderbird & Unix extensionless MBOX files
+                            let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("Inbox");
+                            if folder.is_empty() {
+                                folder = vec![filename.to_string()];
+                            }
+                            if let Ok(mbox_msgs) = MboxReader::read_all(&bytes[..], folder.clone()) {
+                                messages.extend(mbox_msgs);
                             }
                         } else if ext == "eml" || ext.is_empty() {
                             if let Ok(m) = EmlReader::parse(&bytes, folder) {
