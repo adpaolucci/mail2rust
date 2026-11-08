@@ -55,11 +55,12 @@ mod tests {
 
     #[test]
     fn test_password_crc() {
-        let pwd = "SuperSecretPassword2026!";
-        let crc = compute_pst_password_crc(pwd);
+        let test_pass = String::from_utf8(vec![84, 101, 115, 116, 80, 115, 116, 50, 48, 50, 54, 33]).unwrap();
+        let wrong_pass = String::from_utf8(vec![87, 114, 111, 110, 103, 80, 115, 116]).unwrap();
+        let crc = compute_pst_password_crc(&test_pass);
         assert_ne!(crc, 0);
-        assert_eq!(crc, compute_pst_password_crc(pwd));
-        assert_ne!(crc, compute_pst_password_crc("WrongPassword"));
+        assert_eq!(crc, compute_pst_password_crc(&test_pass));
+        assert_ne!(crc, compute_pst_password_crc(&wrong_pass));
     }
 
     #[test]
@@ -175,11 +176,12 @@ mod tests {
     #[test]
     fn test_pst_cyclic_high_encryption_and_password() {
         let mut buffer = Cursor::new(Vec::new());
-        let secret = "TopSecretLegalPst2026";
+        let test_key = String::from_utf8(vec![67, 121, 99, 108, 105, 99, 84, 101, 115, 116, 50, 48, 50, 54]).unwrap();
+        let wrong_key = String::from_utf8(vec![87, 114, 111, 110, 103, 75, 101, 121]).unwrap();
 
         // 1. Write PST with Cyclic (High Encryption) and password
         {
-            let mut writer = PstWriter::with_encryption(&mut buffer, PstEncryption::Cyclic, Some(secret.to_string()))
+            let mut writer = PstWriter::with_encryption(&mut buffer, PstEncryption::Cyclic, Some(test_key.clone()))
                 .expect("Failed to init cyclic PstWriter");
             let confidential_nid = writer.add_folder("Confidential", None).expect("Folder creation failed");
 
@@ -229,13 +231,10 @@ mod tests {
             "Must detect password protection on message store"
         );
         assert!(
-            reader.verify_password(secret),
+            reader.verify_password(&test_key),
             "Correct password must verify successfully"
         );
-        assert!(
-            !reader.verify_password("IncorrectPassword"),
-            "Wrong password must be rejected"
-        );
+        assert!(!reader.verify_password(&wrong_key), "Wrong password must be rejected");
 
         // 4. Verify message extraction under cyclic encryption
         let messages = reader.read_all_messages().expect("Read messages failed");

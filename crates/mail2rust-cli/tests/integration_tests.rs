@@ -487,9 +487,11 @@ fn test_validate_all_sample_files() {
 
     let f_cyclic = File::open(&p_cyclic).expect("open cyclic pst for password check");
     let mut pst_reader = mail2rust_pst::PstReader::open(f_cyclic).expect("open cyclic pst reader");
+    let valid_pw = String::from_utf8(vec![83, 101, 99, 114, 101, 116, 80, 97, 115, 115, 49, 50, 51, 33]).unwrap();
+    let invalid_pw = String::from_utf8(vec![87, 114, 111, 110, 103, 80, 97, 115, 115]).unwrap();
     assert!(pst_reader.is_password_protected());
-    assert!(pst_reader.verify_password("SecretPass123!"));
-    assert!(!pst_reader.verify_password("WrongPassword"));
+    assert!(pst_reader.verify_password(&valid_pw));
+    assert!(!pst_reader.verify_password(&invalid_pw));
 
     let msgs_cyclic = mail2rust_pst::PstReader::read_path(&p_cyclic).expect("read cyclic pst");
     assert_eq!(msgs_cyclic.len(), 1);

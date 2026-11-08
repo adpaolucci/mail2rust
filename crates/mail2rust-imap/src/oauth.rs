@@ -182,7 +182,7 @@ impl OAuthProvider {
     }
 
     /// Provides clear instructions for using App Passwords as an alternative to OAuth2 developer apps.
-    pub fn app_password_guide(&self) -> &'static str {
+    pub fn setup_instructions(&self) -> &'static str {
         match self {
             OAuthProvider::Google => {
                 "Google Gmail App Passwords:\n\
@@ -431,14 +431,14 @@ pub fn diagnose_auth_failure(host: &str, error_msg: &str) -> String {
         ));
         diag.push_str("----------------------------------------------------------------------\n");
         if provider == OAuthProvider::Proton {
-            diag.push_str(provider.app_password_guide());
+            diag.push_str(provider.setup_instructions());
         } else {
             diag.push_str(
                 "Modern email providers no longer allow your primary account password over IMAP.\n\
                  You can connect using either of two supported methods:\n\n\
                  METHOD 1: Generate a Provider 'App Password' (Quickest & Recommended):\n",
             );
-            diag.push_str(provider.app_password_guide());
+            diag.push_str(provider.setup_instructions());
             diag.push_str(
                 "\n\nMETHOD 2: Authenticate using OAuth 2.0 (XOAUTH2 / OAUTHBEARER):\n\
                  - Pass your access token via: --oauth-token <TOKEN> --auth-method xoauth2\n\

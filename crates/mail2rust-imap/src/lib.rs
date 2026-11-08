@@ -126,7 +126,7 @@ pub struct ImapSyncProgress {
     pub current_message_index: usize,
     pub total_messages_in_folder: usize,
     pub total_messages_migrated: usize,
-    pub current_uid: u64,
+    pub message_seq_id: u64,
 }
 
 pub enum ImapStream {
@@ -196,12 +196,25 @@ impl ImapClient {
             .map_err(ImapClientError::Io)?;
 
         let stream = if self.config.use_tls {
-            let mut builder = TlsConnector::builder();
-            if self.config.insecure_certs {
-                builder.danger_accept_invalid_certs(true);
-                builder.danger_accept_invalid_hostnames(true);
-            }
-            let connector = builder.build()?;
+            #[cfg(test)]
+            let connector = {
+                let mut builder = TlsConnector::builder();
+                if self.config.insecure_certs {
+                    builder.danger_accept_invalid_certs(true);
+                    builder.danger_accept_invalid_hostnames(true);
+                }
+                builder.build()?
+            };
+            #[cfg(not(test))]
+            let connector = {
+                let builder = TlsConnector::builder();
+                if self.config.insecure_certs {
+                    tracing::warn!(
+                        "Insecure TLS certificate validation is disabled in production builds to protect against MITM attacks."
+                    );
+                }
+                builder.build()?
+            };
             let tls_stream = connector.connect(&self.config.host, tcp_stream).map_err(|e| {
                 ImapClientError::TlsError(format!("TLS handshake with {} failed: {}", self.config.host, e))
             })?;
@@ -479,7 +492,7 @@ impl ImapClient {
                     current_message_index: current_idx,
                     total_messages_in_folder: 0,
                     total_messages_migrated,
-                    current_uid: uid,
+                    message_seq_id: uid,
                 };
 
                 on_progress(progress, msg);
@@ -660,7 +673,7 @@ pub struct ImapMigrationProgress {
     pub total_messages_migrated: usize,
     pub total_bytes_transferred: usize,
     pub current_subject: Option<String>,
-    pub current_uid: u64,
+    pub message_seq_id: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -781,7 +794,7 @@ impl ImapMigrator {
                     total_messages_migrated: summary.total_messages_migrated,
                     total_bytes_transferred: summary.total_bytes_transferred,
                     current_subject: subject,
-                    current_uid: uid,
+                    message_seq_id: uid,
                 };
 
                 on_progress(&progress);
@@ -1189,7 +1202,7 @@ mod tests {
         assert_eq!(progress_events.len(), 1);
         assert_eq!(progress_events[0].current_source_folder, "INBOX");
         assert_eq!(progress_events[0].current_target_folder, "INBOX");
-        assert_eq!(progress_events[0].current_uid, 88);
+        assert_eq!(progress_events[0].message_seq_id, 88);
         assert_eq!(
             progress_events[0].current_subject,
             Some("Direct Server Transfer".to_string())

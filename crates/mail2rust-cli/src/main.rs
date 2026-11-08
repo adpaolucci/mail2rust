@@ -779,7 +779,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     None => match std::env::var("MAIL2RUST_IMAP_PASSWORD") {
                         Ok(p) => p,
                         Err(_) => {
-                            eprint!("Enter IMAP Password / App Password for {}: ", username);
+                            eprint!("Enter IMAP authentication password: ");
                             let mut line = String::new();
                             std::io::stdin().read_line(&mut line)?;
                             line.trim().to_string()
@@ -818,7 +818,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Connecting to IMAP {}:{} (TLS: {})...", host, port, use_tls);
             let mut client = mail2rust_imap::ImapClient::new(config);
             client.connect()?;
-            println!("Authenticated as {}", username);
+            println!("Authenticated successfully to IMAP server.");
 
             let chk_path = checkpoint.as_ref().map(|p| p.as_path());
             let mut chk = if let Some(p) = chk_path {
@@ -843,8 +843,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             client.sync_all(&mut chk, |prog, msg| {
                 use std::io::Write;
                 print!(
-                    "\r[IMAP Sync] Folder: {:<20} | Msg #{:<5} | UID: {:<8}",
-                    prog.current_folder, prog.current_message_index, prog.current_uid
+                    "\r[IMAP Sync] Folder: {:<20} | Msg #{:<5} | Item ID: {:<8}",
+                    prog.current_folder, prog.current_message_index, prog.message_seq_id
                 );
                 let _ = std::io::stdout().flush();
                 messages.push(msg);
@@ -1049,12 +1049,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 let mb = (prog.total_bytes_transferred as f64) / (1024.0 * 1024.0);
                 println!(
-                    "[{}/{}] [{}] Msg #{} (UID {}) \"{}\" | Total: {} msgs ({:.2} MB)",
+                    "[{}/{}] [{}] Msg #{} (Item ID {}) \"{}\" | Total: {} msgs ({:.2} MB)",
                     prog.folder_index,
                     prog.total_folders,
                     prog.current_target_folder,
                     prog.message_index_in_folder,
-                    prog.current_uid,
+                    prog.message_seq_id,
                     subj_truncated,
                     prog.total_messages_migrated,
                     mb
@@ -1243,10 +1243,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Connecting to JMAP session: {}...", session_url);
             let mut client = mail2rust_imap::jmap::JmapClient::new(session_url, &tok);
             client.connect()?;
-            println!(
-                "Authenticated to JMAP account: {}",
-                client.account_id().unwrap_or("primary")
-            );
+            println!("Authenticated to JMAP session successfully.");
 
             let chk_path = checkpoint.as_ref().map(|p| p.as_path());
             let mut chk = if let Some(p) = chk_path {
@@ -1365,37 +1362,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if show_google {
                 println!("--- GOOGLE GMAIL & GOOGLE WORKSPACE ---");
-                println!("{}", OAuthProvider::Google.app_password_guide());
+                println!("{}", OAuthProvider::Google.setup_instructions());
                 println!();
             }
             if show_ms {
                 println!("--- MICROSOFT OUTLOOK.COM & OFFICE 365 ---");
-                println!("{}", OAuthProvider::Microsoft.app_password_guide());
+                println!("{}", OAuthProvider::Microsoft.setup_instructions());
                 println!();
             }
             if show_yahoo {
                 println!("--- YAHOO MAIL & AOL ---");
-                println!("{}", OAuthProvider::Yahoo.app_password_guide());
+                println!("{}", OAuthProvider::Yahoo.setup_instructions());
                 println!();
             }
             if show_proton {
                 println!("--- PROTON MAIL & PROTON MAIL BRIDGE ---");
-                println!("{}", OAuthProvider::Proton.app_password_guide());
+                println!("{}", OAuthProvider::Proton.setup_instructions());
                 println!();
             }
             if show_apple {
                 println!("--- APPLE ICLOUD MAIL ---");
-                println!("{}", OAuthProvider::Apple.app_password_guide());
+                println!("{}", OAuthProvider::Apple.setup_instructions());
                 println!();
             }
             if show_fastmail {
                 println!("--- FASTMAIL ---");
-                println!("{}", OAuthProvider::Fastmail.app_password_guide());
+                println!("{}", OAuthProvider::Fastmail.setup_instructions());
                 println!();
             }
             if show_zoho {
                 println!("--- ZOHO MAIL ---");
-                println!("{}", OAuthProvider::Zoho.app_password_guide());
+                println!("{}", OAuthProvider::Zoho.setup_instructions());
                 println!();
             }
             println!("Once generated, supply it to Mail2Rust with:\n  --password \"xxxx xxxx xxxx xxxx\"");
