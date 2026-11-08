@@ -13,6 +13,12 @@ use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use tracing::{debug, info, warn};
 
+pub mod oauth;
+pub use oauth::{
+    build_authorization_url, diagnose_auth_failure, exchange_code_for_token, refresh_access_token, ImapAuthMethod,
+    OAuthBearerAuthenticator, OAuthProvider, OAuthTokenResponse, XOAuth2Authenticator,
+};
+
 #[derive(Debug)]
 pub enum ImapClientError {
     ConnectionFailed(String),
@@ -78,6 +84,8 @@ pub struct ImapConfig {
     pub folder_filter: Option<Vec<String>>,
     pub max_messages_per_folder: Option<usize>,
     pub since_date: Option<NaiveDate>,
+    pub auth_method: ImapAuthMethod,
+    pub oauth_token: Option<String>,
 }
 
 impl Default for ImapConfig {
@@ -92,6 +100,8 @@ impl Default for ImapConfig {
             folder_filter: None,
             max_messages_per_folder: None,
             since_date: None,
+            auth_method: ImapAuthMethod::Password,
+            oauth_token: None,
         }
     }
 }
@@ -198,11 +208,59 @@ impl ImapClient {
         };
 
         let client = imap::Client::new(stream);
-        let session = client
-            .login(&self.config.username, &self.config.password)
-            .map_err(|(err, _)| ImapClientError::from(err))?;
+        let session = match self.config.auth_method {
+            ImapAuthMethod::Password => client
+                .login(&self.config.username, &self.config.password)
+                .map_err(|(err, _)| {
+                    let diag = diagnose_auth_failure(&self.config.host, &err.to_string());
+                    warn!("{}", diag);
+                    ImapClientError::from(err)
+                })?,
+            ImapAuthMethod::XOAuth2 => {
+                let token = self
+                    .config
+                    .oauth_token
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&self.config.password);
+                let auth = XOAuth2Authenticator {
+                    username: self.config.username.clone(),
+                    access_token: token.to_string(),
+                };
+                client.authenticate("XOAUTH2", &auth).map_err(|(err, _)| {
+                    let diag = diagnose_auth_failure(&self.config.host, &err.to_string());
+                    warn!("{}", diag);
+                    ImapClientError::from(err)
+                })?
+            }
+            ImapAuthMethod::OAuthBearer => {
+                let token = self
+                    .config
+                    .oauth_token
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&self.config.password);
+                let auth = OAuthBearerAuthenticator {
+                    username: self.config.username.clone(),
+                    host: self.config.host.clone(),
+                    port: self.config.port,
+                    access_token: token.to_string(),
+                };
+                client
+                    .authenticate("OAUTHBEARER", &auth)
+                    .map_err(|(err, _)| {
+                        let diag = diagnose_auth_failure(&self.config.host, &err.to_string());
+                        warn!("{}", diag);
+                        ImapClientError::from(err)
+                    })?
+            }
+        };
 
-        info!(user = %self.config.username, "Authenticated successfully to IMAP server");
+        info!(
+            user = %self.config.username,
+            auth_method = %self.config.auth_method,
+            "Authenticated successfully to IMAP server"
+        );
         self.session = Some(session);
         Ok(())
     }
@@ -1132,5 +1190,82 @@ mod tests {
 
         src_handle.join().expect("Source server thread panicked");
         dst_handle.join().expect("Destination server thread panicked");
+    }
+
+    #[test]
+    fn test_imap_xoauth2_authentication_e2e() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind mock listener");
+        let local_addr = listener.local_addr().expect("Failed to get local addr");
+
+        let handle = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("Failed to accept");
+            socket.write_all(b"* OK Mock OAuth IMAP Ready\r\n").unwrap();
+
+            let mut reader = BufReader::new(socket.try_clone().unwrap());
+            let mut line = String::new();
+
+            while reader.read_line(&mut line).unwrap() > 0 {
+                let trimmed = line.trim();
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.is_empty() {
+                    continue;
+                }
+                let tag = parts[0];
+                let cmd = parts.get(1).map(|c| c.to_uppercase()).unwrap_or_default();
+
+                match cmd.as_str() {
+                    "AUTHENTICATE" => {
+                        let sub_mech = parts.get(2).map(|c| c.to_uppercase()).unwrap_or_default();
+                        assert_eq!(sub_mech, "XOAUTH2");
+                        if parts.len() > 3 {
+                            // SASL IR (Initial Response) included on same line
+                            socket
+                                .write_all(format!("{} OK [CAPABILITY IMAP4rev1] XOAUTH2 authentication successful\r\n", tag).as_bytes())
+                                .unwrap();
+                        } else {
+                            // Standard two-step challenge continuation
+                            socket.write_all(b"+\r\n").unwrap();
+                            let mut auth_line = String::new();
+                            reader.read_line(&mut auth_line).unwrap();
+                            assert!(!auth_line.trim().is_empty());
+                            socket
+                                .write_all(format!("{} OK [CAPABILITY IMAP4rev1] XOAUTH2 authentication successful\r\n", tag).as_bytes())
+                                .unwrap();
+                        }
+                    }
+                    "LOGOUT" => {
+                        socket.write_all(b"* BYE logging out\r\n").unwrap();
+                        socket
+                            .write_all(format!("{} OK LOGOUT completed\r\n", tag).as_bytes())
+                            .unwrap();
+                        break;
+                    }
+                    _ => {
+                        socket
+                            .write_all(format!("{} BAD Unsupported\r\n", tag).as_bytes())
+                            .unwrap();
+                    }
+                }
+                line.clear();
+            }
+        });
+
+        let config = ImapConfig {
+            host: "127.0.0.1".to_string(),
+            port: local_addr.port(),
+            username: "user@gmail.com".to_string(),
+            password: String::new(),
+            auth_method: ImapAuthMethod::XOAuth2,
+            oauth_token: Some("ya29.sample_oauth_token_12345".to_string()),
+            use_tls: false,
+            ..Default::default()
+        };
+
+        let mut client = ImapClient::new(config);
+        assert!(client.connect().is_ok());
+        assert!(client.is_connected());
+        client.disconnect().expect("Disconnect failed");
+
+        handle.join().expect("Mock thread panicked");
     }
 }

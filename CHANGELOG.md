@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.3.0] - 2026-11-07
 
 ### Added
+- **Modern OAuth 2.0 & Provider App Passwords (Google, Microsoft, Yahoo)**:
+  - Implemented SASL `XOAUTH2` and `OAUTHBEARER` (RFC 7628) authenticators in `mail2rust-imap`.
+  - Added interactive browser OAuth 2.0 authorization helper (`mail2rust oauth-login`) with local loopback server (`127.0.0.1:8089/callback`) and native TLS code exchange.
+  - Added built-in Provider App Password guide (`mail2rust app-passwords [google|microsoft|yahoo|all]`) with direct URLs and 16-character code setup instructions.
+  - Implemented automated authentication diagnostics: automatically detects provider from host on failure and outputs actionable advice tailored to Google, Microsoft, and Yahoo.
+  - Added OAuth2 token and auth-method inputs across `mail2rust imap`, `mail2rust imap-sync`, and GUI modals (**Connect to IMAP** and **IMAP-to-IMAP Account Sync**) with provider presets (Gmail, Outlook/M365, Yahoo, iCloud).
+- **Multi-Format Mailbox Merger & Consolidation (`mail2rust merge`)**:
+  - Consolidates heterogeneous mailbox formats (PST, MBOX, Maildir, EMLX, MSG, OLM, VCF, ICS, Takeout ZIP) into unified containers.
+  - Supports cross-source deduplication (`message-id`, `sha256`, `content`), flag merging, and chronological sorting.
+  - Organization strategies: `combine` (merge matching folders), `prefix` (partition by archive source), and `flatten`.
+  - Interactive Win32 GUI consolidation modal with direct export or workbench loading.
+- **Direct Server-to-Server IMAP Account Migration (`mail2rust imap-sync`)**:
+  - Direct in-memory migration between two remote IMAP servers over TLS with zero local disk footprint.
+  - Microsecond timestamp fidelity preserving original `INTERNALDATE` and message status flags (`\Seen`, `\Flagged`, etc.).
+  - Automatic destination hierarchy creation, folder filtering, and prefix mapping.
 - **PST High Encryption (`NDB_CRYPT_CYCLIC`)**:
   - Implemented the official Microsoft `[MS-PST]` 5.2 Cyclic Obfuscation symmetric cipher using the 768-byte `MPBB` master permutation table.
   - Generates dynamic block-level cryptographic state keys from the lower 32-bit DWORD of each block's BID (`w = key ^ (key >> 16)`).

@@ -92,13 +92,37 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
             egui::Window::new("Connect to IMAP Mailbox (Live Ingestion)")
                 .open(&mut is_open)
                 .resizable(false)
-                .fixed_size(Vec2::new(560.0, 360.0))
+                .fixed_size(Vec2::new(580.0, 480.0))
                 .show(ctx, |ui| {
-                    ui.label("Directly stream live messages from IMAP servers (Gmail, M365, iCloud, or custom corporate IMAP).");
+                    ui.label("Directly stream live messages from IMAP servers (Gmail, M365, Yahoo, iCloud, or custom IMAP).");
                     ui.add_space(6.0);
 
                     // GroupBox: Server Connection
                     win32_groupbox(ui, "Server Connection", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Quick Preset:").size(11.0));
+                            if ui.small_button("Gmail").clicked() {
+                                state.imap_host = "imap.gmail.com".to_string();
+                                state.imap_port = "993".to_string();
+                                state.imap_use_tls = true;
+                            }
+                            if ui.small_button("Outlook / M365").clicked() {
+                                state.imap_host = "outlook.office365.com".to_string();
+                                state.imap_port = "993".to_string();
+                                state.imap_use_tls = true;
+                            }
+                            if ui.small_button("Yahoo Mail").clicked() {
+                                state.imap_host = "imap.mail.yahoo.com".to_string();
+                                state.imap_port = "993".to_string();
+                                state.imap_use_tls = true;
+                            }
+                            if ui.small_button("iCloud").clicked() {
+                                state.imap_host = "imap.mail.me.com".to_string();
+                                state.imap_port = "993".to_string();
+                                state.imap_use_tls = true;
+                            }
+                        });
+                        ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Host:").strong().size(11.0));
                             ui.add(egui::TextEdit::singleline(&mut state.imap_host).desired_width(260.0));
@@ -116,21 +140,55 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
 
                     ui.add_space(6.0);
 
-                    // GroupBox: Account Credentials
-                    win32_groupbox(ui, "Authentication Credentials", |ui| {
+                    // GroupBox: Account Credentials & OAuth
+                    win32_groupbox(ui, "Authentication Credentials & OAuth", |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Username:").strong().size(11.0));
-                            ui.add(egui::TextEdit::singleline(&mut state.imap_username).desired_width(380.0));
+                            ui.label(RichText::new("Auth Method:").strong().size(11.0));
+                            ui.radio_value(&mut state.imap_auth_method, "password".to_string(), "Password / App Pass");
+                            ui.radio_value(&mut state.imap_auth_method, "xoauth2".to_string(), "OAuth 2.0 (XOAUTH2)");
+                            ui.radio_value(&mut state.imap_auth_method, "oauthbearer".to_string(), "OAUTHBEARER");
                         });
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Password:").strong().size(11.0));
-                            ui.add(
-                                egui::TextEdit::singleline(&mut state.imap_password)
-                                    .password(true)
-                                    .desired_width(380.0),
-                            );
+                            ui.label(RichText::new("Username / Email:").strong().size(11.0));
+                            ui.add(egui::TextEdit::singleline(&mut state.imap_username).desired_width(340.0));
                         });
+                        ui.add_space(4.0);
+                        if state.imap_auth_method == "password" {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Password / App Pass:").strong().size(11.0));
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut state.imap_password)
+                                        .password(true)
+                                        .hint_text("Account or 16-char App Password")
+                                        .desired_width(310.0),
+                                );
+                            });
+                            ui.add_space(2.0);
+                            ui.label(
+                                RichText::new("Note: For Google, Yahoo, and Microsoft with 2FA, generate an App Password in your security settings.")
+                                    .size(10.0)
+                                    .italics()
+                                    .color(Color32::from_rgb(100, 100, 100)),
+                            );
+                        } else {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("OAuth Access Token:").strong().size(11.0));
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut state.imap_oauth_token)
+                                        .password(true)
+                                        .hint_text("Bearer access token (ya29... / eyJ...)")
+                                        .desired_width(310.0),
+                                );
+                            });
+                            ui.add_space(2.0);
+                            ui.label(
+                                RichText::new("Tip: Run 'mail2rust oauth-login --provider google' in terminal to acquire access tokens.")
+                                    .size(10.0)
+                                    .italics()
+                                    .color(Color32::from_rgb(100, 100, 100)),
+                            );
+                        }
                     });
 
                     ui.add_space(6.0);
@@ -158,7 +216,7 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
 
                     if let Some(ref st) = state.imap_status {
                         ui.add_space(4.0);
-                        let is_err = st.starts_with("Error");
+                        let is_err = st.starts_with("Error") || st.contains("Failed");
                         let color = if is_err {
                             Color32::from_rgb(180, 0, 0)
                         } else {
@@ -182,9 +240,19 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                             let port = state.imap_port.trim().parse::<u16>().unwrap_or(993);
                             let user = state.imap_username.trim().to_string();
                             let pass = state.imap_password.clone();
+                            let auth_method: mail2rust_imap::ImapAuthMethod = state
+                                .imap_auth_method
+                                .parse()
+                                .unwrap_or(mail2rust_imap::ImapAuthMethod::Password);
 
-                            if host.is_empty() || user.is_empty() {
-                                state.imap_status = Some("Error: Please provide host and username.".to_string());
+                            let has_cred = if auth_method == mail2rust_imap::ImapAuthMethod::Password {
+                                !pass.is_empty()
+                            } else {
+                                !state.imap_oauth_token.trim().is_empty()
+                            };
+
+                            if host.is_empty() || user.is_empty() || !has_cred {
+                                state.imap_status = Some("Error: Please provide host, username, and password/token.".to_string());
                             } else {
                                 state.imap_status = Some("Connecting to IMAP server...".to_string());
 
@@ -194,7 +262,7 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                     Some(
                                         state
                                             .imap_folder_filter
-                                            .split(',')
+                                             .split(',')
                                             .map(|s| s.trim().to_string())
                                             .filter(|s| !s.is_empty())
                                             .collect(),
@@ -202,6 +270,11 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                 };
 
                                 let max_limit = state.imap_max_per_folder.trim().parse::<usize>().ok();
+                                let oauth_token = if auth_method != mail2rust_imap::ImapAuthMethod::Password {
+                                    Some(state.imap_oauth_token.trim().to_string())
+                                } else {
+                                    None
+                                };
 
                                 let config = mail2rust_imap::ImapConfig {
                                     host: host.clone(),
@@ -213,6 +286,8 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                     folder_filter,
                                     max_messages_per_folder: max_limit,
                                     since_date: None,
+                                    auth_method,
+                                    oauth_token,
                                 };
 
                                 let mut client = mail2rust_imap::ImapClient::new(config);
@@ -242,7 +317,8 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                         }
                                     }
                                     Err(e) => {
-                                        state.imap_status = Some(format!("Error connecting to IMAP server: {}", e));
+                                        let diag = mail2rust_imap::diagnose_auth_failure(&host, &e.to_string());
+                                        state.imap_status = Some(diag);
                                     }
                                 }
                             }
@@ -260,7 +336,7 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
             egui::Window::new("IMAP Server-to-Server Account Migration (Zero Local Disk Storage)")
                 .open(&mut is_open)
                 .resizable(false)
-                .fixed_size(Vec2::new(660.0, 560.0))
+                .fixed_size(Vec2::new(680.0, 620.0))
                 .show(ctx, |ui| {
                     ui.label(
                         RichText::new("Migrate emails directly from one IMAP server to another in-memory across encrypted TLS sockets with zero local disk saving.")
@@ -279,14 +355,30 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                         });
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
+                            ui.label(RichText::new("Auth:").strong().size(11.0));
+                            ui.radio_value(&mut state.imap_sync_src_auth_method, "password".to_string(), "Password / App Pass");
+                            ui.radio_value(&mut state.imap_sync_src_auth_method, "xoauth2".to_string(), "OAuth 2.0 (XOAUTH2)");
+                        });
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
                             ui.label(RichText::new("Username:").strong().size(11.0));
-                            ui.add(egui::TextEdit::singleline(&mut state.imap_sync_src_user).desired_width(220.0));
-                            ui.label(RichText::new("Password:").strong().size(11.0));
-                            ui.add(
-                                egui::TextEdit::singleline(&mut state.imap_sync_src_pass)
-                                    .password(true)
-                                    .desired_width(180.0),
-                            );
+                            ui.add(egui::TextEdit::singleline(&mut state.imap_sync_src_user).desired_width(200.0));
+                            if state.imap_sync_src_auth_method == "password" {
+                                ui.label(RichText::new("Password:").strong().size(11.0));
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut state.imap_sync_src_pass)
+                                        .password(true)
+                                        .desired_width(180.0),
+                                );
+                            } else {
+                                ui.label(RichText::new("Token:").strong().size(11.0));
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut state.imap_sync_src_oauth_token)
+                                        .password(true)
+                                        .hint_text("OAuth2 Access Token")
+                                        .desired_width(180.0),
+                                );
+                            }
                         });
                     });
 
@@ -303,14 +395,30 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                         });
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
+                            ui.label(RichText::new("Auth:").strong().size(11.0));
+                            ui.radio_value(&mut state.imap_sync_dst_auth_method, "password".to_string(), "Password / App Pass");
+                            ui.radio_value(&mut state.imap_sync_dst_auth_method, "xoauth2".to_string(), "OAuth 2.0 (XOAUTH2)");
+                        });
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
                             ui.label(RichText::new("Username:").strong().size(11.0));
-                            ui.add(egui::TextEdit::singleline(&mut state.imap_sync_dst_user).desired_width(220.0));
-                            ui.label(RichText::new("Password:").strong().size(11.0));
-                            ui.add(
-                                egui::TextEdit::singleline(&mut state.imap_sync_dst_pass)
-                                    .password(true)
-                                    .desired_width(180.0),
-                            );
+                            ui.add(egui::TextEdit::singleline(&mut state.imap_sync_dst_user).desired_width(200.0));
+                            if state.imap_sync_dst_auth_method == "password" {
+                                ui.label(RichText::new("Password:").strong().size(11.0));
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut state.imap_sync_dst_pass)
+                                        .password(true)
+                                        .desired_width(180.0),
+                                );
+                            } else {
+                                ui.label(RichText::new("Token:").strong().size(11.0));
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut state.imap_sync_dst_oauth_token)
+                                        .password(true)
+                                        .hint_text("OAuth2 Access Token")
+                                        .desired_width(180.0),
+                                );
+                            }
                         });
                     });
 
@@ -360,7 +468,7 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                     ui.add_space(6.0);
 
                     if let Some(ref status) = state.imap_sync_status {
-                        let is_err = status.starts_with("Error");
+                        let is_err = status.starts_with("Error") || status.contains("Failed");
                         let color = if is_err {
                             Color32::from_rgb(180, 0, 0)
                         } else {
@@ -383,13 +491,34 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                             let dst_user = state.imap_sync_dst_user.trim().to_string();
                             let dst_pass = state.imap_sync_dst_pass.clone();
 
-                            if src_host.is_empty() || src_user.is_empty() || src_pass.is_empty() {
+                            let src_auth: mail2rust_imap::ImapAuthMethod = state
+                                .imap_sync_src_auth_method
+                                .parse()
+                                .unwrap_or(mail2rust_imap::ImapAuthMethod::Password);
+                            let dst_auth: mail2rust_imap::ImapAuthMethod = state
+                                .imap_sync_dst_auth_method
+                                .parse()
+                                .unwrap_or(mail2rust_imap::ImapAuthMethod::Password);
+
+                            let src_has_cred = if src_auth == mail2rust_imap::ImapAuthMethod::Password {
+                                !src_pass.is_empty()
+                            } else {
+                                !state.imap_sync_src_oauth_token.trim().is_empty()
+                            };
+
+                            let dst_has_cred = if dst_auth == mail2rust_imap::ImapAuthMethod::Password {
+                                !dst_pass.is_empty()
+                            } else {
+                                !state.imap_sync_dst_oauth_token.trim().is_empty()
+                            };
+
+                            if src_host.is_empty() || src_user.is_empty() || !src_has_cred {
                                 state.imap_sync_status = Some(
-                                    "Error: Source host, username, and password are required.".to_string(),
+                                    "Error: Source host, username, and password/token are required.".to_string(),
                                 );
-                            } else if dst_host.is_empty() || dst_user.is_empty() || dst_pass.is_empty() {
+                            } else if dst_host.is_empty() || dst_user.is_empty() || !dst_has_cred {
                                 state.imap_sync_status = Some(
-                                    "Error: Destination host, username, and password are required.".to_string(),
+                                    "Error: Destination host, username, and password/token are required.".to_string(),
                                 );
                             } else {
                                 let src_port = state.imap_sync_src_port.trim().parse::<u16>().unwrap_or(993);
@@ -414,9 +543,20 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                     Some(state.imap_sync_folder_prefix.trim().to_string())
                                 };
 
+                                let src_oauth_token = if src_auth != mail2rust_imap::ImapAuthMethod::Password {
+                                    Some(state.imap_sync_src_oauth_token.trim().to_string())
+                                } else {
+                                    None
+                                };
+                                let dst_oauth_token = if dst_auth != mail2rust_imap::ImapAuthMethod::Password {
+                                    Some(state.imap_sync_dst_oauth_token.trim().to_string())
+                                } else {
+                                    None
+                                };
+
                                 let config = mail2rust_imap::ImapMigrationConfig {
                                     source: mail2rust_imap::ImapConfig {
-                                        host: src_host,
+                                        host: src_host.clone(),
                                         port: src_port,
                                         username: src_user,
                                         password: src_pass,
@@ -425,9 +565,11 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                         folder_filter: folder_filter.clone(),
                                         max_messages_per_folder: None,
                                         since_date: None,
+                                        auth_method: src_auth,
+                                        oauth_token: src_oauth_token,
                                     },
                                     destination: mail2rust_imap::ImapConfig {
-                                        host: dst_host,
+                                        host: dst_host.clone(),
                                         port: dst_port,
                                         username: dst_user,
                                         password: dst_pass,
@@ -436,6 +578,8 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                         folder_filter: None,
                                         max_messages_per_folder: None,
                                         since_date: None,
+                                        auth_method: dst_auth,
+                                        oauth_token: dst_oauth_token,
                                     },
                                     folder_filter,
                                     folder_prefix,
@@ -458,8 +602,9 @@ pub fn render_modals(ctx: &egui::Context, state: &mut AppState) {
                                         ));
                                     }
                                     Err(e) => {
+                                        let diag = mail2rust_imap::diagnose_auth_failure(&src_host, &e.to_string());
                                         state.imap_sync_status =
-                                            Some(format!("Error during server-to-server migration: {}", e));
+                                            Some(format!("Error during server-to-server migration: {}", diag));
                                     }
                                 }
                             }

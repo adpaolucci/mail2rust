@@ -10,6 +10,7 @@ description = "Pure-Rust direct IMAP ingestion client, folder synchronization, a
 mail2rust-core.workspace = true
 mail2rust-sync.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 imap = { version = "3.0.0-alpha.15", default-features = false, features = ["native-tls"] }

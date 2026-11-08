@@ -12,6 +12,7 @@ use mail2rust_forensics::{BatesRange, ForensicEngine};
 use mail2rust_mbox::MboxFileExporter;
 use mail2rust_pst::{PstEncryption, PstReader, PstValidator, PstWriter};
 use mail2rust_sync::CheckpointManager;
+use mail2rust_imap::{ImapAuthMethod, OAuthProvider};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use tracing::info;
@@ -235,6 +236,12 @@ enum Commands {
         username: String,
         #[arg(short, long)]
         password: Option<String>,
+        /// Authentication method: 'password', 'xoauth2', 'oauthbearer'
+        #[arg(long, default_value = "password")]
+        auth_method: String,
+        /// OAuth2 Bearer token (for Google, Yahoo, Microsoft)
+        #[arg(long)]
+        oauth_token: Option<String>,
         #[arg(long, alias = "disable-tls")]
         no_tls: bool,
         #[arg(long)]
@@ -273,6 +280,12 @@ enum Commands {
         /// Source IMAP password
         #[arg(long)]
         src_pass: Option<String>,
+        /// Source authentication method: 'password', 'xoauth2', 'oauthbearer'
+        #[arg(long, default_value = "password")]
+        src_auth_method: String,
+        /// Source OAuth2 Bearer token
+        #[arg(long)]
+        src_oauth_token: Option<String>,
         /// Disable TLS on source connection
         #[arg(long)]
         no_src_tls: bool,
@@ -289,6 +302,12 @@ enum Commands {
         /// Destination IMAP password
         #[arg(long)]
         dst_pass: Option<String>,
+        /// Destination authentication method: 'password', 'xoauth2', 'oauthbearer'
+        #[arg(long, default_value = "password")]
+        dst_auth_method: String,
+        /// Destination OAuth2 Bearer token
+        #[arg(long)]
+        dst_oauth_token: Option<String>,
         /// Disable TLS on destination connection
         #[arg(long)]
         no_dst_tls: bool,
@@ -360,6 +379,31 @@ enum Commands {
         /// Dry-run mode: analyze sources and display merge summary without writing
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Acquire OAuth2 access and refresh tokens for Google, Microsoft, or Yahoo
+    #[command(name = "oauth-login")]
+    OAuthLogin {
+        /// Provider: 'google', 'microsoft', 'yahoo'
+        #[arg(long, default_value = "google")]
+        provider: String,
+        /// OAuth2 Application Client ID
+        #[arg(long)]
+        client_id: String,
+        /// OAuth2 Application Client Secret
+        #[arg(long)]
+        client_secret: String,
+        /// Local redirect loopback port (default: 8089)
+        #[arg(long, default_value = "8089")]
+        port: u16,
+        /// Save tokens to local JSON file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Print instructions for generating App Passwords for Google, Microsoft, and Yahoo
+    AppPasswords {
+        /// Specific provider to query: 'google', 'microsoft', 'yahoo', or 'all'
+        #[arg(default_value = "all")]
+        provider: String,
     },
 }
 
@@ -688,6 +732,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             port,
             username,
             password,
+            auth_method,
+            oauth_token,
             no_tls,
             insecure,
             output,
@@ -696,17 +742,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             since,
             checkpoint,
         } => {
-            let pass = match password {
-                Some(p) => p.clone(),
-                None => match std::env::var("MAIL2RUST_IMAP_PASSWORD") {
-                    Ok(p) => p,
-                    Err(_) => {
-                        eprint!("Enter IMAP Password for {}: ", username);
-                        let mut line = String::new();
-                        std::io::stdin().read_line(&mut line)?;
-                        line.trim().to_string()
-                    }
-                },
+            let auth: ImapAuthMethod = auth_method
+                .parse()
+                .map_err(|e: String| format!("Invalid --auth-method: {}", e))?;
+            let oauth_tok = oauth_token.clone().or_else(|| std::env::var("MAIL2RUST_OAUTH_TOKEN").ok());
+
+            let pass = if auth != ImapAuthMethod::Password {
+                oauth_tok.clone().unwrap_or_default()
+            } else {
+                match password {
+                    Some(p) => p.clone(),
+                    None => match std::env::var("MAIL2RUST_IMAP_PASSWORD") {
+                        Ok(p) => p,
+                        Err(_) => {
+                            eprint!("Enter IMAP Password / App Password for {}: ", username);
+                            let mut line = String::new();
+                            std::io::stdin().read_line(&mut line)?;
+                            line.trim().to_string()
+                        }
+                    },
+                }
             };
 
             let since_date = if let Some(s) = since {
@@ -732,6 +787,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 folder_filter,
                 max_messages_per_folder: *max_per_folder,
                 since_date,
+                auth_method: auth,
+                oauth_token: oauth_tok,
             };
 
             println!("Connecting to IMAP {}:{} (TLS: {})...", host, port, use_tls);
@@ -830,11 +887,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             src_port,
             src_user,
             src_pass,
+            src_auth_method,
+            src_oauth_token,
             no_src_tls,
             dst_host,
             dst_port,
             dst_user,
             dst_pass,
+            dst_auth_method,
+            dst_oauth_token,
             no_dst_tls,
             insecure,
             folders,
@@ -844,30 +905,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             no_dates,
             dry_run,
         } => {
-            let s_pass = match src_pass {
-                Some(p) => p.clone(),
-                None => match std::env::var("MAIL2RUST_SRC_IMAP_PASSWORD") {
-                    Ok(p) => p,
-                    Err(_) => {
-                        eprint!("Enter Source IMAP Password for {}: ", src_user);
-                        let mut line = String::new();
-                        std::io::stdin().read_line(&mut line)?;
-                        line.trim().to_string()
-                    }
-                },
+            let src_auth: ImapAuthMethod = src_auth_method
+                .parse()
+                .map_err(|e: String| format!("Invalid --src-auth-method: {}", e))?;
+            let src_oauth = src_oauth_token.clone().or_else(|| std::env::var("MAIL2RUST_SRC_OAUTH_TOKEN").ok());
+
+            let s_pass = if src_auth != ImapAuthMethod::Password {
+                src_oauth.clone().unwrap_or_default()
+            } else {
+                match src_pass {
+                    Some(p) => p.clone(),
+                    None => match std::env::var("MAIL2RUST_SRC_IMAP_PASSWORD") {
+                        Ok(p) => p,
+                        Err(_) => {
+                            eprint!("Enter Source IMAP Password / App Password for {}: ", src_user);
+                            let mut line = String::new();
+                            std::io::stdin().read_line(&mut line)?;
+                            line.trim().to_string()
+                        }
+                    },
+                }
             };
 
-            let d_pass = match dst_pass {
-                Some(p) => p.clone(),
-                None => match std::env::var("MAIL2RUST_DST_IMAP_PASSWORD") {
-                    Ok(p) => p,
-                    Err(_) => {
-                        eprint!("Enter Destination IMAP Password for {}: ", dst_user);
-                        let mut line = String::new();
-                        std::io::stdin().read_line(&mut line)?;
-                        line.trim().to_string()
-                    }
-                },
+            let dst_auth: ImapAuthMethod = dst_auth_method
+                .parse()
+                .map_err(|e: String| format!("Invalid --dst-auth-method: {}", e))?;
+            let dst_oauth = dst_oauth_token.clone().or_else(|| std::env::var("MAIL2RUST_DST_OAUTH_TOKEN").ok());
+
+            let d_pass = if dst_auth != ImapAuthMethod::Password {
+                dst_oauth.clone().unwrap_or_default()
+            } else {
+                match dst_pass {
+                    Some(p) => p.clone(),
+                    None => match std::env::var("MAIL2RUST_DST_IMAP_PASSWORD") {
+                        Ok(p) => p,
+                        Err(_) => {
+                            eprint!("Enter Destination IMAP Password / App Password for {}: ", dst_user);
+                            let mut line = String::new();
+                            std::io::stdin().read_line(&mut line)?;
+                            line.trim().to_string()
+                        }
+                    },
+                }
             };
 
             let folder_filter = if folders.is_empty() {
@@ -887,6 +966,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     folder_filter: folder_filter.clone(),
                     max_messages_per_folder: *max_per_folder,
                     since_date: None,
+                    auth_method: src_auth,
+                    oauth_token: src_oauth,
                 },
                 destination: mail2rust_imap::ImapConfig {
                     host: dst_host.clone(),
@@ -898,6 +979,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     folder_filter: None,
                     max_messages_per_folder: None,
                     since_date: None,
+                    auth_method: dst_auth,
+                    oauth_token: dst_oauth,
                 },
                 folder_filter,
                 folder_prefix: folder_prefix.clone(),
@@ -1013,6 +1096,127 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eml_layout,
                 *dry_run,
             )?;
+        }
+
+        Commands::OAuthLogin {
+            provider,
+            client_id,
+            client_secret,
+            port,
+            output,
+        } => {
+            let prov = match provider.to_lowercase().as_str() {
+                "google" | "gmail" => OAuthProvider::Google,
+                "microsoft" | "outlook" | "office365" | "m365" => OAuthProvider::Microsoft,
+                "yahoo" | "aol" => OAuthProvider::Yahoo,
+                other => {
+                    return Err(format!("Unknown provider '{}'. Supported: google, microsoft, yahoo", other).into());
+                }
+            };
+
+            let redirect_uri = format!("http://127.0.0.1:{}/callback", port);
+            let state = uuid::Uuid::new_v4().to_string();
+            let auth_url = mail2rust_imap::build_authorization_url(prov, client_id, &redirect_uri, &state);
+
+            println!("\n======================================================================");
+            println!("               OAUTH 2.0 BROWSER AUTHORIZATION HELPER                  ");
+            println!("======================================================================");
+            println!("Provider:     {}", prov.display_name());
+            println!("Redirect URI: {}", redirect_uri);
+            println!("\nPlease open the following authorization URL in your browser to sign in:\n");
+            println!("  {}\n", auth_url);
+
+            if cfg!(windows) {
+                let _ = std::process::Command::new("cmd").args(["/C", "start", "", &auth_url]).spawn();
+            } else if cfg!(target_os = "macos") {
+                let _ = std::process::Command::new("open").arg(&auth_url).spawn();
+            } else {
+                let _ = std::process::Command::new("xdg-open").arg(&auth_url).spawn();
+            }
+
+            println!("Listening for authorization redirect on port {}...", port);
+            println!("(Press Ctrl+C to cancel)\n");
+
+            let listener = std::net::TcpListener::bind(format!("127.0.0.1:{}", port))?;
+            let (mut socket, _) = listener.accept()?;
+
+            let mut buf = [0u8; 4096];
+            let n = std::io::Read::read(&mut socket, &mut buf)?;
+            let req = String::from_utf8_lossy(&buf[..n]);
+
+            let code = req
+                .lines()
+                .next()
+                .and_then(|line| {
+                    if let Some(query_start) = line.find('?') {
+                        let end = line.find(" HTTP/").unwrap_or(line.len());
+                        let query = &line[query_start + 1..end];
+                        for pair in query.split('&') {
+                            if let Some(c) = pair.strip_prefix("code=") {
+                                return Some(c.to_string());
+                            }
+                        }
+                    }
+                    None
+                })
+                .ok_or_else(|| "Failed to extract authorization code from redirect request".to_string())?;
+
+            let html_response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
+                <html><body style='font-family:sans-serif;text-align:center;padding:50px;'>\
+                <h2>Authentication Successful!</h2>\
+                <p>Mail2Rust has received your authorization code. You may close this tab.</p>\
+                </body></html>";
+            let _ = std::io::Write::write_all(&mut socket, html_response.as_bytes());
+
+            println!("Authorization code received! Exchanging code for tokens over TLS...");
+            let tokens = mail2rust_imap::exchange_code_for_token(prov, client_id, client_secret, &code, &redirect_uri)?;
+
+            println!("\nTokens Acquired Successfully!");
+            println!("Access Token:  {}...", &tokens.access_token[..tokens.access_token.len().min(24)]);
+            if let Some(ref rt) = tokens.refresh_token {
+                println!("Refresh Token: {}...", &rt[..rt.len().min(24)]);
+            }
+
+            let cache_file = output.clone().unwrap_or_else(|| PathBuf::from("mail2rust-oauth.json"));
+            tokens.save_to_file(&cache_file)?;
+            println!("\nSaved token cache to: {}", cache_file.display());
+            println!("\nTo ingest emails using this token, run:");
+            println!("  mail2rust imap --host {} --username <YOUR_EMAIL> --auth-method xoauth2 --oauth-token \"{}\" -o mailbox.pst\n",
+                prov.default_imap_host(), tokens.access_token);
+            println!("======================================================================\n");
+        }
+
+        Commands::AppPasswords { provider } => {
+            println!("\n======================================================================");
+            println!("         PROVIDER APP PASSWORDS SETUP GUIDE (RECOMMENDED)");
+            println!("======================================================================");
+            println!("Modern email services require an 'App Password' for IMAP access\n\
+                     unless using an enterprise OAuth2 registered client. App passwords\n\
+                     are 16-character codes that bypass 2-Factor Authentication prompts\n\
+                     specifically for desktop email utilities like Mail2Rust.\n");
+
+            let p_lower = provider.to_lowercase();
+            let show_google = p_lower == "all" || p_lower == "google" || p_lower == "gmail";
+            let show_ms = p_lower == "all" || p_lower == "microsoft" || p_lower == "outlook" || p_lower == "office365";
+            let show_yahoo = p_lower == "all" || p_lower == "yahoo" || p_lower == "aol";
+
+            if show_google {
+                println!("--- GOOGLE GMAIL & GOOGLE WORKSPACE ---");
+                println!("{}", OAuthProvider::Google.app_password_guide());
+                println!();
+            }
+            if show_ms {
+                println!("--- MICROSOFT OUTLOOK.COM & OFFICE 365 ---");
+                println!("{}", OAuthProvider::Microsoft.app_password_guide());
+                println!();
+            }
+            if show_yahoo {
+                println!("--- YAHOO MAIL & AOL ---");
+                println!("{}", OAuthProvider::Yahoo.app_password_guide());
+                println!();
+            }
+            println!("Once generated, supply it to Mail2Rust with:\n  --password \"xxxx xxxx xxxx xxxx\"");
+            println!("======================================================================\n");
         }
     }
 

@@ -344,11 +344,76 @@ Key Merger Capabilities:
 
 ---
 
+### 14. Modern OAuth 2.0 & Provider App Passwords (Google, Microsoft, Yahoo)
+Modern email services (Google Gmail/Workspace, Microsoft Outlook/Office 365, and Yahoo Mail) disallow raw account passwords over standard IMAP. Mail2Rust provides **first-class support for both modern access paths**:
+
+#### Method 1: Provider App Passwords (Quickest & Recommended)
+App Passwords are 16-character codes that bypass 2-Factor Authentication specifically for desktop email utilities like Mail2Rust without requiring you to register a cloud developer application.
+
+View step-by-step instructions directly in your terminal:
+```bash
+# View guides for all major providers
+mail2rust app-passwords
+
+# Or query a specific provider
+mail2rust app-passwords google
+mail2rust app-passwords microsoft
+mail2rust app-passwords yahoo
+```
+
+Use your generated 16-character App Password with `--password`:
+```bash
+mail2rust imap \
+  --host "imap.gmail.com" \
+  --username "user@gmail.com" \
+  --password "xxxx xxxx xxxx xxxx" \
+  -o "gmail_backup.pst"
+```
+
+#### Method 2: Native SASL OAuth 2.0 (`XOAUTH2` & `OAUTHBEARER`)
+For enterprise environments or automated pipelines using registered cloud client IDs:
+1. **Interactive Token Helper**: Mail2Rust spins up a local loopback server (`http://127.0.0.1:8089/callback`), launches your system browser to authenticate, receives the code, and exchanges it for access/refresh tokens over TLS:
+   ```bash
+   mail2rust oauth-login \
+     --provider google \
+     --client-id "<YOUR_GOOGLE_CLIENT_ID>" \
+     --client-secret "<YOUR_GOOGLE_CLIENT_SECRET>" \
+     --output "google-token.json"
+   ```
+2. **Ingest with SASL XOAUTH2**:
+   ```bash
+   mail2rust imap \
+     --host "imap.gmail.com" \
+     --username "user@gmail.com" \
+     --auth-method xoauth2 \
+     --oauth-token "<BEARER_ACCESS_TOKEN>" \
+     -o "gmail_backup.pst"
+   ```
+3. **Migrate Accounts Server-to-Server with OAuth**:
+   ```bash
+   mail2rust imap-sync \
+     --src-host "imap.gmail.com" \
+     --src-user "source@gmail.com" \
+     --src-auth-method xoauth2 \
+     --src-oauth-token "<GMAIL_ACCESS_TOKEN>" \
+     --dst-host "outlook.office365.com" \
+     --dst-user "dest@company.com" \
+     --dst-auth-method xoauth2 \
+     --dst-oauth-token "<OFFICE365_ACCESS_TOKEN>"
+   ```
+
+#### Automated Diagnostics & GUI Support
+- **Actionable Authentication Diagnostics**: When an IMAP login fails against Google, Microsoft, or Yahoo, Mail2Rust analyzes the response and automatically prints actionable guidance tailored to that specific provider.
+- **Native GUI Preset & Auth Selector**: In `mail2rust-gui`, the **Connect to IMAP Mailbox** and **IMAP-to-IMAP Account Sync** dialogs offer one-click presets for Gmail, Outlook, Yahoo, and iCloud, plus radio buttons to toggle between **Password / App Pass**, **OAuth 2.0 (XOAUTH2)**, and **OAUTHBEARER**.
+
+---
+
 ## Feature Comparison Matrix: `mail2rust` vs `mail2mail`
 
 | Capability / Requirement | `mail2mail` (Python) | `mail2rust` (Rust) | Parity Status |
 | :--- | :---: | :---: | :---: |
 | **Native Desktop GUI** | Tkinter / Webview wrapper | **100% Pure Rust GUI (`eframe`/`egui`)** | **Exceeds** (Zero Node.js/Webview) |
+| **OAuth 2.0 & App Password Diagnostics** | Basic | **Yes (`XOAUTH2`, `OAUTHBEARER`, `oauth-login`, `app-passwords`, automated error diagnostics & GUI)** | **Exceeds** |
 | **Multi-Format Mailbox Merger** | Manual individual conversions | **Yes (`mail2rust merge` & GUI)** — Merge PST, MBOX, Maildir, EMLX, MSG, OLM, VCF, ICS, and Takeout ZIP with cross-source deduplication | **Exceeds** |
 | **Direct IMAP Server-to-Server Sync** | No (requires exporting to local disk) | **Yes (`mail2rust imap-sync` & GUI)** — 100% in-memory streaming over TLS, zero disk footprint | **Exceeds** |
 | **PST Writing** | Requires Windows Outlook MAPI COM DLLs | **100% Pure Rust [MS-PST] NDB Engine** | **Exceeds** (Works on Linux/macOS/Win) |

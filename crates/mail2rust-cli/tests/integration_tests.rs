@@ -861,3 +861,71 @@ fn test_cli_merge_multi_format_to_pst_and_mbox() {
     assert!(dry_stdout.contains("Dry-run mode active: no target files written."));
     assert!(!temp.path().join("dummy.mbox").exists());
 }
+
+#[test]
+fn test_cli_oauth_and_app_passwords() {
+    let cargo_bin = env!("CARGO_BIN_EXE_mail2rust");
+
+    // 1. Verify app-passwords command for all providers
+    let out = std::process::Command::new(cargo_bin)
+        .arg("app-passwords")
+        .arg("all")
+        .output()
+        .expect("failed to run app-passwords");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("PROVIDER APP PASSWORDS SETUP GUIDE"));
+    assert!(stdout.contains("GOOGLE GMAIL & GOOGLE WORKSPACE"));
+    assert!(stdout.contains("MICROSOFT OUTLOOK.COM & OFFICE 365"));
+    assert!(stdout.contains("YAHOO MAIL & AOL"));
+    assert!(stdout.contains("myaccount.google.com/apppasswords"));
+    assert!(stdout.contains("account.live.com/proofs/manage/additional"));
+    assert!(stdout.contains("login.yahoo.com/account/security"));
+
+    // 2. Verify targeted provider guide
+    let out_google = std::process::Command::new(cargo_bin)
+        .arg("app-passwords")
+        .arg("google")
+        .output()
+        .expect("failed to run app-passwords google");
+    assert!(out_google.status.success());
+    let google_stdout = String::from_utf8_lossy(&out_google.stdout);
+    assert!(google_stdout.contains("GOOGLE GMAIL & GOOGLE WORKSPACE"));
+    assert!(!google_stdout.contains("YAHOO MAIL & AOL"));
+
+    // 3. Verify IMAP CLI help exposes auth-method and oauth-token
+    let imap_help = std::process::Command::new(cargo_bin)
+        .arg("imap")
+        .arg("--help")
+        .output()
+        .expect("failed to run imap --help");
+    assert!(imap_help.status.success());
+    let imap_stdout = String::from_utf8_lossy(&imap_help.stdout);
+    assert!(imap_stdout.contains("--auth-method"));
+    assert!(imap_stdout.contains("--oauth-token"));
+
+    // 4. Verify IMAP sync CLI help exposes source and destination oauth parameters
+    let sync_help = std::process::Command::new(cargo_bin)
+        .arg("imap-sync")
+        .arg("--help")
+        .output()
+        .expect("failed to run imap-sync --help");
+    assert!(sync_help.status.success());
+    let sync_stdout = String::from_utf8_lossy(&sync_help.stdout);
+    assert!(sync_stdout.contains("--src-auth-method"));
+    assert!(sync_stdout.contains("--src-oauth-token"));
+    assert!(sync_stdout.contains("--dst-auth-method"));
+    assert!(sync_stdout.contains("--dst-oauth-token"));
+
+    // 5. Verify OAuth login help exposes provider, client-id, client-secret
+    let oauth_help = std::process::Command::new(cargo_bin)
+        .arg("oauth-login")
+        .arg("--help")
+        .output()
+        .expect("failed to run oauth-login --help");
+    assert!(oauth_help.status.success());
+    let oauth_stdout = String::from_utf8_lossy(&oauth_help.stdout);
+    assert!(oauth_stdout.contains("--provider"));
+    assert!(oauth_stdout.contains("--client-id"));
+    assert!(oauth_stdout.contains("--client-secret"));
+}
