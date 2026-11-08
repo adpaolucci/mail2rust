@@ -339,8 +339,24 @@ impl ImapClient {
         folder_name: &str,
         delimiter: Option<&str>,
         watermark: Option<u64>,
-        mut on_message: F,
+        on_message: F,
     ) -> Result<(usize, u64), ImapClientError>
+    where
+        F: FnMut(EmailMessage, u64),
+    {
+        self.fetch_folder_with_validity(folder_name, delimiter, watermark, None, None, on_message)
+            .map(|(cnt, wm, _uv)| (cnt, wm))
+    }
+
+    pub fn fetch_folder_with_validity<F>(
+        &mut self,
+        folder_name: &str,
+        delimiter: Option<&str>,
+        watermark: Option<u64>,
+        recorded_uidvalidity: Option<u32>,
+        cancellation_flag: Option<&std::sync::atomic::AtomicBool>,
+        mut on_message: F,
+    ) -> Result<(usize, u64, Option<u32>), ImapClientError>
     where
         F: FnMut(EmailMessage, u64),
     {
@@ -351,9 +367,24 @@ impl ImapClient {
 
         debug!(folder = folder_name, "Selecting IMAP folder");
         let mailbox = session.select(folder_name)?;
+        let current_uv = mailbox.uid_validity;
+        let mut effective_watermark = watermark;
+
+        if let (Some(rec_uv), Some(cur_uv)) = (recorded_uidvalidity, current_uv) {
+            if rec_uv != cur_uv {
+                warn!(
+                    folder = folder_name,
+                    recorded = rec_uv,
+                    current = cur_uv,
+                    "IMAP UIDVALIDITY changed on server! High-watermark invalidated to prevent skipping messages."
+                );
+                effective_watermark = None;
+            }
+        }
+
         let total_in_folder = mailbox.exists as usize;
         if total_in_folder == 0 {
-            return Ok((0, watermark.unwrap_or(0)));
+            return Ok((0, effective_watermark.unwrap_or(0), current_uv));
         }
 
         // Search for all messages or messages newer than since_date
@@ -368,7 +399,7 @@ impl ImapClient {
         uids.sort_unstable();
 
         // Filter by high watermark if resuming
-        if let Some(wm) = watermark {
+        if let Some(wm) = effective_watermark {
             uids.retain(|&uid| (uid as u64) > wm);
         }
 
@@ -380,20 +411,28 @@ impl ImapClient {
         }
 
         if uids.is_empty() {
-            return Ok((0, watermark.unwrap_or(0)));
+            return Ok((0, effective_watermark.unwrap_or(0), current_uv));
         }
 
         let folder_hierarchy = Self::split_folder_hierarchy(folder_name, delimiter);
         let mut migrated_count = 0;
-        let mut max_uid = watermark.unwrap_or(0);
+        let mut max_uid = effective_watermark.unwrap_or(0);
 
         // Fetch in batches of 50 to avoid long IMAP command lines
         for chunk in uids.chunks(50) {
+            if cancellation_flag.is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed)) {
+                break;
+            }
+
             let uid_query = chunk.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
 
             let fetches = session.uid_fetch(&uid_query, "(BODY.PEEK[] FLAGS INTERNALDATE UID)")?;
 
             for fetch in fetches.iter() {
+                if cancellation_flag.is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed)) {
+                    break;
+                }
+
                 let uid = fetch.uid.unwrap_or(0) as u64;
                 if uid > max_uid {
                     max_uid = uid;
@@ -440,10 +479,24 @@ impl ImapClient {
             }
         }
 
-        Ok((migrated_count, max_uid))
+        Ok((migrated_count, max_uid, current_uv))
     }
 
-    pub fn sync_all<F>(&mut self, checkpoint: &mut SyncCheckpoint, mut on_progress: F) -> Result<usize, ImapClientError>
+    pub fn sync_all<F>(&mut self, checkpoint: &mut SyncCheckpoint, on_progress: F) -> Result<usize, ImapClientError>
+    where
+        F: FnMut(ImapSyncProgress, EmailMessage),
+    {
+        self.sync_all_with_checkpoint_path(checkpoint, None, 250, None, on_progress)
+    }
+
+    pub fn sync_all_with_checkpoint_path<F>(
+        &mut self,
+        checkpoint: &mut SyncCheckpoint,
+        checkpoint_path: Option<&std::path::Path>,
+        checkpoint_interval: usize,
+        cancellation_flag: Option<&std::sync::atomic::AtomicBool>,
+        mut on_progress: F,
+    ) -> Result<usize, ImapClientError>
     where
         F: FnMut(ImapSyncProgress, EmailMessage),
     {
@@ -451,6 +504,17 @@ impl ImapClient {
         let mut total_messages_migrated = 0;
 
         for folder_info in folders {
+            if cancellation_flag.is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed)) {
+                mail2rust_sync::CheckpointManager::mark_interrupted(
+                    checkpoint,
+                    "Interrupted by user signal (SIGINT/Ctrl+C)",
+                );
+                if let Some(p) = checkpoint_path {
+                    let _ = mail2rust_sync::CheckpointManager::save_atomic(checkpoint, p);
+                }
+                break;
+            }
+
             if !folder_info.selectable {
                 debug!(folder = %folder_info.name, "Skipping non-selectable IMAP folder");
                 continue;
@@ -466,29 +530,66 @@ impl ImapClient {
             let folder_name = folder_info.name.clone();
             let delimiter = folder_info.delimiter.as_deref();
             let watermark = checkpoint.folder_high_watermarks.get(&folder_name).copied();
+            let recorded_uv = checkpoint.folder_uidvalidity.get(&folder_name).copied();
 
             let mut current_idx = 0;
-            let (count, new_watermark) = self.fetch_folder(&folder_name, delimiter, watermark, |msg, uid| {
-                current_idx += 1;
-                total_messages_migrated += 1;
-                checkpoint.migrated_message_ids.insert(msg.message_id.clone());
-                checkpoint.total_messages_migrated += 1;
-                checkpoint.total_bytes_migrated += msg.body_text.len() + msg.body_html.as_ref().map_or(0, |h| h.len());
+            let mut msgs_since_last_flush = 0;
 
-                let progress = ImapSyncProgress {
-                    current_folder: folder_name.clone(),
-                    current_message_index: current_idx,
-                    total_messages_in_folder: 0,
-                    total_messages_migrated,
-                    message_seq_id: uid,
-                };
+            let (count, new_watermark, current_uv) = self.fetch_folder_with_validity(
+                &folder_name,
+                delimiter,
+                watermark,
+                recorded_uv,
+                cancellation_flag,
+                |msg, uid| {
+                    current_idx += 1;
+                    total_messages_migrated += 1;
+                    msgs_since_last_flush += 1;
+                    checkpoint.migrated_message_ids.insert(msg.message_id.clone());
+                    checkpoint.total_messages_migrated += 1;
+                    checkpoint.total_bytes_migrated +=
+                        msg.body_text.len() + msg.body_html.as_ref().map_or(0, |h| h.len());
 
-                on_progress(progress, msg);
-            })?;
+                    let mark = checkpoint
+                        .folder_high_watermarks
+                        .entry(folder_name.clone())
+                        .or_insert(0);
+                    if uid > *mark {
+                        *mark = uid;
+                    }
 
-            if new_watermark > 0 {
-                checkpoint.folder_high_watermarks.insert(folder_name, new_watermark);
+                    if let Some(p) = checkpoint_path {
+                        if msgs_since_last_flush >= checkpoint_interval {
+                            msgs_since_last_flush = 0;
+                            let _ = mail2rust_sync::CheckpointManager::save_atomic(checkpoint, p);
+                        }
+                    }
+
+                    let progress = ImapSyncProgress {
+                        current_folder: folder_name.clone(),
+                        current_message_index: current_idx,
+                        total_messages_in_folder: 0,
+                        total_messages_migrated,
+                        message_seq_id: uid,
+                    };
+
+                    on_progress(progress, msg);
+                },
+            )?;
+
+            if let Some(uv) = current_uv {
+                checkpoint.folder_uidvalidity.insert(folder_name.clone(), uv);
             }
+            if new_watermark > 0 {
+                checkpoint
+                    .folder_high_watermarks
+                    .insert(folder_name.clone(), new_watermark);
+            }
+
+            if let Some(p) = checkpoint_path {
+                let _ = mail2rust_sync::CheckpointManager::save_atomic(checkpoint, p);
+            }
+
             debug!(folder = %folder_info.name, fetched = count, watermark = new_watermark, "Folder sync complete");
         }
 
@@ -972,6 +1073,8 @@ mod tests {
             target_id: "test.pst".to_string(),
             migrated_message_ids: std::collections::HashSet::new(),
             folder_high_watermarks: std::collections::HashMap::new(),
+            folder_uidvalidity: std::collections::HashMap::new(),
+            interrupted_reason: None,
             total_bytes_migrated: 0,
             total_messages_migrated: 0,
             status: "running".to_string(),

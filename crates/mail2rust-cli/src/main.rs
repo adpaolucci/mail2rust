@@ -15,7 +15,25 @@ use mail2rust_pst::{PstEncryption, PstReader, PstValidator, PstWriter};
 use mail2rust_sync::CheckpointManager;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::info;
+
+static SHUTDOWN_FLAG: AtomicBool = AtomicBool::new(false);
+
+pub fn is_shutdown_requested() -> bool {
+    SHUTDOWN_FLAG.load(Ordering::Relaxed)
+}
+
+pub fn init_signal_handler() {
+    let _ = ctrlc::set_handler(move || {
+        if SHUTDOWN_FLAG.swap(true, Ordering::SeqCst) {
+            eprintln!("\n[!] Force terminating on second interrupt.");
+            std::process::exit(130);
+        } else {
+            eprintln!("\n[!] Interrupt received (SIGINT/Ctrl+C). Gracefully saving progress checkpoint before exit...");
+        }
+    });
+}
 
 mod samples;
 
@@ -50,6 +68,10 @@ struct Cli {
 
     #[arg(long, global = true, alias = "checkpoint-out")]
     state_file: Option<PathBuf>,
+
+    /// Checkpoint interval in number of messages before writing incremental progress
+    #[arg(long, global = true, default_value = "250")]
+    checkpoint_interval: usize,
 
     #[arg(long, global = true)]
     dedup: Option<CliDedupStrategy>,
@@ -436,6 +458,7 @@ enum Commands {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    init_signal_handler();
     let cli = Cli::parse();
 
     if let Commands::Mcp { tools } = &cli.command {
@@ -846,7 +869,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             client.connect()?;
             println!("Authenticated successfully to IMAP server.");
 
-            let chk_path = checkpoint.as_ref().map(|p| p.as_path());
+            let chk_path = checkpoint
+                .as_ref()
+                .or(cli.state_file.as_ref())
+                .or(cli.resume.as_ref())
+                .map(|p| p.as_path());
             let mut chk = if let Some(p) = chk_path {
                 if p.exists() {
                     println!("Resuming migration from checkpoint: {}", p.display());
@@ -866,16 +893,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("Streaming mail directly to {}...", output.display());
             let mut messages = Vec::new();
-            client.sync_all(&mut chk, |prog, msg| {
-                use std::io::Write;
-                print!(
-                    "\r[IMAP Sync] Folder: {:<20} | Msg #{:<5} | Item ID: {:<8}",
-                    prog.current_folder, prog.current_message_index, prog.message_seq_id
-                );
-                let _ = std::io::stdout().flush();
-                messages.push(msg);
-            })?;
+            client.sync_all_with_checkpoint_path(
+                &mut chk,
+                chk_path,
+                cli.checkpoint_interval,
+                Some(&SHUTDOWN_FLAG),
+                |prog, msg| {
+                    use std::io::Write;
+                    print!(
+                        "\r[IMAP Sync] Folder: {:<20} | Msg #{:<5} | Item ID: {:<8}",
+                        prog.current_folder, prog.current_message_index, prog.message_seq_id
+                    );
+                    let _ = std::io::stdout().flush();
+                    messages.push(msg);
+                },
+            )?;
             println!("\nFetched {} messages from IMAP server.", messages.len());
+
+            if is_shutdown_requested() {
+                eprintln!("\n[!] Gracefully halted on user interrupt.");
+                if let Some(p) = chk_path {
+                    eprintln!("[*] Interrupted migration state saved to: {}", p.display());
+                    eprintln!("[*] To resume this migration from where it was paused, run:");
+                    eprintln!("    mail2rust imap ... --resume \"{}\"", p.display());
+                }
+                std::process::exit(130);
+            }
 
             apply_preprocessing(&cli, &mut messages)?;
 
@@ -1271,7 +1314,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             client.connect()?;
             println!("Authenticated to JMAP session successfully.");
 
-            let chk_path = checkpoint.as_ref().map(|p| p.as_path());
+            let chk_path = checkpoint
+                .as_ref()
+                .or(cli.state_file.as_ref())
+                .or(cli.resume.as_ref())
+                .map(|p| p.as_path());
             let mut chk = if let Some(p) = chk_path {
                 if p.exists() {
                     println!("Resuming migration from checkpoint: {}", p.display());
@@ -1291,16 +1338,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("Streaming JMAP messages to {}...", output.display());
             let mut messages = Vec::new();
-            let count = client.sync_all(folder_filter, &mut chk, |msg| {
-                use std::io::Write;
-                print!(
-                    "\r[JMAP Ingestion] Msg #{:<5} | Subject: {:<40}",
-                    messages.len() + 1,
-                    msg.subject.chars().take(38).collect::<String>()
-                );
-                let _ = std::io::stdout().flush();
-                messages.push(msg);
-            })?;
+            let count = client.sync_all_with_checkpoint_path(
+                folder_filter,
+                &mut chk,
+                chk_path,
+                cli.checkpoint_interval,
+                Some(&SHUTDOWN_FLAG),
+                |msg| {
+                    use std::io::Write;
+                    print!(
+                        "\r[JMAP Ingestion] Msg #{:<5} | Subject: {:<40}",
+                        messages.len() + 1,
+                        msg.subject.chars().take(38).collect::<String>()
+                    );
+                    let _ = std::io::stdout().flush();
+                    messages.push(msg);
+                },
+            )?;
+            println!(
+                "\nFetched {} messages from JMAP server ({} newly synced).",
+                messages.len(),
+                count
+            );
+
+            if is_shutdown_requested() {
+                eprintln!("\n[!] Gracefully halted on user interrupt.");
+                if let Some(p) = chk_path {
+                    eprintln!("[*] Interrupted migration state saved to: {}", p.display());
+                    eprintln!("[*] To resume this migration from where it was paused, run:");
+                    eprintln!("    mail2rust jmap ... --resume \"{}\"", p.display());
+                }
+                std::process::exit(130);
+            }
             println!(
                 "\nFetched {} messages from JMAP server ({} newly synced).",
                 messages.len(),
@@ -1726,7 +1795,34 @@ fn run_eml_conversion(
         .with_naming(naming)
         .with_max_per_dir(max_per_dir);
 
-    for m in &messages {
+    for (idx, m) in messages.iter().enumerate() {
+        if is_shutdown_requested() {
+            eprintln!(
+                "\n[!] Gracefully halting EML export on user interrupt (message {}/{})...",
+                idx,
+                messages.len()
+            );
+            let state_dest = cli.state_file.as_ref().or(cli.resume.as_ref());
+            if let Some(state_path) = state_dest {
+                let mut chk = if state_path.exists() {
+                    CheckpointManager::load(state_path).unwrap_or_else(|_| {
+                        CheckpointManager::new_checkpoint(
+                            &source.display().to_string(),
+                            &destination.display().to_string(),
+                        )
+                    })
+                } else {
+                    CheckpointManager::new_checkpoint(&source.display().to_string(), &destination.display().to_string())
+                };
+                CheckpointManager::commit_run(&mut chk, &messages[..idx]);
+                CheckpointManager::mark_interrupted(&mut chk, "Halted by user signal (SIGINT/Ctrl+C)");
+                let _ = CheckpointManager::save_atomic(&chk, state_path);
+                eprintln!("[*] Interrupted migration state saved to: {}", state_path.display());
+                eprintln!("[*] To resume this migration from where it was paused, run:");
+                eprintln!("    mail2rust convert ... --resume \"{}\"", state_path.display());
+            }
+            std::process::exit(130);
+        }
         exporter.export_message(m)?;
     }
 
@@ -1989,11 +2085,18 @@ fn post_process(
         info!(manifest = ?manifest_path, "Saved audit manifest");
     }
 
-    if let Some(ref state_path) = cli.state_file {
-        let mut chk = CheckpointManager::new_checkpoint(&source.display().to_string(), &dest.display().to_string());
+    let state_dest = cli.state_file.as_ref().or(cli.resume.as_ref());
+    if let Some(state_path) = state_dest {
+        let mut chk = if state_path.exists() {
+            CheckpointManager::load(state_path).unwrap_or_else(|_| {
+                CheckpointManager::new_checkpoint(&source.display().to_string(), &dest.display().to_string())
+            })
+        } else {
+            CheckpointManager::new_checkpoint(&source.display().to_string(), &dest.display().to_string())
+        };
         CheckpointManager::commit_run(&mut chk, messages);
-        CheckpointManager::save(&chk, state_path)?;
-        info!(state = ?state_path, "Saved migration state");
+        CheckpointManager::save_atomic(&chk, state_path)?;
+        info!(state = ?state_path, "Saved migration state atomically");
     }
 
     Ok(())

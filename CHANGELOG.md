@@ -5,6 +5,22 @@ All notable changes to `mail2rust` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.1] - 2026-11-08
+
+### Added
+- **Crash-Resilient Atomic Checkpointing (`mail2rust-sync`)**:
+  - Implemented `CheckpointManager::save_atomic` writing via sibling `.tmp.<pid>.<ts>` files with filesystem sync before atomic rename, preventing 0-byte or corrupt state files during unexpected process drops.
+  - Added support for append-only JSON Lines (`.jsonl`) streaming checkpoints for high-volume migrations (1M+ items) with $O(1)$ disk appends without re-serializing past records.
+  - Extended `SyncCheckpoint` with `folder_uidvalidity: HashMap<String, u32>` and `interrupted_reason: Option<String>`.
+- **Signal Trapping & Graceful Shutdown (Exit Code 130)**:
+  - Added cross-platform signal handler via `ctrlc` in `mail2rust-cli` trapping `Ctrl+C` (`SIGINT`) and `SIGTERM`.
+  - Atomically marks active migration state as `status: "interrupted"`, flushes progress to disk, and prints reassuring resume command instructions before terminating with standardized exit code `130`.
+- **RFC 3501 IMAP `UIDVALIDITY` & Incremental Watermark Flushing**:
+  - `mail2rust-imap` inspects server `UIDVALIDITY` on each folder select and validates against checkpoint history; safely resets watermark if mailbox was re-indexed to prevent data loss.
+  - Progress and folder high-watermarks are saved incrementally every `--checkpoint-interval <N>` items (default 250) and at folder boundaries.
+- **Model Context Protocol (MCP) Resumable Migrations**:
+  - Added `checkpoint_file` and `resume` arguments to `mail2rust_convert` MCP tool in `mail2rust-mcp`, allowing autonomous AI agents to resume paused or interrupted transfers programmatically.
+
 ## [3.3.0] - 2026-11-07
 
 ### Added

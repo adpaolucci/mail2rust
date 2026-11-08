@@ -1334,3 +1334,100 @@ fn test_cli_jmap_ingestion_and_help() {
     assert_eq!(read_msgs[0].body_text, "JMAP HTTP JSON Sync Verified!");
     assert_eq!(read_msgs[0].source_format, "Microsoft Outlook PST (Unicode)");
 }
+
+#[test]
+fn test_cli_checkpoint_resumption_and_atomic_save() {
+    let cargo_bin = env!("CARGO_BIN_EXE_mail2rust");
+    let temp = tempdir().expect("tempdir");
+
+    // 1. Create a sample MBOX with 4 messages
+    let mbox_path = temp.path().join("source.mbox");
+    let msg1 = create_sample_message("m1", "t1", "Sub 1", "Body 1");
+    let msg2 = create_sample_message("m2", "t1", "Sub 2", "Body 2");
+    let msg3 = create_sample_message("m3", "t2", "Sub 3", "Body 3");
+    let msg4 = create_sample_message("m4", "t2", "Sub 4", "Body 4");
+    MboxFileExporter::export_to_file(
+        &[msg1.clone(), msg2.clone(), msg3.clone(), msg4.clone()],
+        &mbox_path,
+        false,
+    )
+    .expect("export mbox");
+
+    // 2. Pre-populate a checkpoint simulating msg1 and msg2 were previously migrated
+    let chk_path = temp.path().join("checkpoint.json");
+    let mut chk = CheckpointManager::new_checkpoint("source.mbox", "dest");
+    CheckpointManager::commit_run(&mut chk, &[msg1, msg2]);
+    assert_eq!(chk.total_messages_migrated, 2);
+    CheckpointManager::save_atomic(&chk, &chk_path).expect("save atomic checkpoint");
+
+    // 3. Run convert with --resume checkpoint.json into an EML folder
+    let eml_dir = temp.path().join("eml_out");
+    let output = std::process::Command::new(cargo_bin)
+        .arg("convert")
+        .arg(&mbox_path)
+        .arg(&eml_dir)
+        .arg("--resume")
+        .arg(&chk_path)
+        .output()
+        .expect("execute convert with resume");
+
+    assert!(
+        output.status.success(),
+        "Convert failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify only remaining 2 messages were exported
+    let mut exported_emls = 0;
+    for entry in walkdir::WalkDir::new(&eml_dir) {
+        let entry = entry.unwrap();
+        if entry.path().extension().and_then(|s| s.to_str()) == Some("eml") {
+            exported_emls += 1;
+        }
+    }
+    assert_eq!(exported_emls, 2, "Expected exactly 2 newly converted EML files");
+
+    // Verify checkpoint was atomically updated to 4 messages total
+    let updated_chk = CheckpointManager::load(&chk_path).expect("load updated checkpoint");
+    assert_eq!(
+        updated_chk.total_messages_migrated, 4,
+        "Expected checkpoint to have all 4 messages"
+    );
+
+    // 4. Test JSONL streaming checkpoint with mail2rust-mcp convert tool
+    let jsonl_path = temp.path().join("checkpoint.jsonl");
+    let dest_pst = temp.path().join("mcp_out.pst");
+
+    let conv_res = mail2rust_mcp::call_tool(
+        "mail2rust_convert",
+        &serde_json::json!({
+            "source": mbox_path.to_string_lossy(),
+            "destination": dest_pst.to_string_lossy(),
+            "target_format": "pst",
+            "checkpoint_file": jsonl_path.to_string_lossy(),
+            "resume": false
+        }),
+    )
+    .expect("mcp convert call");
+
+    assert_eq!(conv_res.get("status").and_then(|v| v.as_str()), Some("success"));
+    assert_eq!(conv_res.get("messages_written").and_then(|v| v.as_u64()), Some(4));
+    assert!(jsonl_path.exists(), "JSONL checkpoint should exist");
+
+    // Resuming immediately with same JSONL should find 0 delta messages
+    let dest_pst2 = temp.path().join("mcp_out2.pst");
+    let resume_res = mail2rust_mcp::call_tool(
+        "mail2rust_convert",
+        &serde_json::json!({
+            "source": mbox_path.to_string_lossy(),
+            "destination": dest_pst2.to_string_lossy(),
+            "target_format": "pst",
+            "checkpoint_file": jsonl_path.to_string_lossy(),
+            "resume": true
+        }),
+    )
+    .expect("mcp resume call");
+
+    assert_eq!(resume_res.get("already_migrated").and_then(|v| v.as_u64()), Some(4));
+    assert_eq!(resume_res.get("messages_written").and_then(|v| v.as_u64()), Some(0));
+}

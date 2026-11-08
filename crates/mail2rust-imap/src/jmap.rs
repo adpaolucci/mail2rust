@@ -396,6 +396,23 @@ impl JmapClient {
         &self,
         folder_filter: Option<&[String]>,
         checkpoint: &mut SyncCheckpoint,
+        on_message: F,
+    ) -> Result<usize, Box<dyn std::error::Error>>
+    where
+        F: FnMut(EmailMessage),
+    {
+        self.sync_all_with_checkpoint_path(folder_filter, checkpoint, None, 250, None, on_message)
+    }
+
+    /// Stream all emails across mailboxes into unified EmailMessage models with delta checkpointing
+    /// and periodic atomic state flushes.
+    pub fn sync_all_with_checkpoint_path<F>(
+        &self,
+        folder_filter: Option<&[String]>,
+        checkpoint: &mut SyncCheckpoint,
+        checkpoint_path: Option<&std::path::Path>,
+        checkpoint_interval: usize,
+        cancellation_flag: Option<&std::sync::atomic::AtomicBool>,
         mut on_message: F,
     ) -> Result<usize, Box<dyn std::error::Error>>
     where
@@ -408,8 +425,20 @@ impl JmapClient {
         }
 
         let mut total_ingested = 0;
+        let mut msgs_since_last_flush = 0;
 
         for mb in mailboxes {
+            if cancellation_flag.is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed)) {
+                mail2rust_sync::CheckpointManager::mark_interrupted(
+                    checkpoint,
+                    "Interrupted by user signal (SIGINT/Ctrl+C)",
+                );
+                if let Some(p) = checkpoint_path {
+                    let _ = mail2rust_sync::CheckpointManager::save_atomic(checkpoint, p);
+                }
+                break;
+            }
+
             if let Some(filter) = folder_filter {
                 if !filter.iter().any(|f| f.eq_ignore_ascii_case(&mb.name)) {
                     continue;
@@ -422,6 +451,10 @@ impl JmapClient {
             let page_size = 200;
 
             loop {
+                if cancellation_flag.is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed)) {
+                    break;
+                }
+
                 let ids = self.query_emails(&mb.id, page_size, position)?;
                 if ids.is_empty() {
                     break;
@@ -429,6 +462,10 @@ impl JmapClient {
 
                 let items = self.get_emails(&ids)?;
                 for item in items {
+                    if cancellation_flag.is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed)) {
+                        break;
+                    }
+
                     // Check deduplication / checkpointing
                     if checkpoint.migrated_message_ids.contains(&item.id) {
                         continue;
@@ -439,6 +476,14 @@ impl JmapClient {
                     checkpoint.total_messages_migrated += 1;
                     checkpoint.total_bytes_migrated += msg.size_bytes;
                     total_ingested += 1;
+                    msgs_since_last_flush += 1;
+
+                    if let Some(p) = checkpoint_path {
+                        if msgs_since_last_flush >= checkpoint_interval {
+                            msgs_since_last_flush = 0;
+                            let _ = mail2rust_sync::CheckpointManager::save_atomic(checkpoint, p);
+                        }
+                    }
 
                     on_message(msg);
                 }
@@ -447,6 +492,10 @@ impl JmapClient {
                 if ids.len() < page_size {
                     break;
                 }
+            }
+
+            if let Some(p) = checkpoint_path {
+                let _ = mail2rust_sync::CheckpointManager::save_atomic(checkpoint, p);
             }
         }
 

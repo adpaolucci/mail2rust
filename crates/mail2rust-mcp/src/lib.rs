@@ -127,6 +127,14 @@ pub fn get_tools_manifest() -> Value {
                     "dedup": {
                         "type": "boolean",
                         "description": "Deduplicate messages by SHA-256 hash (default: false)"
+                    },
+                    "checkpoint_file": {
+                        "type": "string",
+                        "description": "Optional path to JSON or JSONL state file to track progress and enable incremental restarts"
+                    },
+                    "resume": {
+                        "type": "boolean",
+                        "description": "Resume from checkpoint_file, skipping already migrated messages (default: false)"
                     }
                 },
                 "required": ["source", "destination"]
@@ -298,6 +306,8 @@ pub fn call_tool(name: &str, arguments: &Value) -> Result<Value, String> {
                 .ok_or_else(|| "Missing parameter 'destination'".to_string())?;
             let target_format = arguments.get("target_format").and_then(|v| v.as_str());
             let dedup = arguments.get("dedup").and_then(|v| v.as_bool()).unwrap_or(false);
+            let checkpoint_file = arguments.get("checkpoint_file").and_then(|v| v.as_str());
+            let resume = arguments.get("resume").and_then(|v| v.as_bool()).unwrap_or(false);
 
             let src_path = Path::new(src_str);
             let dest_path = Path::new(dest_str);
@@ -310,6 +320,27 @@ pub fn call_tool(name: &str, arguments: &Value) -> Result<Value, String> {
             let mut messages = read_mailbox_messages(src_path).map_err(|e| format!("Ingestion failed: {}", e))?;
             let total_ingested = messages.len();
             let mut duplicates_skipped = 0;
+            let mut already_migrated = 0;
+
+            let mut checkpoint = if let Some(chk_path) = checkpoint_file {
+                let p = Path::new(chk_path);
+                if p.exists() && (resume || p.extension().is_some_and(|e| e.eq_ignore_ascii_case("jsonl"))) {
+                    match mail2rust_sync::CheckpointManager::load(p) {
+                        Ok(loaded) => {
+                            let (delta, skipped) =
+                                mail2rust_sync::CheckpointManager::calculate_delta(&messages, &loaded);
+                            already_migrated = skipped;
+                            messages = delta;
+                            loaded
+                        }
+                        Err(_) => mail2rust_sync::CheckpointManager::new_checkpoint(src_str, dest_str),
+                    }
+                } else {
+                    mail2rust_sync::CheckpointManager::new_checkpoint(src_str, dest_str)
+                }
+            } else {
+                mail2rust_sync::CheckpointManager::new_checkpoint(src_str, dest_str)
+            };
 
             if dedup {
                 let (unique, dups) = DedupEngine::deduplicate(messages, DedupStrategy::Sha256);
@@ -343,6 +374,18 @@ pub fn call_tool(name: &str, arguments: &Value) -> Result<Value, String> {
                 other => return Err(format!("Unsupported target format: {}", other)),
             }
 
+            if let Some(chk_path) = checkpoint_file {
+                let p = Path::new(chk_path);
+                if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("jsonl")) {
+                    for m in &messages {
+                        let _ = mail2rust_sync::CheckpointManager::append_jsonl_message(p, m, None);
+                    }
+                } else {
+                    mail2rust_sync::CheckpointManager::commit_run(&mut checkpoint, &messages);
+                    let _ = mail2rust_sync::CheckpointManager::save_atomic(&checkpoint, p);
+                }
+            }
+
             let elapsed_ms = start_time.elapsed().as_millis();
 
             Ok(json!({
@@ -351,8 +394,10 @@ pub fn call_tool(name: &str, arguments: &Value) -> Result<Value, String> {
                 "destination": dest_str,
                 "target_format": target,
                 "messages_ingested": total_ingested,
+                "already_migrated": already_migrated,
                 "messages_written": messages.len(),
                 "duplicates_skipped": duplicates_skipped,
+                "checkpoint_file": checkpoint_file,
                 "elapsed_ms": elapsed_ms
             }))
         }
