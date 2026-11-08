@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use tracing::info;
 
+pub mod search;
+pub use search::{MultiPatternMatcher, SearchRule, SearchRuleMatch};
+
 // ----------------------- Human-Friendly Size Parsing -----------------------
 
 /// Parse human-friendly sizes like "20GB", "500MB", "15.5G", "100KB", "1024B", "0", "unlimited"
@@ -288,12 +291,19 @@ pub struct FilterCriteria {
     pub read_only: Option<bool>,
     pub flagged_only: Option<bool>,
     pub legal_hold_only: Option<bool>,
+    #[serde(skip)]
+    pub search_matcher: Option<MultiPatternMatcher>,
 }
 
 pub struct FilterEngine;
 
 impl FilterEngine {
     pub fn matches(msg: &EmailMessage, criteria: &FilterCriteria) -> bool {
+        if let Some(ref matcher) = criteria.search_matcher {
+            if matcher.matches_message(msg).is_none() {
+                return false;
+            }
+        }
         if let Some(start) = criteria.start_date {
             if msg.date < start {
                 return false;

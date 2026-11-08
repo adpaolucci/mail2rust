@@ -50,11 +50,13 @@ impl<R: Read + Seek> PstReader<R> {
         let mut bbt_map = HashMap::new();
         let mut nbt_nodes = Vec::new();
 
+        let file_len = reader.seek(SeekFrom::End(0))?;
+
         // 1. Read BBT (Block B-Tree)
-        if bbt_offset > 0 && bbt_bid > 0 && reader.seek(SeekFrom::Start(bbt_offset)).is_ok() {
-            let mut bbt_raw = vec![0u8; 8192];
-            if let Ok(n) = reader.read(&mut bbt_raw) {
-                bbt_raw.truncate(n);
+        if bbt_offset > 0 && bbt_bid > 0 && bbt_offset < file_len && reader.seek(SeekFrom::Start(bbt_offset)).is_ok() {
+            let to_read = (file_len - bbt_offset).min(100 * 1024 * 1024) as usize;
+            let mut bbt_raw = Vec::with_capacity(to_read.min(10 * 1024 * 1024));
+            if reader.by_ref().take(to_read as u64).read_to_end(&mut bbt_raw).is_ok() {
                 if crypt_method == 0x01 {
                     depermute_bytes(&mut bbt_raw);
                 } else if crypt_method == 0x02 {
@@ -80,10 +82,14 @@ impl<R: Read + Seek> PstReader<R> {
         }
 
         // 2. Read NBT (Node B-Tree)
-        if nbt_offset > 0 && nbt_bid > 0 && reader.seek(SeekFrom::Start(nbt_offset)).is_ok() {
-            let mut nbt_raw = vec![0u8; 8192];
-            if let Ok(n) = reader.read(&mut nbt_raw) {
-                nbt_raw.truncate(n);
+        if nbt_offset > 0 && nbt_bid > 0 && nbt_offset < file_len && reader.seek(SeekFrom::Start(nbt_offset)).is_ok() {
+            let to_read = if bbt_offset > nbt_offset {
+                (bbt_offset - nbt_offset).min(100 * 1024 * 1024) as usize
+            } else {
+                (file_len - nbt_offset).min(100 * 1024 * 1024) as usize
+            };
+            let mut nbt_raw = Vec::with_capacity(to_read.min(10 * 1024 * 1024));
+            if reader.by_ref().take(to_read as u64).read_to_end(&mut nbt_raw).is_ok() {
                 if crypt_method == 0x01 {
                     depermute_bytes(&mut nbt_raw);
                 } else if crypt_method == 0x02 {
@@ -97,7 +103,7 @@ impl<R: Read + Seek> PstReader<R> {
                         cur.read_u64::<LittleEndian>(),
                         cur.read_u32::<LittleEndian>(),
                     ) {
-                        if nid > 0 && bid > 0 {
+                        if nid > 0 && bid > 0 && nid != 0x47474747 {
                             nbt_nodes.push((nid, bid, parent_nid));
                         }
                     } else {

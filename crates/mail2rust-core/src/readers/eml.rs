@@ -215,36 +215,7 @@ impl EmlReader {
     }
 
     pub fn decode_rfc2047(input: &str) -> String {
-        let mut result = String::new();
-        let mut remaining = input;
-
-        while let Some(start) = remaining.find("=?") {
-            result.push_str(&remaining[..start]);
-            let rest = &remaining[start + 2..];
-            if let Some(first_delim) = rest.find('?') {
-                let _charset = &rest[..first_delim];
-                let enc_rest = &rest[first_delim + 1..];
-                if let Some(second_delim) = enc_rest.find('?') {
-                    let enc_type = &enc_rest[..second_delim];
-                    let payload_rest = &enc_rest[second_delim + 1..];
-                    if let Some(end) = payload_rest.find("?=") {
-                        let payload = &payload_rest[..end];
-                        let decoded = match enc_type.to_uppercase().as_str() {
-                            "B" => Self::decode_base64_str(payload),
-                            "Q" => Self::decode_quoted_printable_str(payload),
-                            _ => payload.to_string(),
-                        };
-                        result.push_str(&decoded);
-                        remaining = &payload_rest[end + 2..];
-                        continue;
-                    }
-                }
-            }
-            result.push_str("=?");
-            remaining = rest;
-        }
-        result.push_str(remaining);
-        result
+        crate::rfc2047::decode_rfc2047(input)
     }
 
     pub fn decode_base64_str(input: &str) -> String {

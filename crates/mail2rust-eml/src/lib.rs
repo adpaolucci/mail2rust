@@ -6,6 +6,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tracing::debug;
 
+pub mod deliverables;
+pub use deliverables::{HtmlIndexGenerator, HtmlIndexRow, ManifestRecord, ManifestWriter};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EmlLayout {
     #[default]
@@ -30,6 +33,9 @@ pub struct EmlExporter {
     seen_paths: HashSet<PathBuf>,
     dir_counts: HashMap<PathBuf, usize>,
     global_index: usize,
+    html_index_title: Option<String>,
+    html_rows: Vec<HtmlIndexRow>,
+    manifest_writer: Option<ManifestWriter<File>>,
 }
 
 impl EmlExporter {
@@ -42,6 +48,9 @@ impl EmlExporter {
             seen_paths: HashSet::new(),
             dir_counts: HashMap::new(),
             global_index: 0,
+            html_index_title: None,
+            html_rows: Vec::new(),
+            manifest_writer: None,
         }
     }
 
@@ -55,7 +64,27 @@ impl EmlExporter {
         self
     }
 
+    pub fn with_html_index(mut self, title: impl Into<String>) -> Self {
+        self.html_index_title = Some(title.into());
+        self
+    }
+
+    pub fn with_manifest_csv(mut self, path: impl AsRef<Path>) -> io::Result<Self> {
+        let writer = ManifestWriter::create_file(path.as_ref())?;
+        self.manifest_writer = Some(writer);
+        Ok(self)
+    }
+
     pub fn export_message(&mut self, msg: &EmailMessage) -> io::Result<PathBuf> {
+        self.export_message_annotated(msg, "", "")
+    }
+
+    pub fn export_message_annotated(
+        &mut self,
+        msg: &EmailMessage,
+        matched_keywords: &str,
+        source_container: &str,
+    ) -> io::Result<PathBuf> {
         self.global_index += 1;
 
         let base_rel_dir = match self.layout {
@@ -116,8 +145,49 @@ impl EmlExporter {
             Self::write_synthetic_mime(&mut file, msg)?;
         }
 
+        let rel_path = final_path.strip_prefix(&self.output_dir).unwrap_or(&final_path);
+        let rel_str = rel_path.to_string_lossy().replace('\\', "/");
+
+        if self.html_index_title.is_some() {
+            self.html_rows.push(HtmlIndexRow {
+                filename: rel_str.clone(),
+                subject: mail2rust_core::decode_rfc2047(&msg.subject),
+                from: msg.from.to_string(),
+                date: msg.date.format("%Y-%m-%d %H:%M:%S").to_string(),
+                size_bytes: msg.size_bytes.max(msg.raw_mime.len()),
+                matched_keywords: matched_keywords.to_string(),
+            });
+        }
+
+        if let Some(ref mut writer) = self.manifest_writer {
+            let to_str = msg.to.iter().map(|a| a.to_string()).collect::<Vec<_>>().join("; ");
+            writer.write_record(&ManifestRecord {
+                message_id: msg.message_id.clone(),
+                date: msg.date.to_rfc3339(),
+                from: msg.from.to_string(),
+                to: to_str,
+                subject: mail2rust_core::decode_rfc2047(&msg.subject),
+                size_bytes: msg.size_bytes.max(msg.raw_mime.len()),
+                matched_keywords: matched_keywords.to_string(),
+                source_container: source_container.to_string(),
+                sha256_hash: msg.sha256.clone(),
+                eml_filename: rel_str,
+            })?;
+        }
+
         debug!(path = ?final_path, "Exported message to EML");
         Ok(final_path)
+    }
+
+    pub fn finalize(&mut self) -> io::Result<()> {
+        if let Some(ref title) = self.html_index_title {
+            let idx_path = self.output_dir.join("index.html");
+            HtmlIndexGenerator::write_index_file(&idx_path, title, &self.html_rows)?;
+        }
+        if let Some(ref mut writer) = self.manifest_writer {
+            writer.flush()?;
+        }
+        Ok(())
     }
 
     pub fn sanitize_segment(name: &str) -> String {
@@ -165,7 +235,8 @@ impl EmlExporter {
 
     fn generate_filename(msg: &EmailMessage) -> String {
         let date_prefix = msg.date.format("%Y%m%d_%H%M%S").to_string();
-        let safe_subj = Self::sanitize_segment(&msg.subject);
+        let decoded_subj = mail2rust_core::decode_rfc2047(&msg.subject);
+        let safe_subj = Self::sanitize_segment(&decoded_subj);
         let truncated: String = safe_subj.chars().take(50).collect();
         format!("{}_{}.eml", date_prefix, truncated)
     }
@@ -275,5 +346,42 @@ mod tests {
         );
         let path = exporter.export_message(&msg).unwrap();
         assert!(path.exists());
+    }
+
+    #[test]
+    fn test_eml_export_with_html_index_and_manifest() {
+        let dir = tempdir().unwrap();
+        let manifest_path = dir.path().join("test_manifest.csv");
+        let mut exporter = EmlExporter::new(dir.path(), EmlLayout::Flat)
+            .with_html_index("Discovery Production Review")
+            .with_manifest_csv(&manifest_path)
+            .unwrap();
+
+        let msg1 = make_test_msg("Critical Exhibit A", &["Inbox"]);
+        let msg2 = make_test_msg("=?UTF-8?Q?RE:_100_Corporate_Blvd?=", &["Archive"]);
+
+        exporter
+            .export_message_annotated(&msg1, "EXHIBIT_A", "inbox.mbox")
+            .unwrap();
+        exporter
+            .export_message_annotated(&msg2, "CORPORATE", "archive.mbox")
+            .unwrap();
+        exporter.finalize().unwrap();
+
+        let index_html_path = dir.path().join("index.html");
+        assert!(index_html_path.exists());
+        let html_content = fs::read_to_string(&index_html_path).unwrap();
+        assert!(html_content.contains("Discovery Production Review"));
+        assert!(html_content.contains("Critical Exhibit A"));
+        assert!(html_content.contains("RE: 100 Corporate Blvd"));
+        assert!(html_content.contains("EXHIBIT_A"));
+        assert!(html_content.contains("CORPORATE"));
+
+        assert!(manifest_path.exists());
+        let manifest_content = fs::read_to_string(&manifest_path).unwrap();
+        assert!(manifest_content.contains("Critical Exhibit A"));
+        assert!(manifest_content.contains("RE: 100 Corporate Blvd"));
+        assert!(manifest_content.contains("EXHIBIT_A"));
+        assert!(manifest_content.contains("CORPORATE"));
     }
 }

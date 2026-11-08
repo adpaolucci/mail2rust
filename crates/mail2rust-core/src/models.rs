@@ -41,6 +41,16 @@ impl EmailAddress {
     }
 }
 
+impl std::fmt::Display for EmailAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.name.is_empty() || self.name == self.email {
+            write!(f, "{}", self.email)
+        } else {
+            write!(f, "\"{}\" <{}>", self.name, self.email)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct MessageFlags {
     pub read: bool,

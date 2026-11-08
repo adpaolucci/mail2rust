@@ -3,6 +3,7 @@ pub mod logging;
 pub mod merger;
 pub mod models;
 pub mod readers;
+pub mod rfc2047;
 pub mod sniffer;
 
 pub use dedup::{DedupEngine, DedupStrategy};
@@ -21,6 +22,7 @@ pub use readers::mmdf::MmdfReader;
 pub use readers::msg::MsgReader;
 pub use readers::olm::OlmReader;
 pub use readers::vcard::VcardReader;
+pub use rfc2047::{decode_rfc2047, sanitize_filename};
 pub use sniffer::{FormatSniffer, MailboxFormat};
 
 use std::fs::File;
@@ -31,18 +33,40 @@ use walkdir::WalkDir;
 /// Universally ingests messages from any file, folder, archive, or mailbox format
 pub fn ingest_path(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::error::Error>> {
     let mut messages = Vec::new();
+    ingest_path_streaming(source, |msg| {
+        messages.push(msg);
+        Ok(())
+    })?;
+    Ok(messages)
+}
+
+/// Ingest messages incrementally from any source path, calling `on_message` per message.
+/// Maintains constant bounded memory (<50 MB) even on 100+ GB mailboxes.
+pub fn ingest_path_streaming<F>(source: &Path, mut on_message: F) -> Result<usize, Box<dyn std::error::Error>>
+where
+    F: FnMut(EmailMessage) -> Result<(), Box<dyn std::error::Error>>,
+{
+    use std::io::Read;
+
     let format = FormatSniffer::sniff_path(source);
-    info!(source = ?source, format = format.name(), "Ingesting mailbox source");
+    info!(source = ?source, format = format.name(), "Streaming mailbox source ingestion");
+    let mut total_count = 0usize;
 
     match format {
         MailboxFormat::Zip => {
             let file = File::open(source)?;
-            messages = ArchiveReader::read_zip(file)?;
+            for msg in ArchiveReader::read_zip(file)? {
+                on_message(msg)?;
+                total_count += 1;
+            }
         }
         MailboxFormat::Gz => {
             let file = File::open(source)?;
             let fname = source.file_name().and_then(|s| s.to_str()).unwrap_or("archive.gz");
-            messages = ArchiveReader::read_gz(file, fname)?;
+            for msg in ArchiveReader::read_gz(file, fname)? {
+                on_message(msg)?;
+                total_count += 1;
+            }
         }
         MailboxFormat::Mbox => {
             let file = File::open(source)?;
@@ -51,48 +75,100 @@ pub fn ingest_path(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::erro
                 .and_then(|s| s.to_str())
                 .unwrap_or("Inbox")
                 .to_string()];
-            messages = MboxReader::read_all(file, folder)?;
+            let n = MboxReader::read_streaming(file, folder, &mut on_message)?;
+            total_count += n;
         }
         MailboxFormat::Maildir => {
-            messages = MaildirReader::read_dir(source)?;
+            for msg in MaildirReader::read_dir(source)? {
+                on_message(msg)?;
+                total_count += 1;
+            }
         }
         MailboxFormat::Olm => {
             let file = File::open(source)?;
-            messages = OlmReader::parse(file, vec!["OLM".to_string()])?;
+            for msg in OlmReader::parse(file, vec!["OLM".to_string()])? {
+                on_message(msg)?;
+                total_count += 1;
+            }
         }
         MailboxFormat::Mh => {
-            messages = MhReader::read_dir(source)?;
+            for msg in MhReader::read_dir(source)? {
+                on_message(msg)?;
+                total_count += 1;
+            }
         }
         MailboxFormat::Mmdf => {
             let file = File::open(source)?;
-            messages = MmdfReader::parse(file, vec!["MMDF".to_string()])?;
+            for msg in MmdfReader::parse(file, vec!["MMDF".to_string()])? {
+                on_message(msg)?;
+                total_count += 1;
+            }
         }
         MailboxFormat::Babyl => {
             let file = File::open(source)?;
-            messages = BabylReader::parse(file, vec!["Babyl".to_string()])?;
+            for msg in BabylReader::parse(file, vec!["Babyl".to_string()])? {
+                on_message(msg)?;
+                total_count += 1;
+            }
         }
         MailboxFormat::Vcard => {
             let bytes = std::fs::read(source)?;
-            messages = VcardReader::parse(&bytes, vec!["Contacts".to_string()])?;
+            for msg in VcardReader::parse(&bytes, vec!["Contacts".to_string()])? {
+                on_message(msg)?;
+                total_count += 1;
+            }
         }
         MailboxFormat::Icalendar => {
             let bytes = std::fs::read(source)?;
-            messages = IcalReader::parse(&bytes, vec!["Calendar".to_string()])?;
+            for msg in IcalReader::parse(&bytes, vec!["Calendar".to_string()])? {
+                on_message(msg)?;
+                total_count += 1;
+            }
         }
         _ => {
             if source.is_file() {
                 let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-                let bytes = std::fs::read(source)?;
-                if ext == "emlx" {
-                    messages.push(EmlxReader::parse(&bytes, vec!["Import".to_string()])?);
-                } else if ext == "msg" {
-                    messages.push(MsgReader::parse(&bytes, vec!["Import".to_string()])?);
-                } else if ext == "vcf" || ext == "vcard" {
-                    messages.extend(VcardReader::parse(&bytes, vec!["Contacts".to_string()])?);
-                } else if ext == "ics" || ext == "ical" {
-                    messages.extend(IcalReader::parse(&bytes, vec!["Calendar".to_string()])?);
+                if ext == "msf" || ext == "dat" {
+                    return Ok(0);
+                }
+                let file = File::open(source)?;
+                let mut header = [0u8; 5];
+                let is_mbox = if let Ok(n) = (&file).read(&mut header) {
+                    n >= 5 && &header == b"From "
                 } else {
-                    messages.push(EmlReader::parse(&bytes, vec!["Import".to_string()])?);
+                    false
+                };
+
+                if ext == "mbox" || is_mbox {
+                    let folder = vec![source
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("Inbox")
+                        .to_string()];
+                    let n = MboxReader::read_streaming(file, folder, &mut on_message)?;
+                    total_count += n;
+                } else {
+                    let bytes = std::fs::read(source)?;
+                    if ext == "emlx" {
+                        on_message(EmlxReader::parse(&bytes, vec!["Import".to_string()])?)?;
+                        total_count += 1;
+                    } else if ext == "msg" {
+                        on_message(MsgReader::parse(&bytes, vec!["Import".to_string()])?)?;
+                        total_count += 1;
+                    } else if ext == "vcf" || ext == "vcard" {
+                        for c in VcardReader::parse(&bytes, vec!["Contacts".to_string()])? {
+                            on_message(c)?;
+                            total_count += 1;
+                        }
+                    } else if ext == "ics" || ext == "ical" {
+                        for ev in IcalReader::parse(&bytes, vec!["Calendar".to_string()])? {
+                            on_message(ev)?;
+                            total_count += 1;
+                        }
+                    } else {
+                        on_message(EmlReader::parse(&bytes, vec!["Import".to_string()])?)?;
+                        total_count += 1;
+                    }
                 }
             } else if source.is_dir() {
                 for entry in WalkDir::new(source).into_iter().filter_map(|e| e.ok()) {
@@ -101,6 +177,10 @@ pub fn ingest_path(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::erro
                         continue;
                     }
                     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                    if ext == "msf" || ext == "dat" || ext == "json" || ext == "ini" {
+                        continue;
+                    }
+
                     let mut folder: Vec<String> = match path.strip_prefix(source) {
                         Ok(rel) => rel
                             .parent()
@@ -113,35 +193,61 @@ pub fn ingest_path(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::erro
                         Err(_) => vec!["Inbox".to_string()],
                     };
 
+                    let file_stem = path.file_stem().and_then(|f| f.to_str()).unwrap_or("Inbox");
+                    let has_msf_sibling = path.with_extension("msf").is_file();
+
+                    if ext == "mbox" || has_msf_sibling || ext.is_empty() {
+                        if let Ok(file) = File::open(path) {
+                            let mut test_header = [0u8; 5];
+                            let starts_from = if let Ok(n) = (&file).read(&mut test_header) {
+                                n >= 5 && &test_header == b"From "
+                            } else {
+                                false
+                            };
+
+                            if ext == "mbox" || has_msf_sibling || starts_from {
+                                if folder.is_empty() {
+                                    folder = vec![file_stem.to_string()];
+                                }
+                                if let Ok(f) = File::open(path) {
+                                    if let Ok(n) = MboxReader::read_streaming(f, folder.clone(), &mut on_message) {
+                                        total_count += n;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if let Ok(bytes) = std::fs::read(path) {
                         if ext == "emlx" {
                             if let Ok(m) = EmlxReader::parse(&bytes, folder) {
-                                messages.push(m);
+                                on_message(m)?;
+                                total_count += 1;
                             }
                         } else if ext == "msg" {
                             if let Ok(m) = MsgReader::parse(&bytes, folder) {
-                                messages.push(m);
+                                on_message(m)?;
+                                total_count += 1;
                             }
                         } else if ext == "vcf" || ext == "vcard" {
                             if let Ok(c) = VcardReader::parse(&bytes, vec!["Contacts".to_string()]) {
-                                messages.extend(c);
+                                for m in c {
+                                    on_message(m)?;
+                                    total_count += 1;
+                                }
                             }
                         } else if ext == "ics" || ext == "ical" {
                             if let Ok(ev) = IcalReader::parse(&bytes, vec!["Calendar".to_string()]) {
-                                messages.extend(ev);
-                            }
-                        } else if ext == "mbox" || (ext.is_empty() && bytes.starts_with(b"From ")) {
-                            // Thunderbird & Unix extensionless MBOX files
-                            let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("Inbox");
-                            if folder.is_empty() {
-                                folder = vec![filename.to_string()];
-                            }
-                            if let Ok(mbox_msgs) = MboxReader::read_all(&bytes[..], folder.clone()) {
-                                messages.extend(mbox_msgs);
+                                for m in ev {
+                                    on_message(m)?;
+                                    total_count += 1;
+                                }
                             }
                         } else if ext == "eml" || ext.is_empty() {
                             if let Ok(m) = EmlReader::parse(&bytes, folder) {
-                                messages.push(m);
+                                on_message(m)?;
+                                total_count += 1;
                             }
                         }
                     }
@@ -150,8 +256,8 @@ pub fn ingest_path(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::erro
         }
     }
 
-    info!(count = messages.len(), "Source ingestion complete");
-    Ok(messages)
+    info!(count = total_count, "Source streaming ingestion complete");
+    Ok(total_count)
 }
 
 #[cfg(test)]

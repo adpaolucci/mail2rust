@@ -11,6 +11,8 @@ name = "mail2rust"
 path = "src/main.rs"
 
 [dependencies]
+regex.workspace = true
+sha2.workspace = true
 mail2rust-core.workspace = true
 mail2rust-pst.workspace = true
 mail2rust-eml.workspace = true
@@ -30,6 +32,7 @@ walkdir.workspace = true
 zip.workspace = true
 uuid.workspace = true
 ctrlc = "3.4"
+rfd = "0.18.0"
 
 [dev-dependencies]
 tempfile = "3.17"

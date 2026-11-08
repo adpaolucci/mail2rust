@@ -18,7 +18,7 @@ fn create_sample_message(id: &str, thread_id: &str, subject: &str, body: &str) -
         folder_path: vec!["Inbox".to_string(), "Project Titan".to_string()],
         subject: subject.to_string(),
         from: EmailAddress::new("Dr. Evelyn Vance", "evelyn@titan.corp.local"),
-        to: vec![EmailAddress::new("Anthony Paolucci", "adpaolucci@corp.local")],
+        to: vec![EmailAddress::new("Alex Wright", "alex.wright@corp.local")],
         cc: vec![EmailAddress::new("Audit Board", "audit@titan.corp.local")],
         bcc: vec![],
         date: Utc::now(),
@@ -53,6 +53,28 @@ fn create_sample_message(id: &str, thread_id: &str, subject: &str, body: &str) -
     msg.sha256 = sha;
     msg.md5 = md5;
     msg
+}
+
+fn accept_with_timeout(listener: &std::net::TcpListener, timeout: std::time::Duration) -> std::net::TcpStream {
+    listener.set_nonblocking(true).expect("set_nonblocking failed");
+    let start = std::time::Instant::now();
+    loop {
+        match listener.accept() {
+            Ok((socket, _)) => {
+                socket.set_nonblocking(false).expect("revert nonblocking failed");
+                let _ = socket.set_read_timeout(Some(std::time::Duration::from_secs(10)));
+                let _ = socket.set_write_timeout(Some(std::time::Duration::from_secs(10)));
+                return socket;
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if start.elapsed() > timeout {
+                    panic!("Timeout waiting for incoming connection on mock TCP listener");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(15));
+            }
+            Err(e) => panic!("Accept error: {}", e),
+        }
+    }
 }
 
 #[test]
@@ -311,7 +333,7 @@ fn test_cli_subcommands_end_to_end() {
 
     let server_handle = std::thread::spawn(move || {
         use std::io::{BufRead, BufReader, Write};
-        let (mut socket, _) = listener.accept().expect("Failed to accept");
+        let mut socket = accept_with_timeout(&listener, std::time::Duration::from_secs(15));
         socket
             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
             .unwrap();
@@ -606,7 +628,7 @@ fn test_cli_imap_sync_server_to_server() {
     let src_addr = src_listener.local_addr().expect("Failed to get src local addr");
 
     let src_handle = thread::spawn(move || {
-        let (mut socket, _) = src_listener.accept().expect("Failed to accept src");
+        let mut socket = accept_with_timeout(&src_listener, std::time::Duration::from_secs(15));
         let mut reader = BufReader::new(socket.try_clone().expect("Failed to clone socket"));
 
         socket.write_all(b"* OK Mock Source IMAP Ready\r\n").unwrap();
@@ -683,7 +705,7 @@ fn test_cli_imap_sync_server_to_server() {
     let dst_addr = dst_listener.local_addr().expect("Failed to get dst local addr");
 
     let dst_handle = thread::spawn(move || {
-        let (mut socket, _) = dst_listener.accept().expect("Failed to accept dst");
+        let mut socket = accept_with_timeout(&dst_listener, std::time::Duration::from_secs(15));
         let mut reader = BufReader::new(socket.try_clone().expect("Failed to clone socket"));
 
         socket.write_all(b"* OK Mock Destination IMAP Ready\r\n").unwrap();
@@ -1108,7 +1130,7 @@ fn test_cli_jmap_ingestion_and_help() {
         use std::io::{BufRead, Read, Write};
 
         // 1. Session request
-        let (mut socket, _) = listener.accept().unwrap();
+        let mut socket = accept_with_timeout(&listener, std::time::Duration::from_secs(15));
         let mut reader = std::io::BufReader::new(socket.try_clone().unwrap());
         let mut line = String::new();
         while reader.read_line(&mut line).unwrap() > 0 {
@@ -1142,7 +1164,7 @@ fn test_cli_jmap_ingestion_and_help() {
         drop(socket);
 
         // 2. Mailbox/get request
-        let (mut socket2, _) = listener.accept().unwrap();
+        let mut socket2 = accept_with_timeout(&listener, std::time::Duration::from_secs(15));
         let mut reader2 = std::io::BufReader::new(socket2.try_clone().unwrap());
         line.clear();
         let mut content_len = 0;
@@ -1188,7 +1210,7 @@ fn test_cli_jmap_ingestion_and_help() {
         drop(socket2);
 
         // 3. Email/query request
-        let (mut socket3, _) = listener.accept().unwrap();
+        let mut socket3 = accept_with_timeout(&listener, std::time::Duration::from_secs(15));
         let mut reader3 = std::io::BufReader::new(socket3.try_clone().unwrap());
         line.clear();
         content_len = 0;
@@ -1227,7 +1249,7 @@ fn test_cli_jmap_ingestion_and_help() {
         drop(socket3);
 
         // 4. Email/get request
-        let (mut socket4, _) = listener.accept().unwrap();
+        let mut socket4 = accept_with_timeout(&listener, std::time::Duration::from_secs(15));
         let mut reader4 = std::io::BufReader::new(socket4.try_clone().unwrap());
         line.clear();
         content_len = 0;
@@ -1430,4 +1452,130 @@ fn test_cli_checkpoint_resumption_and_atomic_save() {
 
     assert_eq!(resume_res.get("already_migrated").and_then(|v| v.as_u64()), Some(4));
     assert_eq!(resume_res.get("messages_written").and_then(|v| v.as_u64()), Some(0));
+}
+
+#[test]
+fn test_ediscovery_search_and_html_index_manifest_deliverables() {
+    use std::fs;
+    use std::process::Command;
+
+    let temp = tempdir().expect("Failed to create tempdir");
+    let source_dir = temp.path().join("Thunderbird").join("ImapMail");
+    fs::create_dir_all(&source_dir).unwrap();
+
+    // 1. Create Thunderbird extensionless MBOX + .msf
+    let inbox_mbox = source_dir.join("INBOX");
+    let inbox_msf = source_dir.join("INBOX.msf");
+    fs::write(&inbox_msf, b"// <!-- <mdb:mork:z v=\"1.4\"/> -->").unwrap();
+
+    let mbox_content = concat!(
+        "From mailer-daemon@corp.local Mon Nov 8 10:00:00 2026\r\n",
+        "Message-ID: <msg001@discovery.local>\r\n",
+        "Date: Mon, 8 Nov 2026 10:00:00 +0000\r\n",
+        "From: Alice <alice@corp.local>\r\n",
+        "To: Bob <bob@corp.local>\r\n",
+        "Subject: =?UTF-8?Q?RE:_100_Corporate_Blvd_Inspection?=\r\n",
+        "\r\n",
+        "Site review at 100 Corporate Boulevard went smoothly.\r\n",
+        "\r\n",
+        "From mailer-daemon@corp.local Mon Nov 8 11:00:00 2026\r\n",
+        "Message-ID: <msg002@discovery.local>\r\n",
+        "Date: Mon, 8 Nov 2026 11:00:00 +0000\r\n",
+        "From: Charlie <charlie@corp.local>\r\n",
+        "To: Counsel <counsel@corp.local>\r\n",
+        "Subject: Unrelated invoice notice\r\n",
+        "\r\n",
+        "Routine utility bill for November.\r\n",
+        "\r\n",
+        "From mailer-daemon@corp.local Mon Nov 8 12:00:00 2026\r\n",
+        "Message-ID: <msg003@discovery.local>\r\n",
+        "Date: Mon, 8 Nov 2026 12:00:00 +0000\r\n",
+        "From: Legal <legal@enterprise.local>\r\n",
+        "To: Bob <bob@corp.local>\r\n",
+        "Subject: =?UTF-8?Q?500_Enterprise_Way_Agreement_Draft?=\r\n",
+        "\r\n",
+        "Attached draft agreement for 500 Enterprise project.\r\n",
+        "\r\n"
+    );
+    fs::write(&inbox_mbox, mbox_content.as_bytes()).unwrap();
+
+    // 2. Create search rules file
+    let rules_path = temp.path().join("search_rules.toml");
+    let rules_toml = r#"
+[[rules]]
+tag = "CORPORATE"
+description = "Corporate Blvd address variants"
+pattern = "100\\s*Corporate"
+
+[[rules]]
+tag = "ENTERPRISE"
+description = "Enterprise Way project"
+pattern = "500\\s*Enterprise"
+"#;
+    fs::write(&rules_path, rules_toml).unwrap();
+
+    // 3. Test CLI Search with HTML index & Manifest CSV
+    let eml_out_dir = temp.path().join("search_eml_out");
+    let manifest_path = temp.path().join("master_manifest.csv");
+
+    let bin_path = env!("CARGO_BIN_EXE_mail2rust");
+    let status = Command::new(bin_path)
+        .arg("search")
+        .arg(&source_dir)
+        .arg(&eml_out_dir)
+        .arg("--rules")
+        .arg(&rules_path)
+        .arg("--html-index")
+        .arg("--manifest-csv")
+        .arg(&manifest_path)
+        .arg("--format")
+        .arg("eml")
+        .status()
+        .expect("Execution of mail2rust search failed");
+
+    assert!(status.success(), "mail2rust search CLI exited with failure");
+
+    // Verify HTML Index
+    let index_path = eml_out_dir.join("index.html");
+    assert!(index_path.exists(), "index.html should exist");
+    let html = fs::read_to_string(&index_path).unwrap();
+    assert!(html.contains("e-Discovery Search Results"));
+    assert!(html.contains("RE: 100 Corporate Blvd Inspection"));
+    assert!(html.contains("500 Enterprise Way Agreement Draft"));
+    assert!(html.contains("CORPORATE"));
+    assert!(html.contains("ENTERPRISE"));
+    assert!(html.contains("sortTable"));
+    assert!(html.contains("filterTable"));
+    assert!(!html.contains("Unrelated invoice notice")); // filtered out
+
+    // Verify Manifest CSV
+    assert!(manifest_path.exists(), "master_manifest.csv should exist");
+    let manifest = fs::read_to_string(&manifest_path).unwrap();
+    assert!(manifest.contains("Message_ID,Date,From,To,Subject,Size_Bytes,Matched_Keywords"));
+    assert!(manifest.contains("msg001@discovery.local"));
+    assert!(manifest.contains("msg003@discovery.local"));
+    assert!(!manifest.contains("msg002@discovery.local")); // filtered out
+
+    // 4. Test Convert with --search-rules directly into PST
+    let pst_out = temp.path().join("search_production.pst");
+    let convert_status = Command::new(bin_path)
+        .arg("convert")
+        .arg(&source_dir)
+        .arg(&pst_out)
+        .arg("--search-rules")
+        .arg(&rules_path)
+        .status()
+        .expect("Execution of mail2rust convert with search rules failed");
+
+    assert!(
+        convert_status.success(),
+        "mail2rust convert with search rules exited with failure"
+    );
+    assert!(pst_out.exists(), "search_production.pst should exist");
+
+    // Validate PST container integrity
+    let p_file = File::open(&pst_out).expect("open generated PST");
+    let report = PstValidator::validate(p_file).expect("validate PST");
+    assert!(report.is_valid, "PST container must be valid");
+    assert!(report.crc_match, "PST CRC must match");
 }

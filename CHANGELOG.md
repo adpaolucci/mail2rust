@@ -5,6 +5,36 @@ All notable changes to `mail2rust` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-11-08
+
+### Added
+- **Multi-Pattern Regex Search Engine (`mail2rust-filter` & `mail2rust search`)**:
+  - Implemented `MultiPatternMatcher` using compiled zero-copy DFA `regex::bytes::RegexSetBuilder` evaluating multiple complex keyword rules simultaneously in microseconds per message with zero heap allocations.
+  - Added support for loading search rules from `.toml` (`[[rules]]`), `.json`, and line-delimited `.rules` files (`TAG | description | regex`).
+  - Added dedicated `mail2rust search` subcommand and `--search-rules <FILE>` / `--search-pattern <REGEX>` flags to `mail2rust convert`.
+- **Production e-Discovery Deliverables: Interactive HTML Index & Chain-of-Custody Manifest CSV (`mail2rust-eml`)**:
+  - Implemented `HtmlIndexGenerator` producing self-contained, responsive `index.html` discovery reviews with sticky headers, instant client-side search filtering, interactive column sorting (subject, sender, date, tags, size), and clickable relative links to `.eml` files without any external CDN dependencies.
+  - Implemented `ManifestWriter` logging comprehensive chain-of-custody CSVs (`Message_ID, Date, From, To, Subject, Size_Bytes, Matched_Keywords, Source_Container, SHA256_Hash, EML_File`) with RFC 4180 escaping.
+  - Added `--html-index` and `--manifest-csv <PATH>` CLI options to `mail2rust eml`, `mail2rust convert`, and `mail2rust search`.
+- **Native Thunderbird Profile Detection & Format Sniffing (`mail2rust-core`)**:
+  - Added `MailboxFormat::ThunderbirdProfile` in `FormatSniffer` detecting profile directories containing `profiles.ini`, `prefs.js`, `ImapMail`, `Mail`, or `.sbd` trees.
+  - Automatically recognizes extensionless Unix mboxrd files paired with `.msf` companion files or starting with `From `.
+  - Automatically skips `.msf` summary files, `.dat` rules, and temporary cache files from ingestion loops.
+  - Recursively flattens folder trees while stripping `.sbd` directory extensions.
+- **Bounded Constant-Memory Streaming MBOX Pipeline (`mail2rust-core` & `mail2rust-mbox`)**:
+  - Replaced monolithic whole-file buffering (`std::fs::read`) with incremental chunked streaming via `MboxReader::read_streaming` using 16 MB buffered readers.
+  - Added `ingest_path_streaming` in `mail2rust-core` maintaining constant <50 MB RAM footprints even when ingesting multi-gigabyte monolithic mailboxes (e.g., 90+ GB `INBOX`).
+  - Added `read_streaming_raw` for zero-allocation regex evaluation on raw message byte streams prior to MIME parsing.
+- **RFC 2047 MIME Header Decoding & Filename Sanitization (`mail2rust-core`)**:
+  - Implemented comprehensive `decode_rfc2047` in `mail2rust-core::rfc2047` supporting both Base64 (`B`) and Quoted-Printable (`Q`) encodings with linear whitespace suppression across adjacent encoded words.
+  - Supports international character sets (UTF-8, ISO-8859-1, Windows-1252, US-ASCII).
+  - Integrated header decoding into `sanitize_filename` and `EmlExporter` to eliminate illegible encoded-word filenames and review rows.
+
+### Fixed
+- **PST Block B-Tree (BBT) & Node B-Tree (NBT) Truncation Bug (`mail2rust-pst`)**:
+  - Fixed reader truncation bug in `crates/mail2rust-pst/src/reader.rs` where stack buffers and single-slice `Read::read` truncated container audits at 341 blocks / 339 messages on large PST files.
+  - Implemented dynamic buffer sizing with bounded `read_to_end` sweeps over `BBT` and `NBT` regions, restoring full fidelity auditing and verification across 30,000+ item containers.
+
 ## [3.3.1] - 2026-11-08
 
 ### Added

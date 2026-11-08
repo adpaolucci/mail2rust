@@ -1,3 +1,5 @@
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +23,7 @@ pub enum MailboxFormat {
     Icalendar,
     Zip,
     Gz,
+    ThunderbirdProfile,
     Unknown,
 }
 
@@ -46,6 +49,7 @@ impl MailboxFormat {
             Self::Icalendar => "iCalendar Events & Meetings (ICS)",
             Self::Zip => "Compressed Archive (ZIP / Takeout)",
             Self::Gz => "Gzip Compressed Stream (GZ)",
+            Self::ThunderbirdProfile => "Mozilla Thunderbird Profile / Mail Tree",
             Self::Unknown => "Unknown / Unrecognized Format",
         }
     }
@@ -56,6 +60,33 @@ pub struct FormatSniffer;
 impl FormatSniffer {
     pub fn sniff_path(path: &Path) -> MailboxFormat {
         if path.is_dir() {
+            // Check for Thunderbird Profile / Mail Tree
+            if path.join("profiles.ini").is_file()
+                || path.join("prefs.js").is_file()
+                || path.join("ImapMail").is_dir()
+                || path.join("Mail").is_dir()
+            {
+                return MailboxFormat::ThunderbirdProfile;
+            }
+
+            // Check if folder contains .sbd directories or .msf files
+            if let Ok(entries) = std::fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                        if name.ends_with(".sbd") || name == "ImapMail" || name == "Mail" {
+                            return MailboxFormat::ThunderbirdProfile;
+                        }
+                    } else if p.is_file() {
+                        let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+                        if ext == "msf" {
+                            return MailboxFormat::ThunderbirdProfile;
+                        }
+                    }
+                }
+            }
+
             // Check for Maildir
             if path.join("cur").is_dir() && path.join("new").is_dir() {
                 return MailboxFormat::Maildir;
@@ -68,10 +99,34 @@ impl FormatSniffer {
         }
 
         let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-        let bytes = match std::fs::read(path) {
-            Ok(b) => b,
+
+        // Skip Thunderbird index & filter metadata files
+        if extension == "msf" || extension == "dat" {
+            return MailboxFormat::Unknown;
+        }
+
+        // Check for extensionless Thunderbird MBOX
+        if extension.is_empty() {
+            if path.with_extension("msf").is_file() {
+                return MailboxFormat::Mbox;
+            }
+            if let Some(parent) = path.parent() {
+                let pname = parent.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                if pname.ends_with(".sbd") || pname == "ImapMail" || pname == "Mail" {
+                    return MailboxFormat::Mbox;
+                }
+            }
+        }
+
+        // Bounded header read (max 8192 bytes) to avoid OOM on multi-gigabyte mailboxes
+        let mut f = match File::open(path) {
+            Ok(f) => f,
             Err(_) => return Self::from_extension(&extension),
         };
+
+        let mut bytes = vec![0u8; 8192];
+        let n = f.read(&mut bytes).unwrap_or(0);
+        bytes.truncate(n);
 
         Self::sniff_bytes(&bytes, &extension)
     }
@@ -174,5 +229,33 @@ impl FormatSniffer {
             "gz" | "tgz" => MailboxFormat::Gz,
             _ => MailboxFormat::Unknown,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_thunderbird_sniffer() {
+        let temp_dir = std::env::temp_dir().join(format!("tb_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let imap_dir = temp_dir.join("ImapMail");
+        let _ = std::fs::create_dir_all(&imap_dir);
+
+        assert_eq!(FormatSniffer::sniff_path(&temp_dir), MailboxFormat::ThunderbirdProfile);
+
+        let inbox_file = imap_dir.join("INBOX");
+        let msf_file = imap_dir.join("INBOX.msf");
+        let _ = std::fs::write(
+            &inbox_file,
+            b"From mailer-daemon Mon Nov 8 00:00:00 2026\r\nSubject: Hi\r\n\r\nBody",
+        );
+        let _ = std::fs::write(&msf_file, b"// <!-- <mdb:mork:z v=\"1.4\"/> -->");
+
+        assert_eq!(FormatSniffer::sniff_path(&inbox_file), MailboxFormat::Mbox);
+        assert_eq!(FormatSniffer::sniff_path(&msf_file), MailboxFormat::Unknown);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

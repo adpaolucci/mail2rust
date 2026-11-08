@@ -3,14 +3,14 @@ use clap::{Parser, Subcommand, ValueEnum};
 use mail2rust_core::{
     init_logging, EmailMessage, FormatSniffer, MailboxMerger, MergeFolderStrategy, MergeOptions, MergeSourceConfig,
 };
-use mail2rust_eml::{EmlExporter, EmlLayout, EmlNaming};
+use mail2rust_eml::{EmlExporter, EmlLayout, EmlNaming, ManifestRecord, ManifestWriter};
 use mail2rust_filter::{
-    parse_cli_datetime, parse_size_bytes, DateFilter, DedupEngine, DedupStrategy, FolderFilter, SplitConfig, SplitMode,
-    VolumeSplitter,
+    parse_cli_datetime, parse_size_bytes, DateFilter, DedupEngine, DedupStrategy, FolderFilter, MultiPatternMatcher,
+    SplitConfig, SplitMode, VolumeSplitter,
 };
 use mail2rust_forensics::{BatesRange, ForensicEngine};
 use mail2rust_imap::{ImapAuthMethod, OAuthProvider};
-use mail2rust_mbox::MboxFileExporter;
+use mail2rust_mbox::{MboxFileExporter, MboxWriter};
 use mail2rust_pst::{PstEncryption, PstReader, PstValidator, PstWriter};
 use mail2rust_sync::CheckpointManager;
 use std::fs::File;
@@ -41,7 +41,7 @@ mod samples;
 #[command(
     name = "mail2rust",
     author = "Anthony D. Paolucci <adpaolucci@gmail.com>",
-    version = "3.3.0",
+    version = "3.4.0",
     about = "Universal high-performance offline email & mailbox converter in 100% pure Rust"
 )]
 struct Cli {
@@ -163,6 +163,18 @@ enum Commands {
         encryption: CliPstEncryption,
         #[arg(long)]
         password: Option<String>,
+        /// Filter by search rules file (.toml, .json, or .rules text)
+        #[arg(long)]
+        search_rules: Option<PathBuf>,
+        /// Filter by regex pattern
+        #[arg(long)]
+        search_pattern: Option<String>,
+        /// Automatically generate clickable, sortable index.html in output directory
+        #[arg(long)]
+        html_index: bool,
+        /// Path for chain-of-custody CSV manifest export
+        #[arg(long)]
+        manifest_csv: Option<PathBuf>,
     },
     /// Convert any source into Microsoft Outlook PST (pure Rust, zero Outlook required)
     Pst {
@@ -201,6 +213,40 @@ enum Commands {
         naming: String,
         #[arg(long, default_value = "0")]
         max_per_dir: usize,
+        /// Automatically generate clickable, sortable index.html in output directory
+        #[arg(long)]
+        html_index: bool,
+        /// Path for chain-of-custody CSV manifest export
+        #[arg(long)]
+        manifest_csv: Option<PathBuf>,
+    },
+    /// High-throughput zero-copy regex e-Discovery search and extraction
+    Search {
+        /// Source directory, Thunderbird profile, MBOX, or PST
+        source: PathBuf,
+        /// Destination directory for matched messages and deliverables
+        destination: PathBuf,
+        /// Path to search rules file (.toml, .json, or .rules text)
+        #[arg(long, short = 'r')]
+        rules: Option<PathBuf>,
+        /// Inline regex pattern(s) to match
+        #[arg(long, short = 'p')]
+        pattern: Vec<String>,
+        /// Target output format: 'eml', 'pst', 'mbox', or 'manifest-only'
+        #[arg(long, default_value = "eml")]
+        format: String,
+        /// Automatically generate clickable, sortable index.html in output directory
+        #[arg(long)]
+        html_index: bool,
+        /// Path for chain-of-custody CSV manifest export
+        #[arg(long)]
+        manifest_csv: Option<PathBuf>,
+        /// PST container encryption ('none', 'permute', 'cyclic')
+        #[arg(long, default_value = "permute")]
+        encryption: CliPstEncryption,
+        /// Optional password for PST container
+        #[arg(long)]
+        password: Option<String>,
     },
     /// Convert any source into standard mboxrd MBOX file
     Mbox {
@@ -590,7 +636,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             flatten,
             encryption,
             password,
+            search_rules,
+            search_pattern,
+            html_index,
+            manifest_csv,
         } => {
+            if search_rules.is_some() || search_pattern.is_some() {
+                let patterns: Vec<String> = search_pattern.iter().cloned().collect();
+                let fmt = destination.extension().and_then(|e| e.to_str()).unwrap_or("eml");
+                return run_search_discovery(
+                    &cli,
+                    source,
+                    destination,
+                    search_rules.as_deref(),
+                    &patterns,
+                    fmt,
+                    *html_index,
+                    manifest_csv.as_deref(),
+                    (*encryption).into(),
+                    password.as_deref(),
+                );
+            }
+
             let dest_ext = destination
                 .extension()
                 .and_then(|e| e.to_str())
@@ -622,7 +689,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let compress = dest_ext == "gz";
                 run_mbox_conversion(&cli, source, destination, compress, false)?;
             } else {
-                run_eml_conversion(&cli, source, destination, "folder", "subject", 0)?;
+                run_eml_conversion(
+                    &cli,
+                    source,
+                    destination,
+                    "folder",
+                    "subject",
+                    0,
+                    *html_index,
+                    manifest_csv.as_deref(),
+                )?;
             }
         }
 
@@ -672,8 +748,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             layout,
             naming,
             max_per_dir,
+            html_index,
+            manifest_csv,
         } => {
-            run_eml_conversion(&cli, source, destination, layout, naming, *max_per_dir)?;
+            run_eml_conversion(
+                &cli,
+                source,
+                destination,
+                layout,
+                naming,
+                *max_per_dir,
+                *html_index,
+                manifest_csv.as_deref(),
+            )?;
+        }
+
+        Commands::Search {
+            source,
+            destination,
+            rules,
+            pattern,
+            format,
+            html_index,
+            manifest_csv,
+            encryption,
+            password,
+        } => {
+            run_search_discovery(
+                &cli,
+                source,
+                destination,
+                rules.as_deref(),
+                pattern,
+                format,
+                *html_index,
+                manifest_csv.as_deref(),
+                (*encryption).into(),
+                password.as_deref(),
+            )?;
         }
 
         Commands::Mbox {
@@ -1762,6 +1874,7 @@ fn write_single_pst(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_eml_conversion(
     cli: &Cli,
     source: &Path,
@@ -1769,6 +1882,8 @@ fn run_eml_conversion(
     layout_str: &str,
     naming_str: &str,
     max_per_dir: usize,
+    html_index: bool,
+    manifest_csv: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!(source = ?source, dest = ?destination, layout = layout_str, "Starting EML export");
     let mut messages = ingest_source(source)?;
@@ -1794,6 +1909,18 @@ fn run_eml_conversion(
     let mut exporter = EmlExporter::new(destination, layout)
         .with_naming(naming)
         .with_max_per_dir(max_per_dir);
+
+    if html_index {
+        let title = format!(
+            "e-Discovery Production Index - {}",
+            source.file_name().and_then(|s| s.to_str()).unwrap_or("Mailbox")
+        );
+        exporter = exporter.with_html_index(title);
+    }
+
+    if let Some(man_path) = manifest_csv {
+        exporter = exporter.with_manifest_csv(man_path)?;
+    }
 
     for (idx, m) in messages.iter().enumerate() {
         if is_shutdown_requested() {
@@ -1826,8 +1953,235 @@ fn run_eml_conversion(
         exporter.export_message(m)?;
     }
 
+    exporter.finalize()?;
+
     println!("Exported {} EML messages to {}", messages.len(), destination.display());
+    if html_index {
+        println!("Interactive HTML Index: {}", destination.join("index.html").display());
+    }
+    if let Some(man_path) = manifest_csv {
+        println!("Master Manifest CSV:    {}", man_path.display());
+    }
     post_process(cli, &messages, source, destination)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_search_discovery(
+    _cli: &Cli,
+    source: &Path,
+    destination: &Path,
+    rules_file: Option<&Path>,
+    patterns: &[String],
+    format_str: &str,
+    html_index: bool,
+    manifest_csv: Option<&Path>,
+    encryption: PstEncryption,
+    password: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let t_start = std::time::Instant::now();
+    println!("================================================================================");
+    println!("   mail2rust High-Throughput e-Discovery Regex Search & Extraction Engine       ");
+    println!("================================================================================");
+    println!("[*] Source:       {}", source.display());
+    println!("[*] Destination:  {}", destination.display());
+
+    // 1. Compile Matcher
+    let matcher = if let Some(rf) = rules_file {
+        println!("[*] Loading search rules from: {}", rf.display());
+        MultiPatternMatcher::from_file(rf)?
+    } else if !patterns.is_empty() {
+        println!("[*] Compiling {} inline regex pattern(s)...", patterns.len());
+        MultiPatternMatcher::from_patterns(patterns.iter().map(|s| s.as_str()))?
+    } else {
+        return Err("No search rules or patterns provided. Use --rules <FILE> or -p <REGEX>.".into());
+    };
+
+    println!(
+        "[+] Compiled {} search rule(s) into zero-copy DFA RegexSet successfully",
+        matcher.len()
+    );
+    for r in matcher.rules() {
+        println!("    [{:<10}] {:<40} -> {}", r.tag, r.description, r.pattern);
+    }
+
+    // 2. Setup outputs based on format
+    let fmt = format_str.to_lowercase();
+    let is_pst = fmt == "pst" || destination.extension().and_then(|e| e.to_str()) == Some("pst");
+    let is_mbox = fmt == "mbox" || destination.extension().and_then(|e| e.to_str()) == Some("mbox");
+    let is_manifest_only = fmt == "manifest-only";
+
+    if (is_pst || is_mbox) && destination.extension().is_some() {
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+    } else {
+        std::fs::create_dir_all(destination)?;
+    }
+
+    let manifest_path = if let Some(man) = manifest_csv {
+        man.to_path_buf()
+    } else if (is_pst || is_mbox) && destination.extension().is_some() {
+        destination.with_extension("csv")
+    } else {
+        destination.join("search_manifest.csv")
+    };
+    let mut manifest_writer = ManifestWriter::create_file(&manifest_path)?;
+
+    // Output containers
+    let mut pst_writer = if is_pst {
+        let pst_file_path = if destination.extension().and_then(|e| e.to_str()) == Some("pst") {
+            destination.to_path_buf()
+        } else {
+            destination.join("search_results.pst")
+        };
+        let file = File::create(&pst_file_path)?;
+        let mut pw = PstWriter::with_encryption(file, encryption, password.map(|s| s.to_string()))?;
+        let folder_nid = pw.add_folder("Search Results", None)?;
+        Some((pw, folder_nid, pst_file_path))
+    } else {
+        None
+    };
+
+    let mut mbox_writer = if is_mbox {
+        let mbox_file_path = if destination.extension().and_then(|e| e.to_str()) == Some("mbox") {
+            destination.to_path_buf()
+        } else {
+            destination.join("search_results.mbox")
+        };
+        let file = File::create(&mbox_file_path)?;
+        Some((MboxWriter::new(file), mbox_file_path))
+    } else {
+        None
+    };
+
+    let mut eml_exporter = if !is_pst && !is_mbox && !is_manifest_only {
+        let mut exp = EmlExporter::new(destination, EmlLayout::Flat).with_naming(EmlNaming::Subject);
+        if html_index {
+            let title = format!(
+                "e-Discovery Search Results - {}",
+                source.file_name().and_then(|s| s.to_str()).unwrap_or("Production")
+            );
+            exp = exp.with_html_index(title);
+        }
+        Some(exp)
+    } else {
+        None
+    };
+
+    // 3. Streaming Ingestion & Evaluation
+    let mut total_evaluated = 0usize;
+    let mut total_matched = 0usize;
+    let mut rule_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+    println!("\n[*] Streaming mailbox source and evaluating rules in real time...");
+
+    mail2rust_core::ingest_path_streaming(source, |msg| {
+        total_evaluated += 1;
+        if total_evaluated.is_multiple_of(5000) {
+            eprint!(
+                "\r[*] Evaluated {} messages | {} matched...",
+                total_evaluated, total_matched
+            );
+        }
+
+        if is_shutdown_requested() {
+            return Err("User interrupted search operation".into());
+        }
+
+        // Evaluate against search rules
+        if let Some(matches) = matcher.matches_message(&msg) {
+            total_matched += 1;
+            let mut matched_tags = Vec::new();
+            for m in matches {
+                *rule_counts.entry(m.tag.clone()).or_insert(0) += 1;
+                matched_tags.push(m.tag);
+            }
+            let tags_str = matched_tags.join(";");
+
+            let mut eml_rel = String::new();
+
+            if let Some(ref mut exp) = eml_exporter {
+                if let Ok(p) = exp.export_message_annotated(&msg, &tags_str, &msg.source_format) {
+                    eml_rel = p.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                }
+            } else if let Some((ref mut pw, folder_nid, _)) = pst_writer {
+                pw.add_message(&msg, folder_nid)?;
+            } else if let Some((ref mut mb, _)) = mbox_writer {
+                mb.write_message(&msg)?;
+            }
+
+            let to_str = msg.to.iter().map(|a| a.to_string()).collect::<Vec<_>>().join("; ");
+            manifest_writer.write_record(&ManifestRecord {
+                message_id: msg.message_id.clone(),
+                date: msg.date.to_rfc3339(),
+                from: msg.from.to_string(),
+                to: to_str,
+                subject: mail2rust_core::decode_rfc2047(&msg.subject),
+                size_bytes: msg.size_bytes.max(msg.raw_mime.len()),
+                matched_keywords: tags_str,
+                source_container: msg.source_format.clone(),
+                sha256_hash: msg.sha256.clone(),
+                eml_filename: eml_rel,
+            })?;
+        }
+
+        Ok(())
+    })?;
+
+    // 4. Finalize outputs
+    manifest_writer.flush()?;
+
+    if let Some(ref mut exp) = eml_exporter {
+        exp.finalize()?;
+    }
+    if let Some((mut pw, _, ref pst_path)) = pst_writer {
+        pw.finalize()?;
+        println!(
+            "[+] Successfully assembled verified PST: {} ({:.2} MB)",
+            pst_path.display(),
+            std::fs::metadata(pst_path)?.len() as f64 / (1024.0 * 1024.0)
+        );
+    }
+    if let Some((mut mb, ref mbox_path)) = mbox_writer {
+        mb.flush()?;
+        println!(
+            "[+] Successfully assembled MBOX: {} ({:.2} MB)",
+            mbox_path.display(),
+            std::fs::metadata(mbox_path)?.len() as f64 / (1024.0 * 1024.0)
+        );
+    }
+
+    let elapsed = t_start.elapsed().as_secs_f64();
+    println!("\n================================================================================");
+    println!("                     SEARCH & EXTRACTION COMPLETED                              ");
+    println!("================================================================================");
+    println!("Total Messages Evaluated:     {}", total_evaluated);
+    println!("Total Relevant Messages Found: {}", total_matched);
+    println!(
+        "Total Elapsed Time:           {:.2}s ({:.1} msgs/sec)",
+        elapsed,
+        if elapsed > 0.0 {
+            total_evaluated as f64 / elapsed
+        } else {
+            0.0
+        }
+    );
+    println!("Master Manifest CSV:          {}", manifest_path.display());
+    if html_index {
+        println!(
+            "Interactive HTML Index:       {}",
+            destination.join("index.html").display()
+        );
+    }
+    println!("--------------------------------------------------------------------------------");
+    println!("Matches per Rule:");
+    for r in matcher.rules() {
+        let cnt = rule_counts.get(&r.tag).copied().unwrap_or(0);
+        println!("  [{:<10}] {:<40} : {:>6} matches", r.tag, r.description, cnt);
+    }
+    println!("================================================================================");
+
     Ok(())
 }
 
