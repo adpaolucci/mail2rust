@@ -9,10 +9,10 @@ use mail2rust_filter::{
     VolumeSplitter,
 };
 use mail2rust_forensics::{BatesRange, ForensicEngine};
+use mail2rust_imap::{ImapAuthMethod, OAuthProvider};
 use mail2rust_mbox::MboxFileExporter;
 use mail2rust_pst::{PstEncryption, PstReader, PstValidator, PstWriter};
 use mail2rust_sync::CheckpointManager;
-use mail2rust_imap::{ImapAuthMethod, OAuthProvider};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use tracing::info;
@@ -767,7 +767,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let auth: ImapAuthMethod = auth_method
                 .parse()
                 .map_err(|e: String| format!("Invalid --auth-method: {}", e))?;
-            let oauth_tok = oauth_token.clone().or_else(|| std::env::var("MAIL2RUST_OAUTH_TOKEN").ok());
+            let oauth_tok = oauth_token
+                .clone()
+                .or_else(|| std::env::var("MAIL2RUST_OAUTH_TOKEN").ok());
 
             let pass = if auth != ImapAuthMethod::Password {
                 oauth_tok.clone().unwrap_or_default()
@@ -930,7 +932,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let src_auth: ImapAuthMethod = src_auth_method
                 .parse()
                 .map_err(|e: String| format!("Invalid --src-auth-method: {}", e))?;
-            let src_oauth = src_oauth_token.clone().or_else(|| std::env::var("MAIL2RUST_SRC_OAUTH_TOKEN").ok());
+            let src_oauth = src_oauth_token
+                .clone()
+                .or_else(|| std::env::var("MAIL2RUST_SRC_OAUTH_TOKEN").ok());
 
             let s_pass = if src_auth != ImapAuthMethod::Password {
                 src_oauth.clone().unwrap_or_default()
@@ -952,7 +956,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let dst_auth: ImapAuthMethod = dst_auth_method
                 .parse()
                 .map_err(|e: String| format!("Invalid --dst-auth-method: {}", e))?;
-            let dst_oauth = dst_oauth_token.clone().or_else(|| std::env::var("MAIL2RUST_DST_OAUTH_TOKEN").ok());
+            let dst_oauth = dst_oauth_token
+                .clone()
+                .or_else(|| std::env::var("MAIL2RUST_DST_OAUTH_TOKEN").ok());
 
             let d_pass = if dst_auth != ImapAuthMethod::Password {
                 dst_oauth.clone().unwrap_or_default()
@@ -1149,7 +1155,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  {}\n", auth_url);
 
             if cfg!(windows) {
-                let _ = std::process::Command::new("cmd").args(["/C", "start", "", &auth_url]).spawn();
+                let _ = std::process::Command::new("cmd")
+                    .args(["/C", "start", "", &auth_url])
+                    .spawn();
             } else if cfg!(target_os = "macos") {
                 let _ = std::process::Command::new("open").arg(&auth_url).spawn();
             } else {
@@ -1194,7 +1202,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let tokens = mail2rust_imap::exchange_code_for_token(prov, client_id, client_secret, &code, &redirect_uri)?;
 
             println!("\nTokens Acquired Successfully!");
-            println!("Access Token:  {}...", &tokens.access_token[..tokens.access_token.len().min(24)]);
+            println!(
+                "Access Token:  {}...",
+                &tokens.access_token[..tokens.access_token.len().min(24)]
+            );
             if let Some(ref rt) = tokens.refresh_token {
                 println!("Refresh Token: {}...", &rt[..rt.len().min(24)]);
             }
@@ -1232,7 +1243,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Connecting to JMAP session: {}...", session_url);
             let mut client = mail2rust_imap::jmap::JmapClient::new(session_url, &tok);
             client.connect()?;
-            println!("Authenticated to JMAP account: {}", client.account_id().unwrap_or("primary"));
+            println!(
+                "Authenticated to JMAP account: {}",
+                client.account_id().unwrap_or("primary")
+            );
 
             let chk_path = checkpoint.as_ref().map(|p| p.as_path());
             let mut chk = if let Some(p) = chk_path {
@@ -1240,16 +1254,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Resuming migration from checkpoint: {}", p.display());
                     CheckpointManager::load(p)?
                 } else {
-                    CheckpointManager::new_checkpoint(
-                        session_url,
-                        &output.display().to_string(),
-                    )
+                    CheckpointManager::new_checkpoint(session_url, &output.display().to_string())
                 }
             } else {
-                CheckpointManager::new_checkpoint(
-                    session_url,
-                    &output.display().to_string(),
-                )
+                CheckpointManager::new_checkpoint(session_url, &output.display().to_string())
             };
 
             let folder_filter = if folders.is_empty() {
@@ -1270,7 +1278,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = std::io::stdout().flush();
                 messages.push(msg);
             })?;
-            println!("\nFetched {} messages from JMAP server ({} newly synced).", messages.len(), count);
+            println!(
+                "\nFetched {} messages from JMAP server ({} newly synced).",
+                messages.len(),
+                count
+            );
 
             apply_preprocessing(&cli, &mut messages)?;
 
@@ -1331,16 +1343,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("\n======================================================================");
             println!("         PROVIDER APP PASSWORDS SETUP GUIDE (RECOMMENDED)");
             println!("======================================================================");
-            println!("Modern email services require an 'App Password' for IMAP access\n\
+            println!(
+                "Modern email services require an 'App Password' for IMAP access\n\
                      unless using an enterprise OAuth2 registered client. App passwords\n\
                      are 16-character codes that bypass 2-Factor Authentication prompts\n\
-                     specifically for desktop email utilities like Mail2Rust.\n");
+                     specifically for desktop email utilities like Mail2Rust.\n"
+            );
 
             let p_lower = provider.to_lowercase();
             let show_google = p_lower == "all" || p_lower == "google" || p_lower == "gmail";
             let show_ms = p_lower == "all" || p_lower == "microsoft" || p_lower == "outlook" || p_lower == "office365";
             let show_yahoo = p_lower == "all" || p_lower == "yahoo" || p_lower == "aol";
-            let show_proton = p_lower == "all" || p_lower == "proton" || p_lower == "protonmail" || p_lower == "bridge" || p_lower == "pm";
+            let show_proton = p_lower == "all"
+                || p_lower == "proton"
+                || p_lower == "protonmail"
+                || p_lower == "bridge"
+                || p_lower == "pm";
             let show_apple = p_lower == "all" || p_lower == "apple" || p_lower == "icloud" || p_lower == "me";
             let show_fastmail = p_lower == "all" || p_lower == "fastmail";
             let show_zoho = p_lower == "all" || p_lower == "zoho";
@@ -1407,10 +1425,7 @@ fn run_merge_conversion(
         .parse()
         .map_err(|e: String| format!("Invalid --folder-strategy: {}", e))?;
 
-    let dedup_strategy = cli
-        .dedup
-        .map(Into::into)
-        .unwrap_or(DedupStrategy::MessageId);
+    let dedup_strategy = cli.dedup.map(Into::into).unwrap_or(DedupStrategy::MessageId);
 
     let prefix_list: Vec<&str> = if let Some(prefixes) = source_prefixes {
         prefixes.split(',').map(|s| s.trim()).collect()
@@ -1503,10 +1518,7 @@ fn run_merge_conversion(
             println!("Exported {} merged PST volumes successfully", volumes.len());
         } else {
             write_single_pst(&merged_messages, destination, encryption, password, None, false)?;
-            println!(
-                "Merged output successfully saved to: {}",
-                destination.display()
-            );
+            println!("Merged output successfully saved to: {}", destination.display());
         }
     } else if is_mbox {
         if let Some(parent) = destination.parent() {
@@ -1514,10 +1526,7 @@ fn run_merge_conversion(
         }
         let compress = dest_ext == "gz" || destination.to_string_lossy().ends_with(".mbox.gz");
         MboxFileExporter::export_to_file_options(&merged_messages, destination, compress, false)?;
-        println!(
-            "Merged output successfully saved to: {}",
-            destination.display()
-        );
+        println!("Merged output successfully saved to: {}", destination.display());
     } else {
         // EML directory tree
         let layout = match eml_layout_str.to_lowercase().as_str() {
@@ -1530,10 +1539,7 @@ fn run_merge_conversion(
         for m in &merged_messages {
             exporter.export_message(m)?;
         }
-        println!(
-            "Merged output successfully saved to: {}",
-            destination.display()
-        );
+        println!("Merged output successfully saved to: {}", destination.display());
     }
 
     println!("======================================================================\n");

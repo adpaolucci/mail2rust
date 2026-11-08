@@ -212,13 +212,15 @@ impl ImapClient {
 
         let client = imap::Client::new(stream);
         let session = match self.config.auth_method {
-            ImapAuthMethod::Password => client
-                .login(&self.config.username, &self.config.password)
-                .map_err(|(err, _)| {
-                    let diag = diagnose_auth_failure(&self.config.host, &err.to_string());
-                    warn!("{}", diag);
-                    ImapClientError::from(err)
-                })?,
+            ImapAuthMethod::Password => {
+                client
+                    .login(&self.config.username, &self.config.password)
+                    .map_err(|(err, _)| {
+                        let diag = diagnose_auth_failure(&self.config.host, &err.to_string());
+                        warn!("{}", diag);
+                        ImapClientError::from(err)
+                    })?
+            }
             ImapAuthMethod::XOAuth2 => {
                 let token = self
                     .config
@@ -249,13 +251,11 @@ impl ImapClient {
                     port: self.config.port,
                     access_token: token.to_string(),
                 };
-                client
-                    .authenticate("OAUTHBEARER", &auth)
-                    .map_err(|(err, _)| {
-                        let diag = diagnose_auth_failure(&self.config.host, &err.to_string());
-                        warn!("{}", diag);
-                        ImapClientError::from(err)
-                    })?
+                client.authenticate("OAUTHBEARER", &auth).map_err(|(err, _)| {
+                    let diag = diagnose_auth_failure(&self.config.host, &err.to_string());
+                    warn!("{}", diag);
+                    ImapClientError::from(err)
+                })?
             }
         };
 
@@ -1227,7 +1227,13 @@ mod tests {
                         if parts.len() > 3 {
                             // SASL IR (Initial Response) included on same line
                             socket
-                                .write_all(format!("{} OK [CAPABILITY IMAP4rev1] XOAUTH2 authentication successful\r\n", tag).as_bytes())
+                                .write_all(
+                                    format!(
+                                        "{} OK [CAPABILITY IMAP4rev1] XOAUTH2 authentication successful\r\n",
+                                        tag
+                                    )
+                                    .as_bytes(),
+                                )
                                 .unwrap();
                         } else {
                             // Standard two-step challenge continuation
@@ -1236,7 +1242,13 @@ mod tests {
                             reader.read_line(&mut auth_line).unwrap();
                             assert!(!auth_line.trim().is_empty());
                             socket
-                                .write_all(format!("{} OK [CAPABILITY IMAP4rev1] XOAUTH2 authentication successful\r\n", tag).as_bytes())
+                                .write_all(
+                                    format!(
+                                        "{} OK [CAPABILITY IMAP4rev1] XOAUTH2 authentication successful\r\n",
+                                        tag
+                                    )
+                                    .as_bytes(),
+                                )
                                 .unwrap();
                         }
                     }

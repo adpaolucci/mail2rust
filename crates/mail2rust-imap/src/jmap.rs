@@ -221,8 +221,13 @@ impl JmapClient {
             ]
         });
 
-        let (status, body) = http_request("POST", &session.api_url, Some(&self.token), Some(&request_payload.to_string()))
-            .map_err(|e| JmapError::NetworkError(e.to_string()))?;
+        let (status, body) = http_request(
+            "POST",
+            &session.api_url,
+            Some(&self.token),
+            Some(&request_payload.to_string()),
+        )
+        .map_err(|e| JmapError::NetworkError(e.to_string()))?;
 
         if status != 200 {
             return Err(JmapError::HttpError(status, body).into());
@@ -284,8 +289,13 @@ impl JmapClient {
             ]
         });
 
-        let (status, body) = http_request("POST", &session.api_url, Some(&self.token), Some(&request_payload.to_string()))
-            .map_err(|e| JmapError::NetworkError(e.to_string()))?;
+        let (status, body) = http_request(
+            "POST",
+            &session.api_url,
+            Some(&self.token),
+            Some(&request_payload.to_string()),
+        )
+        .map_err(|e| JmapError::NetworkError(e.to_string()))?;
 
         if status != 200 {
             return Err(JmapError::HttpError(status, body).into());
@@ -347,8 +357,13 @@ impl JmapClient {
             ]
         });
 
-        let (status, body) = http_request("POST", &session.api_url, Some(&self.token), Some(&request_payload.to_string()))
-            .map_err(|e| JmapError::NetworkError(e.to_string()))?;
+        let (status, body) = http_request(
+            "POST",
+            &session.api_url,
+            Some(&self.token),
+            Some(&request_payload.to_string()),
+        )
+        .map_err(|e| JmapError::NetworkError(e.to_string()))?;
 
         if status != 200 {
             return Err(JmapError::HttpError(status, body).into());
@@ -441,10 +456,7 @@ impl JmapClient {
 }
 
 /// Transforms a JMAP Email entity into a Mail2Rust standard EmailMessage container.
-pub fn jmap_item_to_email_message(
-    item: JmapEmailItem,
-    mailbox_map: &HashMap<String, String>,
-) -> EmailMessage {
+pub fn jmap_item_to_email_message(item: JmapEmailItem, mailbox_map: &HashMap<String, String>) -> EmailMessage {
     let folder_path = item
         .mailbox_ids
         .keys()
@@ -582,7 +594,9 @@ fn http_request(
 
     let (host, port) = if let Some(colon) = host_port.find(':') {
         let h = &host_port[..colon];
-        let p: u16 = host_port[colon + 1..].parse().map_err(|e| format!("Invalid port in URL: {}", e))?;
+        let p: u16 = host_port[colon + 1..]
+            .parse()
+            .map_err(|e| format!("Invalid port in URL: {}", e))?;
         (h, p)
     } else {
         (host_port, if is_https { 443 } else { 80 })
@@ -997,9 +1011,11 @@ mod tests {
         let mut checkpoint = mail2rust_sync::CheckpointManager::new_checkpoint("jmap_test", "local");
         let mut ingested = Vec::new();
 
-        let count = client.sync_all(None, &mut checkpoint, |msg| {
-            ingested.push(msg);
-        }).expect("sync all");
+        let count = client
+            .sync_all(None, &mut checkpoint, |msg| {
+                ingested.push(msg);
+            })
+            .expect("sync all");
 
         assert_eq!(count, 1);
         assert_eq!(ingested.len(), 1);

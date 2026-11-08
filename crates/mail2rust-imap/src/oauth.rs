@@ -54,11 +54,7 @@ impl imap::Authenticator for XOAuth2Authenticator {
 
     fn process(&self, _challenge: &[u8]) -> Self::Response {
         // Format: user={user}\x01auth=Bearer {access_token}\x01\x01
-        format!(
-            "user={}\x01auth=Bearer {}\x01\x01",
-            self.username, self.access_token
-        )
-        .into_bytes()
+        format!("user={}\x01auth=Bearer {}\x01\x01", self.username, self.access_token).into_bytes()
     }
 }
 
@@ -282,12 +278,7 @@ impl OAuthTokenResponse {
 }
 
 /// Generates an authorization URL for user browser login.
-pub fn build_authorization_url(
-    provider: OAuthProvider,
-    client_id: &str,
-    redirect_uri: &str,
-    state: &str,
-) -> String {
+pub fn build_authorization_url(provider: OAuthProvider, client_id: &str, redirect_uri: &str, state: &str) -> String {
     format!(
         "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}&access_type=offline&prompt=consent",
         provider.auth_url(),
@@ -434,7 +425,10 @@ pub fn diagnose_auth_failure(host: &str, error_msg: &str) -> String {
 
     if let Some(provider) = OAuthProvider::from_host(host) {
         diag.push_str("\n----------------------------------------------------------------------\n");
-        diag.push_str(&format!("  DIAGNOSTIC ADVICE FOR {}:\n", provider.display_name().to_uppercase()));
+        diag.push_str(&format!(
+            "  DIAGNOSTIC ADVICE FOR {}:\n",
+            provider.display_name().to_uppercase()
+        ));
         diag.push_str("----------------------------------------------------------------------\n");
         if provider == OAuthProvider::Proton {
             diag.push_str(provider.app_password_guide());
@@ -442,13 +436,13 @@ pub fn diagnose_auth_failure(host: &str, error_msg: &str) -> String {
             diag.push_str(
                 "Modern email providers no longer allow your primary account password over IMAP.\n\
                  You can connect using either of two supported methods:\n\n\
-                 METHOD 1: Generate a Provider 'App Password' (Quickest & Recommended):\n"
+                 METHOD 1: Generate a Provider 'App Password' (Quickest & Recommended):\n",
             );
             diag.push_str(provider.app_password_guide());
             diag.push_str(
                 "\n\nMETHOD 2: Authenticate using OAuth 2.0 (XOAUTH2 / OAUTHBEARER):\n\
                  - Pass your access token via: --oauth-token <TOKEN> --auth-method xoauth2\n\
-                 - Or use the built-in token helper: mail2rust oauth-login\n"
+                 - Or use the built-in token helper: mail2rust oauth-login\n",
             );
         }
         diag.push_str("----------------------------------------------------------------------\n");
@@ -487,18 +481,28 @@ mod tests {
         };
 
         let processed = auth.process(b"");
-        let expected = b"n,a=user@office365.com,\x01host=outlook.office365.com\x01port=993\x01auth=Bearer eyJhbGciOi...\x01\x01";
+        let expected =
+            b"n,a=user@office365.com,\x01host=outlook.office365.com\x01port=993\x01auth=Bearer eyJhbGciOi...\x01\x01";
         assert_eq!(processed, expected);
     }
 
     #[test]
     fn test_provider_detection_from_host() {
         assert_eq!(OAuthProvider::from_host("imap.gmail.com"), Some(OAuthProvider::Google));
-        assert_eq!(OAuthProvider::from_host("outlook.office365.com"), Some(OAuthProvider::Microsoft));
-        assert_eq!(OAuthProvider::from_host("imap.mail.yahoo.com"), Some(OAuthProvider::Yahoo));
+        assert_eq!(
+            OAuthProvider::from_host("outlook.office365.com"),
+            Some(OAuthProvider::Microsoft)
+        );
+        assert_eq!(
+            OAuthProvider::from_host("imap.mail.yahoo.com"),
+            Some(OAuthProvider::Yahoo)
+        );
         assert_eq!(OAuthProvider::from_host("imap.proton.me"), Some(OAuthProvider::Proton));
         assert_eq!(OAuthProvider::from_host("imap.mail.me.com"), Some(OAuthProvider::Apple));
-        assert_eq!(OAuthProvider::from_host("imap.fastmail.com"), Some(OAuthProvider::Fastmail));
+        assert_eq!(
+            OAuthProvider::from_host("imap.fastmail.com"),
+            Some(OAuthProvider::Fastmail)
+        );
         assert_eq!(OAuthProvider::from_host("imap.zoho.com"), Some(OAuthProvider::Zoho));
         assert_eq!(OAuthProvider::from_host("mail.custom-domain.net"), None);
     }

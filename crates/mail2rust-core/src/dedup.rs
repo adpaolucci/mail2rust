@@ -21,10 +21,7 @@ impl DedupEngine {
     /// When duplicates are found, flags and missing content from duplicates are merged
     /// into the retained original message.
     /// Returns `(unique_messages, duplicate_messages)`.
-    pub fn deduplicate(
-        messages: Vec<EmailMessage>,
-        strategy: DedupStrategy,
-    ) -> (Vec<EmailMessage>, Vec<EmailMessage>) {
+    pub fn deduplicate(messages: Vec<EmailMessage>, strategy: DedupStrategy) -> (Vec<EmailMessage>, Vec<EmailMessage>) {
         if strategy == DedupStrategy::None {
             return (messages, Vec::new());
         }

@@ -106,11 +106,7 @@ pub fn ingest_path(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::erro
                             .parent()
                             .map(|p| {
                                 p.iter()
-                                    .filter_map(|s| {
-                                        s.to_str().map(|x| {
-                                            x.strip_suffix(".sbd").unwrap_or(x).to_string()
-                                        })
-                                    })
+                                    .filter_map(|s| s.to_str().map(|x| x.strip_suffix(".sbd").unwrap_or(x).to_string()))
                                     .collect()
                             })
                             .unwrap_or_default(),

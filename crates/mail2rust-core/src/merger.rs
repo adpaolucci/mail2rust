@@ -127,14 +127,8 @@ impl MergeReport {
         out.push_str("======================================================================\n");
         out.push_str("              MAILBOX MERGE & CONSOLIDATION SUMMARY                  \n");
         out.push_str("======================================================================\n");
-        out.push_str(&format!(
-            "Total Ingested Sources:      {}\n",
-            self.sources.len()
-        ));
-        out.push_str(&format!(
-            "Total Messages Processed:    {}\n",
-            self.total_input_messages
-        ));
+        out.push_str(&format!("Total Ingested Sources:      {}\n", self.sources.len()));
+        out.push_str(&format!("Total Messages Processed:    {}\n", self.total_input_messages));
         out.push_str(&format!(
             "Duplicate Messages Removed:  {}\n",
             self.total_duplicates_removed
@@ -254,10 +248,7 @@ impl MailboxMerger {
                         }
                     }
                     MergeFolderStrategy::Prefix => {
-                        let prefix = src_cfg
-                            .custom_prefix
-                            .clone()
-                            .unwrap_or_else(|| alias.clone());
+                        let prefix = src_cfg.custom_prefix.clone().unwrap_or_else(|| alias.clone());
                         let mut new_folder = vec![prefix];
                         if m.folder_path.is_empty() {
                             new_folder.push("Inbox".to_string());
@@ -301,8 +292,7 @@ impl MailboxMerger {
         }
 
         // Apply Cross-Source Deduplication
-        let (mut final_messages, duplicates) =
-            DedupEngine::deduplicate(combined_messages, options.dedup_strategy);
+        let (mut final_messages, duplicates) = DedupEngine::deduplicate(combined_messages, options.dedup_strategy);
 
         // Calculate per-source duplicate counts
         let mut dup_count_by_source: HashMap<String, usize> = HashMap::new();
@@ -399,7 +389,11 @@ mod tests {
             size_bytes: 100,
             body_text: format!("Body of {}", subject),
             body_html: None,
-            raw_mime: format!("From: sender@example.com\r\nSubject: {}\r\n\r\nBody of {}", subject, subject).into_bytes(),
+            raw_mime: format!(
+                "From: sender@example.com\r\nSubject: {}\r\n\r\nBody of {}",
+                subject, subject
+            )
+            .into_bytes(),
             attachments: Vec::new(),
             mapi_properties: Vec::new(),
             flags: MessageFlags::default(),
@@ -450,28 +444,12 @@ mod tests {
 
     #[test]
     fn test_merge_batches_prefix_strategy() {
-        let batch1 = vec![make_test_message(
-            "msg1@a.com",
-            "Gmail email",
-            &["Inbox"],
-            "2026-11-01",
-        )];
-        let batch2 = vec![make_test_message(
-            "msg2@b.com",
-            "Yahoo email",
-            &["Inbox"],
-            "2026-11-02",
-        )];
+        let batch1 = vec![make_test_message("msg1@a.com", "Gmail email", &["Inbox"], "2026-11-01")];
+        let batch2 = vec![make_test_message("msg2@b.com", "Yahoo email", &["Inbox"], "2026-11-02")];
 
         let batches = vec![
-            (
-                MergeSourceConfig::with_alias("source1.mbox", "Gmail"),
-                batch1,
-            ),
-            (
-                MergeSourceConfig::with_alias("source2.pst", "Yahoo"),
-                batch2,
-            ),
+            (MergeSourceConfig::with_alias("source1.mbox", "Gmail"), batch1),
+            (MergeSourceConfig::with_alias("source2.pst", "Yahoo"), batch2),
         ];
 
         let options = MergeOptions {
@@ -496,12 +474,7 @@ mod tests {
             &["Inbox"],
             "2026-11-01",
         )];
-        let mut dup_msg = make_test_message(
-            "common@corp.com",
-            "Overlap email",
-            &["Inbox"],
-            "2026-11-01",
-        );
+        let mut dup_msg = make_test_message("common@corp.com", "Overlap email", &["Inbox"], "2026-11-01");
         dup_msg.flags.flagged = true; // Duplicate has flagged flag
         let batch2 = vec![dup_msg];
 

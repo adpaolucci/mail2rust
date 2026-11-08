@@ -829,7 +829,11 @@ fn test_cli_merge_multi_format_to_pst_and_mbox() {
         .output()
         .expect("failed to execute merge command");
 
-    assert!(merge_out.status.success(), "Merge command failed: {:?}", String::from_utf8_lossy(&merge_out.stderr));
+    assert!(
+        merge_out.status.success(),
+        "Merge command failed: {:?}",
+        String::from_utf8_lossy(&merge_out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&merge_out.stdout);
     assert!(stdout.contains("MAILBOX MERGE & CONSOLIDATION SUMMARY"));
     assert!(stdout.contains("Total Ingested Sources:      5"));
@@ -1042,7 +1046,11 @@ Subfolder message inside Projects.sbd container.\r\n";
         .output()
         .expect("convert thunderbird command");
 
-    assert!(convert_out.status.success(), "Conversion failed: {:?}", String::from_utf8_lossy(&convert_out.stderr));
+    assert!(
+        convert_out.status.success(),
+        "Conversion failed: {:?}",
+        String::from_utf8_lossy(&convert_out.stderr)
+    );
 
     // Validate the resulting PST container
     assert!(out_pst.exists());
@@ -1057,7 +1065,10 @@ Subfolder message inside Projects.sbd container.\r\n";
     assert_eq!(read_msgs.len(), 3);
 
     // 2. Verify subfolder path was normalized from 'Projects.sbd' to 'Projects'
-    let titan_msg = read_msgs.iter().find(|m| m.subject == "Project Titan Update").expect("titan msg");
+    let titan_msg = read_msgs
+        .iter()
+        .find(|m| m.subject == "Project Titan Update")
+        .expect("titan msg");
     assert!(
         titan_msg.folder_path.contains(&"Projects".to_string()),
         "Expected folder path to contain normalized 'Projects', got {:?}",
@@ -1307,7 +1318,11 @@ fn test_cli_jmap_ingestion_and_help() {
         .output()
         .expect("execute jmap command");
 
-    assert!(jmap_cmd.status.success(), "JMAP CLI failed: {:?}", String::from_utf8_lossy(&jmap_cmd.stderr));
+    assert!(
+        jmap_cmd.status.success(),
+        "JMAP CLI failed: {:?}",
+        String::from_utf8_lossy(&jmap_cmd.stderr)
+    );
     assert!(out_pst.exists(), "Output PST should exist");
 
     let read_msgs = mail2rust_pst::PstReader::read_path(&out_pst).expect("read pst");
