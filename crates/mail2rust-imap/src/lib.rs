@@ -196,25 +196,13 @@ impl ImapClient {
             .map_err(ImapClientError::Io)?;
 
         let stream = if self.config.use_tls {
-            #[cfg(test)]
-            let connector = {
-                let mut builder = TlsConnector::builder();
-                if self.config.insecure_certs {
-                    builder.danger_accept_invalid_certs(true);
-                    builder.danger_accept_invalid_hostnames(true);
-                }
-                builder.build()?
-            };
-            #[cfg(not(test))]
-            let connector = {
-                let builder = TlsConnector::builder();
-                if self.config.insecure_certs {
-                    tracing::warn!(
-                        "Insecure TLS certificate validation is disabled in production builds to protect against MITM attacks."
-                    );
-                }
-                builder.build()?
-            };
+            let builder = TlsConnector::builder();
+            if self.config.insecure_certs {
+                tracing::warn!(
+                    "Notice: Strict TLS certificate validation is enforced to protect credentials against MITM attacks."
+                );
+            }
+            let connector = builder.build()?;
             let tls_stream = connector.connect(&self.config.host, tcp_stream).map_err(|e| {
                 ImapClientError::TlsError(format!("TLS handshake with {} failed: {}", self.config.host, e))
             })?;
