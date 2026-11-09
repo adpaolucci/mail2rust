@@ -4,7 +4,7 @@ use crate::ltp::{
 };
 use crate::ndb::{
     compute_pst_password_crc, cyclic_crypt, depermute_bytes, PstEncryption, NID_MESSAGE_STORE, NID_ROOT_FOLDER,
-    PST_HEADER_SIZE, PST_UNICODE_MAGIC,
+    PST_HEADER_SIZE, PST_PAGE_DATA_SIZE, PST_PAGE_SIZE, PST_TRAILER_SIG, PTYPE_BBT, PTYPE_NBT,
 };
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use chrono::Utc;
@@ -31,29 +31,59 @@ impl<R: Read + Seek> PstReader<R> {
 
         // Magic check
         let magic_val = (&header[0x00..0x04]).read_u32::<BigEndian>()?;
-        let format_name = match magic_val {
-            PST_UNICODE_MAGIC => "Microsoft Outlook PST (Unicode)".to_string(),
-            0x2142444F => "Offline Exchange OST (!BDO)".to_string(),
-            0x2142444E => "Legacy ANSI PST".to_string(),
-            _ => format!("PST/OST Container (0x{:08X})", magic_val),
+        let version = (&header[0x0A..0x0C]).read_u16::<LittleEndian>()?;
+        let format_name = if version >= 23 {
+            "Microsoft Outlook PST (Unicode)".to_string()
+        } else if magic_val == 0x2142444F {
+            "Offline Exchange OST (!BDO)".to_string()
+        } else {
+            "Legacy ANSI PST".to_string()
         };
 
         let crypt_method = header[0x1CD];
         info!(format = %format_name, crypt = crypt_method, "Opened PST/OST container for reading");
 
-        // Root BREF pointers
-        let nbt_bid = (&header[0xB4..0xBC]).read_u64::<LittleEndian>()?;
-        let nbt_offset = (&header[0xBC..0xC4]).read_u64::<LittleEndian>()?;
-        let bbt_bid = (&header[0xC4..0xCC]).read_u64::<LittleEndian>()?;
-        let bbt_offset = (&header[0xCC..0xD4]).read_u64::<LittleEndian>()?;
+        let file_len = reader.seek(SeekFrom::End(0))?;
+
+        // Root BREF pointers (Unicode ROOT at 0xB8 or legacy fallback at 0xB4/0xC4)
+        let nbt_bid_u = (&header[0xDC..0xE4]).read_u64::<LittleEndian>()?;
+        let nbt_off_u = (&header[0xE4..0xEC]).read_u64::<LittleEndian>()?;
+        let (nbt_bid, nbt_offset) = if nbt_bid_u > 0 && nbt_off_u > 0 && nbt_off_u < file_len {
+            (nbt_bid_u, nbt_off_u)
+        } else {
+            let b = (&header[0xB4..0xBC]).read_u64::<LittleEndian>()?;
+            let o = (&header[0xBC..0xC4]).read_u64::<LittleEndian>()?;
+            (b, o)
+        };
+
+        let bbt_bid_u = (&header[0xEC..0xF4]).read_u64::<LittleEndian>()?;
+        let bbt_off_u = (&header[0xF4..0xFC]).read_u64::<LittleEndian>()?;
+        let (bbt_bid, bbt_offset) = if bbt_bid_u > 0 && bbt_off_u > 0 && bbt_off_u < file_len {
+            (bbt_bid_u, bbt_off_u)
+        } else {
+            let b = (&header[0xC4..0xCC]).read_u64::<LittleEndian>()?;
+            let o = (&header[0xCC..0xD4]).read_u64::<LittleEndian>()?;
+            (b, o)
+        };
 
         let mut bbt_map = HashMap::new();
         let mut nbt_nodes = Vec::new();
 
-        let file_len = reader.seek(SeekFrom::End(0))?;
-
         // 1. Read BBT (Block B-Tree)
-        if bbt_offset > 0 && bbt_bid > 0 && bbt_offset < file_len && reader.seek(SeekFrom::Start(bbt_offset)).is_ok() {
+        let mut bbt_is_btpage = false;
+        if bbt_offset > 0 && bbt_offset + PST_PAGE_SIZE as u64 <= file_len && reader.seek(SeekFrom::Start(bbt_offset)).is_ok() {
+            let mut page = [0u8; PST_PAGE_SIZE];
+            if reader.read_exact(&mut page).is_ok() {
+                let w_sig = u16::from_le_bytes([page[498], page[499]]);
+                if page[496] == PTYPE_BBT && w_sig == PST_TRAILER_SIG {
+                    bbt_is_btpage = true;
+                }
+            }
+        }
+
+        if bbt_is_btpage {
+            let _ = traverse_bbt(&mut reader, bbt_offset, &mut bbt_map);
+        } else if bbt_offset > 0 && bbt_bid > 0 && bbt_offset < file_len && reader.seek(SeekFrom::Start(bbt_offset)).is_ok() {
             let to_read = (file_len - bbt_offset).min(100 * 1024 * 1024) as usize;
             let mut bbt_raw = Vec::with_capacity(to_read.min(10 * 1024 * 1024));
             if reader.by_ref().take(to_read as u64).read_to_end(&mut bbt_raw).is_ok() {
@@ -82,7 +112,20 @@ impl<R: Read + Seek> PstReader<R> {
         }
 
         // 2. Read NBT (Node B-Tree)
-        if nbt_offset > 0 && nbt_bid > 0 && nbt_offset < file_len && reader.seek(SeekFrom::Start(nbt_offset)).is_ok() {
+        let mut nbt_is_btpage = false;
+        if nbt_offset > 0 && nbt_offset + PST_PAGE_SIZE as u64 <= file_len && reader.seek(SeekFrom::Start(nbt_offset)).is_ok() {
+            let mut page = [0u8; PST_PAGE_SIZE];
+            if reader.read_exact(&mut page).is_ok() {
+                let w_sig = u16::from_le_bytes([page[498], page[499]]);
+                if page[496] == PTYPE_NBT && w_sig == PST_TRAILER_SIG {
+                    nbt_is_btpage = true;
+                }
+            }
+        }
+
+        if nbt_is_btpage {
+            let _ = traverse_nbt(&mut reader, nbt_offset, &mut nbt_nodes);
+        } else if nbt_offset > 0 && nbt_bid > 0 && nbt_offset < file_len && reader.seek(SeekFrom::Start(nbt_offset)).is_ok() {
             let to_read = if bbt_offset > nbt_offset {
                 (bbt_offset - nbt_offset).min(100 * 1024 * 1024) as usize
             } else {
@@ -365,4 +408,104 @@ impl PstReader<File> {
         let mut reader = PstReader::open(file)?;
         reader.read_all_messages()
     }
+}
+
+fn traverse_bbt<R: Read + Seek>(
+    reader: &mut R,
+    page_offset: u64,
+    bbt_map: &mut HashMap<u64, (u64, u32)>,
+) -> io::Result<()> {
+    reader.seek(SeekFrom::Start(page_offset))?;
+    let mut page = [0u8; PST_PAGE_SIZE];
+    reader.read_exact(&mut page)?;
+
+    let ptype = page[496];
+    let w_sig = u16::from_le_bytes([page[498], page[499]]);
+    if ptype != PTYPE_BBT || w_sig != PST_TRAILER_SIG {
+        return Ok(());
+    }
+
+    let c_ent = page[488] as usize;
+    let c_level = page[491];
+
+    if c_level == 0 {
+        // Leaf page: 24-byte BBTENTRY
+        for i in 0..c_ent {
+            let base = i * 24;
+            if base + 24 <= PST_PAGE_DATA_SIZE {
+                let bid = u64::from_le_bytes(page[base..base + 8].try_into().unwrap());
+                let ib = u64::from_le_bytes(page[base + 8..base + 16].try_into().unwrap());
+                let cb = u16::from_le_bytes(page[base + 16..base + 18].try_into().unwrap()) as u32;
+                if bid > 0 && ib > 0 && cb > 0 {
+                    bbt_map.insert(bid, (ib, cb));
+                }
+            }
+        }
+    } else {
+        // Intermediate branch page: 24-byte BTENTRY
+        let mut child_offsets = Vec::with_capacity(c_ent);
+        for i in 0..c_ent {
+            let base = i * 24;
+            if base + 24 <= PST_PAGE_DATA_SIZE {
+                let child_ib = u64::from_le_bytes(page[base + 16..base + 24].try_into().unwrap());
+                if child_ib > 0 {
+                    child_offsets.push(child_ib);
+                }
+            }
+        }
+        for child_ib in child_offsets {
+            traverse_bbt(reader, child_ib, bbt_map)?;
+        }
+    }
+    Ok(())
+}
+
+fn traverse_nbt<R: Read + Seek>(
+    reader: &mut R,
+    page_offset: u64,
+    nbt_nodes: &mut Vec<(u32, u64, u32)>,
+) -> io::Result<()> {
+    reader.seek(SeekFrom::Start(page_offset))?;
+    let mut page = [0u8; PST_PAGE_SIZE];
+    reader.read_exact(&mut page)?;
+
+    let ptype = page[496];
+    let w_sig = u16::from_le_bytes([page[498], page[499]]);
+    if ptype != PTYPE_NBT || w_sig != PST_TRAILER_SIG {
+        return Ok(());
+    }
+
+    let c_ent = page[488] as usize;
+    let c_level = page[491];
+
+    if c_level == 0 {
+        // Leaf page: 32-byte NBTENTRY
+        for i in 0..c_ent {
+            let base = i * 32;
+            if base + 32 <= PST_PAGE_DATA_SIZE {
+                let nid = u64::from_le_bytes(page[base..base + 8].try_into().unwrap()) as u32;
+                let bid_data = u64::from_le_bytes(page[base + 8..base + 16].try_into().unwrap());
+                let nid_parent = u32::from_le_bytes(page[base + 24..base + 28].try_into().unwrap());
+                if nid > 0 && bid_data > 0 && nid != 0x47474747 {
+                    nbt_nodes.push((nid, bid_data, nid_parent));
+                }
+            }
+        }
+    } else {
+        // Intermediate branch page: 24-byte BTENTRY
+        let mut child_offsets = Vec::with_capacity(c_ent);
+        for i in 0..c_ent {
+            let base = i * 24;
+            if base + 24 <= PST_PAGE_DATA_SIZE {
+                let child_ib = u64::from_le_bytes(page[base + 16..base + 24].try_into().unwrap());
+                if child_ib > 0 {
+                    child_offsets.push(child_ib);
+                }
+            }
+        }
+        for child_ib in child_offsets {
+            traverse_nbt(reader, child_ib, nbt_nodes)?;
+        }
+    }
+    Ok(())
 }

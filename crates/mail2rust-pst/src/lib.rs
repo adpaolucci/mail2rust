@@ -11,8 +11,9 @@ pub use ltp::{
 };
 pub use ndb::{
     calculate_partial_header_crc, compute_pst_password_crc, cyclic_crypt, depermute_bytes, permute_bytes, Bref,
-    PstEncryption, DEPERMUTE_TABLE, MPBB, NDB_CRYPT_CYCLIC, NDB_CRYPT_NONE, NDB_CRYPT_PERMUTE, PERMUTE_TABLE,
-    PST_HEADER_SIZE, PST_UNICODE_MAGIC, PST_UNICODE_VER,
+    PageTrailer, PstEncryption, AMAP_START_OFFSET, DATA_START_OFFSET, DEPERMUTE_TABLE, MPBB, NDB_CRYPT_CYCLIC,
+    NDB_CRYPT_NONE, NDB_CRYPT_PERMUTE, PERMUTE_TABLE, PMAP_START_OFFSET, PST_HEADER_SIZE, PST_PAGE_SIZE,
+    PST_TRAILER_SIG, PST_UNICODE_MAGIC, PST_UNICODE_VER, PTYPE_AMAP, PTYPE_BBT, PTYPE_NBT, PTYPE_PMAP,
 };
 pub use reader::PstReader;
 pub use validator::{PstValidationReport, PstValidator};

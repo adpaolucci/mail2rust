@@ -1,4 +1,7 @@
-use crate::ndb::{calculate_partial_header_crc, PST_CLIENT_MAGIC, PST_HEADER_SIZE, PST_UNICODE_MAGIC, PST_UNICODE_VER};
+use crate::ndb::{
+    calculate_partial_header_crc, PageTrailer, AMAP_START_OFFSET, PST_CLIENT_MAGIC, PST_HEADER_SIZE, PST_PAGE_SIZE,
+    PST_TRAILER_SIG, PST_UNICODE_MAGIC, PST_UNICODE_VER, PTYPE_AMAP, PTYPE_BBT, PTYPE_NBT,
+};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Seek, SeekFrom};
@@ -26,6 +29,7 @@ pub struct PstValidator;
 
 impl PstValidator {
     pub fn validate<R: Read + Seek>(mut reader: R) -> io::Result<PstValidationReport> {
+        let file_len = reader.seek(SeekFrom::End(0))?;
         reader.seek(SeekFrom::Start(0))?;
         let mut header = [0u8; PST_HEADER_SIZE];
         reader.read_exact(&mut header)?;
@@ -35,8 +39,8 @@ impl PstValidator {
         // 1. Check Magic
         let magic_val = (&header[0x00..0x04]).read_u32::<BigEndian>()?;
         let magic_str = match magic_val {
-            PST_UNICODE_MAGIC => "0x4E44424E (!BDN Unicode)".to_string(),
-            0x2142444E => "0x2142444E (!BDN Legacy ANSI)".to_string(),
+            0x2142444E => "0x2142444E (!BDN Standard/Unicode)".to_string(),
+            PST_UNICODE_MAGIC => "0x4E44424E (!BDN Legacy Variant)".to_string(),
             0x2142444F => "0x2142444F (!BDO Offline OST)".to_string(),
             other => {
                 errors.push(format!("Invalid PST magic signature: 0x{:08X}", other));
@@ -80,10 +84,69 @@ impl PstValidator {
         };
 
         // 6. Root BREF pointers
-        let nbt_root_bid = (&header[0xB4..0xBC]).read_u64::<LittleEndian>()?;
-        let nbt_root_offset = (&header[0xBC..0xC4]).read_u64::<LittleEndian>()?;
-        let bbt_root_bid = (&header[0xC4..0xCC]).read_u64::<LittleEndian>()?;
-        let bbt_root_offset = (&header[0xCC..0xD4]).read_u64::<LittleEndian>()?;
+        let nbt_bid_u = (&header[0xDC..0xE4]).read_u64::<LittleEndian>()?;
+        let nbt_off_u = (&header[0xE4..0xEC]).read_u64::<LittleEndian>()?;
+        let (nbt_root_bid, nbt_root_offset) = if nbt_bid_u > 0 && nbt_off_u > 0 && nbt_off_u < file_len {
+            (nbt_bid_u, nbt_off_u)
+        } else {
+            let b = (&header[0xB4..0xBC]).read_u64::<LittleEndian>()?;
+            let o = (&header[0xBC..0xC4]).read_u64::<LittleEndian>()?;
+            (b, o)
+        };
+
+        let bbt_bid_u = (&header[0xEC..0xF4]).read_u64::<LittleEndian>()?;
+        let bbt_off_u = (&header[0xF4..0xFC]).read_u64::<LittleEndian>()?;
+        let (bbt_root_bid, bbt_root_offset) = if bbt_bid_u > 0 && bbt_off_u > 0 && bbt_off_u < file_len {
+            (bbt_bid_u, bbt_off_u)
+        } else {
+            let b = (&header[0xC4..0xCC]).read_u64::<LittleEndian>()?;
+            let o = (&header[0xCC..0xD4]).read_u64::<LittleEndian>()?;
+            (b, o)
+        };
+
+        // 7. Structural B-Tree Page Verification (MS-PST BTPAGE + PAGETRAILER)
+        if bbt_root_offset > 0 && bbt_root_offset + PST_PAGE_SIZE as u64 <= file_len {
+            if reader.seek(SeekFrom::Start(bbt_root_offset)).is_ok() {
+                let mut page = [0u8; PST_PAGE_SIZE];
+                if reader.read_exact(&mut page).is_ok() {
+                    let w_sig = u16::from_le_bytes([page[498], page[499]]);
+                    if w_sig == PST_TRAILER_SIG {
+                        if !PageTrailer::verify(&page, PTYPE_BBT) {
+                            errors.push("Root BBT page CRC32 or PAGETRAILER verification failed".to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        if nbt_root_offset > 0 && nbt_root_offset + PST_PAGE_SIZE as u64 <= file_len {
+            if reader.seek(SeekFrom::Start(nbt_root_offset)).is_ok() {
+                let mut page = [0u8; PST_PAGE_SIZE];
+                if reader.read_exact(&mut page).is_ok() {
+                    let w_sig = u16::from_le_bytes([page[498], page[499]]);
+                    if w_sig == PST_TRAILER_SIG {
+                        if !PageTrailer::verify(&page, PTYPE_NBT) {
+                            errors.push("Root NBT page CRC32 or PAGETRAILER verification failed".to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // 8. Allocation Map (AMap) Verification at 0x4400
+        if file_len >= AMAP_START_OFFSET + PST_PAGE_SIZE as u64 {
+            if reader.seek(SeekFrom::Start(AMAP_START_OFFSET)).is_ok() {
+                let mut page = [0u8; PST_PAGE_SIZE];
+                if reader.read_exact(&mut page).is_ok() {
+                    let w_sig = u16::from_le_bytes([page[498], page[499]]);
+                    if w_sig == PST_TRAILER_SIG {
+                        if !PageTrailer::verify(&page, PTYPE_AMAP) {
+                            errors.push("Initial AMap page (0x4400) CRC32 verification failed".to_string());
+                        }
+                    }
+                }
+            }
+        }
 
         let is_valid = errors.is_empty();
 

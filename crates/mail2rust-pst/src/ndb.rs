@@ -8,6 +8,21 @@ pub const PST_UNICODE_VER: u16 = 23; // Outlook 2003 - 2024 / M365
 pub const PST_CLIENT_VER: u16 = 19;
 pub const PST_HEADER_SIZE: usize = 512;
 
+pub const PST_PAGE_SIZE: usize = 512;
+pub const PST_PAGE_DATA_SIZE: usize = 496;
+pub const PST_TRAILER_SIG: u16 = 0x4943; // "CI" signature for Unicode PST BTPAGE
+
+pub const PTYPE_BBT: u8 = 0x80;
+pub const PTYPE_NBT: u8 = 0x81;
+pub const PTYPE_FMAP: u8 = 0x82;
+pub const PTYPE_PMAP: u8 = 0x83;
+pub const PTYPE_AMAP: u8 = 0x84;
+pub const PTYPE_FPMAP: u8 = 0x85;
+
+pub const AMAP_START_OFFSET: u64 = 0x4400;
+pub const PMAP_START_OFFSET: u64 = 0x4600;
+pub const DATA_START_OFFSET: u64 = 0x4800;
+
 pub const NID_MESSAGE_STORE: u32 = 0x21;
 pub const NID_NAME_TO_ID_MAP: u32 = 0x61;
 pub const NID_ROOT_FOLDER: u32 = 0x122;
@@ -154,4 +169,59 @@ pub fn calculate_partial_header_crc(header: &[u8; PST_HEADER_SIZE]) -> u32 {
     // In MS-PST, dwCRCPartial is the CRC32 of 471 bytes starting from offset 0x08 to 0x1DF
     hasher.update(&header[0x08..0x1DF]);
     hasher.finalize()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageTrailer {
+    pub ptype: u8,
+    pub ptype_repeat: u8,
+    pub w_sig: u16,
+    pub dw_crc: u32,
+    pub bid: u64,
+}
+
+impl PageTrailer {
+    pub fn new(ptype: u8, bid: u64, page_data_496: &[u8]) -> Self {
+        let mut hasher = Hasher::new();
+        hasher.update(&page_data_496[0..PST_PAGE_DATA_SIZE]);
+        let dw_crc = hasher.finalize();
+        Self {
+            ptype,
+            ptype_repeat: ptype,
+            w_sig: PST_TRAILER_SIG,
+            dw_crc,
+            bid,
+        }
+    }
+
+    pub fn write_to_slice(&self, slice: &mut [u8]) {
+        if slice.len() >= 16 {
+            slice[0] = self.ptype;
+            slice[1] = self.ptype_repeat;
+            slice[2..4].copy_from_slice(&self.w_sig.to_le_bytes());
+            slice[4..8].copy_from_slice(&self.dw_crc.to_le_bytes());
+            slice[8..16].copy_from_slice(&self.bid.to_le_bytes());
+        }
+    }
+
+    pub fn verify(page_512: &[u8], expected_ptype: u8) -> bool {
+        if page_512.len() < PST_PAGE_SIZE {
+            return false;
+        }
+        let ptype = page_512[496];
+        let ptype_repeat = page_512[497];
+        let w_sig = u16::from_le_bytes([page_512[498], page_512[499]]);
+        let declared_crc = u32::from_le_bytes([
+            page_512[500], page_512[501], page_512[502], page_512[503],
+        ]);
+
+        if ptype != expected_ptype || ptype_repeat != expected_ptype || w_sig != PST_TRAILER_SIG {
+            return false;
+        }
+
+        let mut hasher = Hasher::new();
+        hasher.update(&page_512[0..PST_PAGE_DATA_SIZE]);
+        let calc_crc = hasher.finalize();
+        calc_crc == declared_crc
+    }
 }
