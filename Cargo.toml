@@ -48,6 +48,15 @@ mail2rust-sync = { path = "crates/mail2rust-sync" }
 mail2rust-imap = { path = "crates/mail2rust-imap" }
 mail2rust-mcp = { path = "crates/mail2rust-mcp" }
 
+[profile.dev.package.clap]
+opt-level = 2
+
+[profile.dev.package.clap_builder]
+opt-level = 2
+
+[profile.dev.package.clap_derive]
+opt-level = 2
+
 [profile.release]
 opt-level = 3
 lto = "thin"
