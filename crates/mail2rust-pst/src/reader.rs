@@ -71,7 +71,10 @@ impl<R: Read + Seek> PstReader<R> {
 
         // 1. Read BBT (Block B-Tree)
         let mut bbt_is_btpage = false;
-        if bbt_offset > 0 && bbt_offset + PST_PAGE_SIZE as u64 <= file_len && reader.seek(SeekFrom::Start(bbt_offset)).is_ok() {
+        if bbt_offset > 0
+            && bbt_offset + PST_PAGE_SIZE as u64 <= file_len
+            && reader.seek(SeekFrom::Start(bbt_offset)).is_ok()
+        {
             let mut page = [0u8; PST_PAGE_SIZE];
             if reader.read_exact(&mut page).is_ok() {
                 let w_sig = u16::from_le_bytes([page[498], page[499]]);
@@ -83,7 +86,11 @@ impl<R: Read + Seek> PstReader<R> {
 
         if bbt_is_btpage {
             let _ = traverse_bbt(&mut reader, bbt_offset, &mut bbt_map);
-        } else if bbt_offset > 0 && bbt_bid > 0 && bbt_offset < file_len && reader.seek(SeekFrom::Start(bbt_offset)).is_ok() {
+        } else if bbt_offset > 0
+            && bbt_bid > 0
+            && bbt_offset < file_len
+            && reader.seek(SeekFrom::Start(bbt_offset)).is_ok()
+        {
             let to_read = (file_len - bbt_offset).min(100 * 1024 * 1024) as usize;
             let mut bbt_raw = Vec::with_capacity(to_read.min(10 * 1024 * 1024));
             if reader.by_ref().take(to_read as u64).read_to_end(&mut bbt_raw).is_ok() {
@@ -113,7 +120,10 @@ impl<R: Read + Seek> PstReader<R> {
 
         // 2. Read NBT (Node B-Tree)
         let mut nbt_is_btpage = false;
-        if nbt_offset > 0 && nbt_offset + PST_PAGE_SIZE as u64 <= file_len && reader.seek(SeekFrom::Start(nbt_offset)).is_ok() {
+        if nbt_offset > 0
+            && nbt_offset + PST_PAGE_SIZE as u64 <= file_len
+            && reader.seek(SeekFrom::Start(nbt_offset)).is_ok()
+        {
             let mut page = [0u8; PST_PAGE_SIZE];
             if reader.read_exact(&mut page).is_ok() {
                 let w_sig = u16::from_le_bytes([page[498], page[499]]);
@@ -125,7 +135,11 @@ impl<R: Read + Seek> PstReader<R> {
 
         if nbt_is_btpage {
             let _ = traverse_nbt(&mut reader, nbt_offset, &mut nbt_nodes);
-        } else if nbt_offset > 0 && nbt_bid > 0 && nbt_offset < file_len && reader.seek(SeekFrom::Start(nbt_offset)).is_ok() {
+        } else if nbt_offset > 0
+            && nbt_bid > 0
+            && nbt_offset < file_len
+            && reader.seek(SeekFrom::Start(nbt_offset)).is_ok()
+        {
             let to_read = if bbt_offset > nbt_offset {
                 (bbt_offset - nbt_offset).min(100 * 1024 * 1024) as usize
             } else {

@@ -211,9 +211,7 @@ impl PageTrailer {
         let ptype = page_512[496];
         let ptype_repeat = page_512[497];
         let w_sig = u16::from_le_bytes([page_512[498], page_512[499]]);
-        let declared_crc = u32::from_le_bytes([
-            page_512[500], page_512[501], page_512[502], page_512[503],
-        ]);
+        let declared_crc = u32::from_le_bytes([page_512[500], page_512[501], page_512[502], page_512[503]]);
 
         if ptype != expected_ptype || ptype_repeat != expected_ptype || w_sig != PST_TRAILER_SIG {
             return false;

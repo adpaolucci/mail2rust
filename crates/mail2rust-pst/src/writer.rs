@@ -222,7 +222,8 @@ impl<W: Write + Seek> PstWriter<W> {
                 page[base + 8..base + 16].copy_from_slice(&bid.to_le_bytes());
                 page[base + 16..base + 24].copy_from_slice(&0u64.to_le_bytes()); // bidSub
                 page[base + 24..base + 28].copy_from_slice(&parent_nid.to_le_bytes());
-                page[base + 28..base + 32].copy_from_slice(&0u32.to_le_bytes()); // dwPadding
+                page[base + 28..base + 32].copy_from_slice(&0u32.to_le_bytes());
+                // dwPadding
             }
 
             page[488] = chunk.len() as u8; // cEnt
@@ -303,7 +304,8 @@ impl<W: Write + Seek> PstWriter<W> {
                 page[base + 8..base + 16].copy_from_slice(&off.to_le_bytes());
                 page[base + 16..base + 18].copy_from_slice(&(*len as u16).to_le_bytes());
                 page[base + 18..base + 20].copy_from_slice(&1u16.to_le_bytes()); // cRef = 1
-                page[base + 20..base + 24].copy_from_slice(&0u32.to_le_bytes()); // dwPadding = 0
+                page[base + 20..base + 24].copy_from_slice(&0u32.to_le_bytes());
+                // dwPadding = 0
             }
 
             page[488] = chunk.len() as u8;

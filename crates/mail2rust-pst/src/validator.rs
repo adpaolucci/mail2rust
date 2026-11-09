@@ -105,45 +105,41 @@ impl PstValidator {
         };
 
         // 7. Structural B-Tree Page Verification (MS-PST BTPAGE + PAGETRAILER)
-        if bbt_root_offset > 0 && bbt_root_offset + PST_PAGE_SIZE as u64 <= file_len {
-            if reader.seek(SeekFrom::Start(bbt_root_offset)).is_ok() {
-                let mut page = [0u8; PST_PAGE_SIZE];
-                if reader.read_exact(&mut page).is_ok() {
-                    let w_sig = u16::from_le_bytes([page[498], page[499]]);
-                    if w_sig == PST_TRAILER_SIG {
-                        if !PageTrailer::verify(&page, PTYPE_BBT) {
-                            errors.push("Root BBT page CRC32 or PAGETRAILER verification failed".to_string());
-                        }
-                    }
+        if bbt_root_offset > 0
+            && bbt_root_offset + PST_PAGE_SIZE as u64 <= file_len
+            && reader.seek(SeekFrom::Start(bbt_root_offset)).is_ok()
+        {
+            let mut page = [0u8; PST_PAGE_SIZE];
+            if reader.read_exact(&mut page).is_ok() {
+                let w_sig = u16::from_le_bytes([page[498], page[499]]);
+                if w_sig == PST_TRAILER_SIG && !PageTrailer::verify(&page, PTYPE_BBT) {
+                    errors.push("Root BBT page CRC32 or PAGETRAILER verification failed".to_string());
                 }
             }
         }
 
-        if nbt_root_offset > 0 && nbt_root_offset + PST_PAGE_SIZE as u64 <= file_len {
-            if reader.seek(SeekFrom::Start(nbt_root_offset)).is_ok() {
-                let mut page = [0u8; PST_PAGE_SIZE];
-                if reader.read_exact(&mut page).is_ok() {
-                    let w_sig = u16::from_le_bytes([page[498], page[499]]);
-                    if w_sig == PST_TRAILER_SIG {
-                        if !PageTrailer::verify(&page, PTYPE_NBT) {
-                            errors.push("Root NBT page CRC32 or PAGETRAILER verification failed".to_string());
-                        }
-                    }
+        if nbt_root_offset > 0
+            && nbt_root_offset + PST_PAGE_SIZE as u64 <= file_len
+            && reader.seek(SeekFrom::Start(nbt_root_offset)).is_ok()
+        {
+            let mut page = [0u8; PST_PAGE_SIZE];
+            if reader.read_exact(&mut page).is_ok() {
+                let w_sig = u16::from_le_bytes([page[498], page[499]]);
+                if w_sig == PST_TRAILER_SIG && !PageTrailer::verify(&page, PTYPE_NBT) {
+                    errors.push("Root NBT page CRC32 or PAGETRAILER verification failed".to_string());
                 }
             }
         }
 
         // 8. Allocation Map (AMap) Verification at 0x4400
-        if file_len >= AMAP_START_OFFSET + PST_PAGE_SIZE as u64 {
-            if reader.seek(SeekFrom::Start(AMAP_START_OFFSET)).is_ok() {
-                let mut page = [0u8; PST_PAGE_SIZE];
-                if reader.read_exact(&mut page).is_ok() {
-                    let w_sig = u16::from_le_bytes([page[498], page[499]]);
-                    if w_sig == PST_TRAILER_SIG {
-                        if !PageTrailer::verify(&page, PTYPE_AMAP) {
-                            errors.push("Initial AMap page (0x4400) CRC32 verification failed".to_string());
-                        }
-                    }
+        if file_len >= AMAP_START_OFFSET + PST_PAGE_SIZE as u64
+            && reader.seek(SeekFrom::Start(AMAP_START_OFFSET)).is_ok()
+        {
+            let mut page = [0u8; PST_PAGE_SIZE];
+            if reader.read_exact(&mut page).is_ok() {
+                let w_sig = u16::from_le_bytes([page[498], page[499]]);
+                if w_sig == PST_TRAILER_SIG && !PageTrailer::verify(&page, PTYPE_AMAP) {
+                    errors.push("Initial AMap page (0x4400) CRC32 verification failed".to_string());
                 }
             }
         }
