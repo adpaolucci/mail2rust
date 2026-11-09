@@ -17,7 +17,7 @@ resolver = "2"
 [workspace.package]
 version = "3.5.0"
 edition = "2021"
-authors = ["Anthony D. Paolucci <adpaolucci@gmail.com>"]
+authors = ["Mail2Rust Contributors"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/adpaolucci/mail2rust"
 

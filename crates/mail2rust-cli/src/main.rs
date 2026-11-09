@@ -41,7 +41,7 @@ mod samples;
 #[derive(Parser, Debug)]
 #[command(
     name = "mail2rust",
-    author = "Anthony D. Paolucci <adpaolucci@gmail.com>",
+    author = "Mail2Rust Contributors",
     version = "3.5.0",
     about = "Universal high-performance offline email & mailbox converter in 100% pure Rust"
 )]

@@ -48,14 +48,14 @@ fn create_sample_messages() -> Vec<EmailMessage> {
             folder_path: vec!["Inbox".to_string()],
             subject: "Project Titan: Architecture & Validation Specification".to_string(),
             from: EmailAddress::new("Dr. Evelyn Vance", "evelyn.vance@titan.corp"),
-            to: vec![EmailAddress::new("Anthony Paolucci", "adpaolucci@gmail.com")],
+            to: vec![EmailAddress::new("Alex Wright", "alex.wright@corp.local")],
             cc: vec![EmailAddress::new("Audit Board", "audit@titan.corp")],
             bcc: vec![],
             date: Utc.with_ymd_and_hms(2026, 11, 6, 14, 30, 0).unwrap(),
             size_bytes: 42_500,
-            body_text: "Anthony,\n\nThe PST generation validation on Linux and Windows confirmed 100% compliance with Microsoft [MS-PST]. CRC-32 checksums and B-Tree root pointers align with Outlook 2024/M365 specifications.\n\nAll attachments and folder hierarchies have been preserved.\n\nBest regards,\nDr. Evelyn Vance".to_string(),
-            body_html: Some("<p>Anthony,</p><p>The PST generation validation on Linux and Windows confirmed <strong>100% compliance</strong> with Microsoft [MS-PST].</p><p>Best regards,<br/>Dr. Evelyn Vance</p>".to_string()),
-            raw_mime: b"From: Dr. Evelyn Vance <evelyn.vance@titan.corp>\r\nTo: Anthony Paolucci <adpaolucci@gmail.com>\r\nSubject: Project Titan: Architecture & Validation Specification\r\nDate: Fri, 06 Nov 2026 14:30:00 +0000\r\nMessage-ID: <spec-titan-001@mail2rust.local>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nAnthony,\r\n\r\nThe PST generation validation on Linux and Windows confirmed 100% compliance with Microsoft [MS-PST].".to_vec(),
+            body_text: "Team,\n\nThe PST generation validation on Linux and Windows confirmed 100% compliance with Microsoft [MS-PST]. CRC-32 checksums and B-Tree root pointers align with Outlook 2024/M365 specifications.\n\nAll attachments and folder hierarchies have been preserved.\n\nBest regards,\nDr. Evelyn Vance".to_string(),
+            body_html: Some("<p>Team,</p><p>The PST generation validation on Linux and Windows confirmed <strong>100% compliance</strong> with Microsoft [MS-PST].</p><p>Best regards,<br/>Dr. Evelyn Vance</p>".to_string()),
+            raw_mime: b"From: Dr. Evelyn Vance <evelyn.vance@titan.corp>\r\nTo: Alex Wright <alex.wright@corp.local>\r\nSubject: Project Titan: Architecture & Validation Specification\r\nDate: Fri, 06 Nov 2026 14:30:00 +0000\r\nMessage-ID: <spec-titan-001@mail2rust.local>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nTeam,\r\n\r\nThe PST generation validation on Linux and Windows confirmed 100% compliance with Microsoft [MS-PST].".to_vec(),
             attachments: vec![
                 Attachment::new("Architecture_Spec.pdf".to_string(), "application/pdf".to_string(), b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\nxref\n0 2\ntrailer<</Root 1 0 R>>\nstartxref\n49\n%%EOF".to_vec(), None),
                 Attachment::new("validation_report.csv".to_string(), "text/csv".to_string(), b"check,status,notes\nNDB_Header,PASS,0x4E44424E\nBTree_Root,PASS,Valid offsets\n".to_vec(), None),
@@ -101,14 +101,14 @@ fn create_sample_messages() -> Vec<EmailMessage> {
             folder_path: vec!["Projects".to_string(), "Project Titan".to_string()],
             subject: "Forensic Chain-of-Custody SHA-256 Merkle Manifest Export".to_string(),
             from: EmailAddress::new("Sarah Connor", "sconnor@cyber.gov"),
-            to: vec![EmailAddress::new("Anthony Paolucci", "adpaolucci@gmail.com")],
+            to: vec![EmailAddress::new("Alex Wright", "alex.wright@corp.local")],
             cc: vec![],
             bcc: vec![],
             date: Utc.with_ymd_and_hms(2026, 11, 7, 2, 10, 0).unwrap(),
             size_bytes: 88_900,
             body_text: "Cryptographic hash verification completed across 1,248 migrated items.\n\nMerkle Root: 7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069\nBates Range: CASE-2026-0001000 through CASE-2026-0001412\n\nNo discrepancies found.".to_string(),
             body_html: None,
-            raw_mime: b"From: Sarah Connor <sconnor@cyber.gov>\r\nTo: Anthony Paolucci <adpaolucci@gmail.com>\r\nSubject: Forensic Chain-of-Custody SHA-256 Merkle Manifest Export\r\nDate: Sat, 07 Nov 2026 02:10:00 +0000\r\nMessage-ID: <audit-ediscovery-003@mail2rust.local>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nCryptographic hash verification completed.".to_vec(),
+            raw_mime: b"From: Sarah Connor <sconnor@cyber.gov>\r\nTo: Alex Wright <alex.wright@corp.local>\r\nSubject: Forensic Chain-of-Custody SHA-256 Merkle Manifest Export\r\nDate: Sat, 07 Nov 2026 02:10:00 +0000\r\nMessage-ID: <audit-ediscovery-003@mail2rust.local>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nCryptographic hash verification completed.".to_vec(),
             attachments: vec![
                 Attachment::new("Chain_of_Custody_Audit.csv".to_string(), "text/csv".to_string(), b"item_id,sha256,md5,custodian,bates\n1,7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069,3b1657ff1fc53b92dc18148a1d65dfc2,Vance,CASE-2026-0001001\n".to_vec(), None),
             ],
@@ -192,7 +192,7 @@ fn generate_emlx_samples(base_dir: &Path) -> Result<(), Box<dyn std::error::Erro
     let dir = base_dir.join("emlx");
     fs::create_dir_all(&dir)?;
 
-    let raw_eml = b"From: Dr. Evelyn Vance <evelyn.vance@titan.corp>\r\nTo: Anthony Paolucci <adpaolucci@gmail.com>\r\nSubject: Apple Mail EMLX Spec Verification\r\nDate: Fri, 06 Nov 2026 14:30:00 +0000\r\nMessage-ID: <apple-mail-emlx-001@mail2rust.local>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nThis is a native Apple Mail .emlx message containing a byte-count header and XML plist metadata.";
+    let raw_eml = b"From: Dr. Evelyn Vance <evelyn.vance@titan.corp>\r\nTo: Alex Wright <alex.wright@corp.local>\r\nSubject: Apple Mail EMLX Spec Verification\r\nDate: Fri, 06 Nov 2026 14:30:00 +0000\r\nMessage-ID: <apple-mail-emlx-001@mail2rust.local>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nThis is a native Apple Mail .emlx message containing a byte-count header and XML plist metadata.";
 
     let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -288,7 +288,7 @@ SUMMARY:Q4 Migration Architecture Review & Verification
 DESCRIPTION:Reviewing pure-Rust MS-PST B-Tree generation and cyclic cipher performance.
 LOCATION:Conference Room Orion / Video Conference
 ORGANIZER;CN=Dr. Evelyn Vance:mailto:evelyn.vance@titan.corp
-ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;CN=Anthony Paolucci:mailto:adpaolucci@gmail.com
+ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;CN=Alex Wright:mailto:alex.wright@corp.local
 STATUS:CONFIRMED
 END:VEVENT
 END:VCALENDAR
@@ -419,7 +419,7 @@ fn generate_forensic_samples(base_dir: &Path, msgs: &[EmailMessage]) -> Result<(
     let manifest = ForensicEngine::generate_manifest(
         &stamped,
         "CASE-2026-SEC-TITAN",
-        "Anthony D. Paolucci (Lead Forensic Systems Engineer)",
+        "Lead Forensic Systems Engineer (Digital Forensics Unit)",
         "Enterprise Exchange / M365 Mailbox Store",
         "Archive_Output.pst",
         bates_range,

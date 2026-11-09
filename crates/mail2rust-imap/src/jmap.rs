@@ -849,7 +849,7 @@ mod tests {
                 },
                 "accounts": {
                     "acc_fastmail_01": {
-                        "name": "adpaolucci@fastmail.com",
+                        "name": "tester@fastmail.com",
                         "isPersonal": true
                     }
                 }
@@ -1016,8 +1016,8 @@ mod tests {
                                     ],
                                     "to": [
                                         {
-                                             "name": "Anthony Paolucci",
-                                             "email": "adpaolucci@fastmail.com"
+                                             "name": "Fastmail Tester",
+                                             "email": "tester@fastmail.com"
                                         }
                                     ],
                                     "textBody": [

@@ -269,7 +269,7 @@ mail2rust imap \
 # Ingest specific folders with delta sync tracking
 mail2rust imap \
   --host "mail.company.com" \
-  --username "adpaolucci@company.com" \
+  --username "user@company.com" \
   --folders "INBOX,Sent,Archive" \
   --output "company_archive.pst"
 ```

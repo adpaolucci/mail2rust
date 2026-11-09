@@ -51,4 +51,4 @@ an individual is officially representing the community in public spaces.
 ## Contact
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the project maintainer at `adpaolucci@gmail.com`.
+reported to the project maintainers via GitHub Security Advisories or issues.
