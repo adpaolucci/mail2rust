@@ -1,0 +1,18 @@
+name: Feature Request
+description: Suggest a new mailbox format parser, [MS-PST]/IMAP/JMAP feature, UI enhancement, or MCP tool
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Problem & Proposed Enhancement
+      description: Describe the migration or eDiscovery workflow gap or enhancement you would like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: target
+    attributes:
+      label: Affected Surface(s)
+      description: e.g., Win32 GUI, Iced GUI, CLI, MCP Server, PST Engine, IMAP/JMAP Sync.

@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.9.0.schema.json
+
+PackageIdentifier: adpaolucci.mail2rust
+PackageVersion: 3.5.0
+PackageLocale: en-US
+Publisher: adpaolucci
+PublisherUrl: https://github.com/adpaolucci
+PublisherSupportUrl: https://github.com/adpaolucci/mail2rust/issues
+PackageName: Mail2Rust
+PackageUrl: https://mail2rust.guap.ca
+License: Apache-2.0
+LicenseUrl: https://github.com/adpaolucci/mail2rust/blob/main/LICENSE
+Copyright: Copyright (c) 2026 adpaolucci
+ShortDescription: 100% pure-Rust native Win32 (WinSafe) and Iced email migration studio, [MS-PST] container engine, CLI, and MCP server.
+Description: >-
+  mail2rust is a pure-Rust universal email and mailbox migration suite featuring a clean-room 64-bit Unicode [MS-PST]
+  reader/writer without Outlook COM dependencies, a native zero-GPU Win32 desktop console (mail2rust-win32 via WinSafe),
+  a cross-platform Iced GUI (mail2rust-iced), a full CLI, RFC 6234 SHA-256 Merkle chain-of-custody forensics,
+  direct IMAP/JMAP ingestion, and a JSON-RPC 2.0 stdio MCP server.
+Moniker: mail2rust
+Tags:
+  - email
+  - pst
+  - mbox
+  - imap
+  - forensics
+  - win32
+  - rust
+  - cli
+  - gui
+  - mcp
+ReleaseNotesUrl: https://github.com/adpaolucci/mail2rust/releases/tag/v3.5.0
+Documentations:
+  - DocumentLabel: Project Hub & Documentation
+    DocumentUrl: https://mail2rust.guap.ca
+ManifestType: defaultLocale
+ManifestVersion: 1.9.0

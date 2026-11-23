@@ -80,14 +80,14 @@ impl EmlReader {
 
         // Parse flags from common headers (X-Status, X-Mozilla-Status)
         let mut flags = MessageFlags::default();
-        if let Some(moz) = headers.get("x-mozilla-status") {
-            if let Ok(code) = u32::from_str_radix(moz.trim(), 16) {
-                flags.read = (code & 0x0001) != 0;
-                flags.replied = (code & 0x0002) != 0;
-                flags.flagged = (code & 0x0004) != 0;
-                flags.deleted = (code & 0x0008) != 0;
-                flags.forwarded = (code & 0x1000) != 0;
-            }
+        if let Some(moz) = headers.get("x-mozilla-status")
+            && let Ok(code) = u32::from_str_radix(moz.trim(), 16)
+        {
+            flags.read = (code & 0x0001) != 0;
+            flags.replied = (code & 0x0002) != 0;
+            flags.flagged = (code & 0x0004) != 0;
+            flags.deleted = (code & 0x0008) != 0;
+            flags.forwarded = (code & 0x1000) != 0;
         }
         if let Some(status) = headers.get("status") {
             if status.contains('R') {
@@ -104,14 +104,13 @@ impl EmlReader {
         // Support Google Takeout X-Gmail-Labels
         if let Some(gmail_labels) = headers.get("x-gmail-labels") {
             let (g_folder, g_flags) = Self::parse_gmail_labels(gmail_labels);
-            if let Some(gf) = g_folder {
-                if final_folder.is_empty()
+            if let Some(gf) = g_folder
+                && (final_folder.is_empty()
                     || final_folder == vec!["Inbox".to_string()]
                     || final_folder == vec!["Import".to_string()]
-                    || final_folder == vec!["Archive".to_string()]
-                {
-                    final_folder = gf;
-                }
+                    || final_folder == vec!["Archive".to_string()])
+            {
+                final_folder = gf;
             }
             flags.read = g_flags.read;
             if g_flags.flagged {

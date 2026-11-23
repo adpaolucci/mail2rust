@@ -144,12 +144,12 @@ pub fn decode_quoted_printable_bytes(bytes: &[u8]) -> Vec<u8> {
                 i += 2;
                 continue;
             }
-            if let Ok(hex_str) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
-                if let Ok(val) = u8::from_str_radix(hex_str, 16) {
-                    output.push(val);
-                    i += 3;
-                    continue;
-                }
+            if let Ok(hex_str) = std::str::from_utf8(&bytes[i + 1..i + 3])
+                && let Ok(val) = u8::from_str_radix(hex_str, 16)
+            {
+                output.push(val);
+                i += 3;
+                continue;
             }
         } else if bytes[i] == b'_' {
             output.push(b' ');

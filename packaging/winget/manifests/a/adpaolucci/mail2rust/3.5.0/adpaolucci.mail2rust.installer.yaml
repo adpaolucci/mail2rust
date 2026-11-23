@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
+
+PackageIdentifier: adpaolucci.mail2rust
+PackageVersion: 3.5.0
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: mail2rust.exe
+    PortableCommandAlias: mail2rust
+  - RelativeFilePath: mail2rust-win32.exe
+    PortableCommandAlias: mail2rust-win32
+  - RelativeFilePath: mail2rust-iced.exe
+    PortableCommandAlias: mail2rust-iced
+  - RelativeFilePath: mail2rust-mcp.exe
+    PortableCommandAlias: mail2rust-mcp
+ReleaseDate: 2026-11-19
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/adpaolucci/mail2rust/releases/download/v3.5.0/mail2rust-x86_64-pc-windows-msvc.zip
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+ManifestType: installer
+ManifestVersion: 1.9.0

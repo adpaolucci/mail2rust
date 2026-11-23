@@ -21,13 +21,13 @@ flowchart LR
     B --> H["mail2rust_merge"]
 ```
 
-### Available Tools
+### Available Tools (6 Total)
 
 | Tool Name | Purpose | Parameters | Output Schema |
 | :--- | :--- | :--- | :--- |
 | **`mail2rust_sniff`** | Classifies mailbox formats and magic byte signatures (PST, OST, MBOX, EML, EMLX, MSG, OLM, Maildir). | `path`: string | `format`, `size_bytes`, `is_directory`, `recommended_action` |
 | **`mail2rust_validate_pst`** | Inspects MS-PST containers: checks 512-byte header, `!BDN` magic, CRC-32 integrity, and NBT/BBT B-Trees without Microsoft Outlook. | `path`: string | `is_valid`, `magic`, `client_magic`, `version`, `encryption_method`, `crc_match` |
-| **`mail2rust_convert`** | High-throughput format conversion (e.g. MBOX to PST, PST to EML tree, EML to PST) with optional deduplication. | `source`, `destination`, `target_format`, `dedup` | `status`, `messages_ingested`, `messages_written`, `duplicates_skipped`, `elapsed_ms` |
+| **`mail2rust_convert`** | High-throughput format conversion (e.g. MBOX to PST, PST to EML tree, EML to PST) with optional deduplication and checkpoint resumption. | `source`, `destination`, `target_format`, `dedup`, `checkpoint_file`, `resume` | `status`, `messages_ingested`, `messages_written`, `duplicates_skipped`, `already_migrated_skipped`, `elapsed_ms` |
 | **`mail2rust_audit`** | Forensic chain-of-custody examination: calculates SHA-256 Merkle root, applies Bates stamping, and produces a forensic CSV manifest. | `path`, `case_number`, `examiner`, `bates_prefix`, `output_csv` | `case_number`, `total_items`, `root_sha256`, `bates_start`, `bates_end`, `manifest_csv` |
 | **`mail2rust_split`** | Breaks oversized archives (>20GB or >50GB) into chunked volume files while preserving conversation threads and folder trees. | `source`, `destination_dir`, `max_volume_mb`, `strategy`, `target_format` | `status`, `volumes_count`, `volumes` (array of created parts with counts and sizes) |
 | **`mail2rust_merge`** | Merges multiple disparate archives into a unified container with cross-archive SHA-256 deduplication. | `sources` (array), `destination`, `dedup` | `sources_merged`, `total_input_messages`, `total_unique_messages`, `total_duplicates_removed` |
@@ -106,10 +106,10 @@ Add to `antigravity.json`:
 
 ```yaml
 name: mail2rust-mcp
-version: "3.3.0"
+version: "3.5.0"
 description: "Universal offline email migration, forensic auditing, and MS-PST binary engine in 100% pure Rust"
 repository: "https://github.com/adpaolucci/mail2rust"
-license: "MIT OR Apache-2.0"
+license: "Apache-2.0"
 
 entrypoint:
   type: stdio

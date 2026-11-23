@@ -19,6 +19,7 @@ impl HtmlIndexGenerator {
         let mut html = String::with_capacity(rows.len() * 256 + 2048);
         html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n");
         html.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
+        html.push_str("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none';\">\n");
         html.push_str(&format!("<title>{}</title>\n", escape_html(title)));
         html.push_str("<style>\n");
         html.push_str("body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 13px; margin: 20px; background-color: #fdfdfd; color: #222; }\n");
@@ -222,10 +223,17 @@ fn escape_html(s: &str) -> String {
 }
 
 fn escape_csv(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
-        format!("\"{}\"", s.replace('"', "\"\""))
+    let neutralized = if s.starts_with(['=', '+', '-', '@', '\t', '\r'])
+        || s.trim_start_matches(' ').starts_with(['=', '+', '-', '@'])
+    {
+        format!("'{s}")
     } else {
         s.to_string()
+    };
+    if neutralized.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", neutralized.replace('"', "\"\""))
+    } else {
+        neutralized
     }
 }
 
@@ -255,6 +263,8 @@ mod tests {
         }];
 
         let html = HtmlIndexGenerator::generate_html("Case Index", &rows);
+        assert!(html.contains("Content-Security-Policy"));
+        assert!(html.contains("default-src 'none'"));
         assert!(html.contains("000001_Test.eml"));
         assert!(html.contains("Important discovery document"));
         assert!(html.contains("Corporate"));
@@ -287,5 +297,35 @@ mod tests {
         assert!(csv_output.contains("Message_ID,Date,From,To,Subject"));
         assert!(csv_output.contains("\"\"\"Doe, Jane\"\" <jane@example.com>\""));
         assert!(csv_output.contains("\"Re: \"\"Quoted\"\" & Commas, here\""));
+    }
+
+    #[test]
+    fn test_manifest_writer_neutralizes_csv_formulas() {
+        let mut buffer = Vec::new();
+        {
+            let mut writer = ManifestWriter::new(&mut buffer).unwrap();
+            let rec = ManifestRecord {
+                message_id: "=SUM(A1)".to_string(),
+                date: "+cmd".to_string(),
+                from: "-1+1".to_string(),
+                to: "@evil".to_string(),
+                subject: "  =HYPERLINK(\"https://evil.example\",\"Click\")".to_string(),
+                size_bytes: 512,
+                matched_keywords: "\t@formula".to_string(),
+                source_container: "inbox.pst".to_string(),
+                sha256_hash: "012345".to_string(),
+                eml_filename: "000001.eml".to_string(),
+            };
+            writer.write_record(&rec).unwrap();
+            writer.flush().unwrap();
+        }
+
+        let csv_output = String::from_utf8(buffer).unwrap();
+        assert!(csv_output.contains("'=SUM(A1)"));
+        assert!(csv_output.contains("'+cmd"));
+        assert!(csv_output.contains("'-1+1"));
+        assert!(csv_output.contains("'@evil"));
+        assert!(csv_output.contains("\"'  =HYPERLINK("));
+        assert!(csv_output.contains("'\t@formula"));
     }
 }

@@ -87,10 +87,10 @@ impl MultiPatternMatcher {
         }
 
         // Check if file is TOML format (e.g. [[rules]])
-        if ext == "toml" || content.contains("[[rules]]") {
-            if let Ok(container) = toml_simple_parse(&content) {
-                return Ok(Self::new(container)?);
-            }
+        if (ext == "toml" || content.contains("[[rules]]"))
+            && let Ok(container) = toml_simple_parse(&content)
+        {
+            return Ok(Self::new(container)?);
         }
 
         // Parse line-by-line text rules
@@ -155,10 +155,10 @@ impl MultiPatternMatcher {
     /// Match against an EmailMessage structure. Evaluates raw_mime if available,
     /// or combines Subject, From, To, and Body.
     pub fn matches_message(&self, msg: &EmailMessage) -> Option<Vec<SearchRuleMatch>> {
-        if !msg.raw_mime.is_empty() {
-            if let Some(m) = self.matches_bytes(&msg.raw_mime) {
-                return Some(m);
-            }
+        if !msg.raw_mime.is_empty()
+            && let Some(m) = self.matches_bytes(&msg.raw_mime)
+        {
+            return Some(m);
         }
 
         // Construct lightweight search buffer from headers and body
@@ -235,24 +235,22 @@ fn toml_simple_parse(content: &str) -> Result<Vec<SearchRule>, String> {
             continue;
         }
 
-        if in_rule {
-            if let Some((k, v)) = t.split_once('=') {
-                let k = k.trim();
-                let v_trimmed = v.trim();
-                let is_single_quoted = v_trimmed.starts_with('\'') && v_trimmed.ends_with('\'');
-                let inner = v_trimmed.trim_matches('"').trim_matches('\'');
-                let unescaped = if is_single_quoted {
-                    inner.to_string()
-                } else {
-                    inner.replace("\\\\", "\\").replace("\\\"", "\"")
-                };
-                match k {
-                    "tag" => current_tag = unescaped,
-                    "description" => current_desc = unescaped,
-                    "pattern" => current_pat = unescaped,
-                    "category" => current_cat = Some(unescaped),
-                    _ => {}
-                }
+        if in_rule && let Some((k, v)) = t.split_once('=') {
+            let k = k.trim();
+            let v_trimmed = v.trim();
+            let is_single_quoted = v_trimmed.starts_with('\'') && v_trimmed.ends_with('\'');
+            let inner = v_trimmed.trim_matches('"').trim_matches('\'');
+            let unescaped = if is_single_quoted {
+                inner.to_string()
+            } else {
+                inner.replace("\\\\", "\\").replace("\\\"", "\"")
+            };
+            match k {
+                "tag" => current_tag = unescaped,
+                "description" => current_desc = unescaped,
+                "pattern" => current_pat = unescaped,
+                "category" => current_cat = Some(unescaped),
+                _ => {}
             }
         }
     }

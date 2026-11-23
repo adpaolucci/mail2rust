@@ -26,11 +26,11 @@ impl MmdfReader {
                 if idx > last_boundary {
                     let msg_bytes = &bytes[last_boundary..idx];
                     let trimmed = msg_bytes.trim_ascii();
-                    if !trimmed.is_empty() {
-                        if let Ok(mut msg) = EmlReader::parse(trimmed, folder_path.clone()) {
-                            msg.source_format = "MMDF".to_string();
-                            messages.push(msg);
-                        }
+                    if !trimmed.is_empty()
+                        && let Ok(mut msg) = EmlReader::parse(trimmed, folder_path.clone())
+                    {
+                        msg.source_format = "MMDF".to_string();
+                        messages.push(msg);
                     }
                 }
                 idx += 4;

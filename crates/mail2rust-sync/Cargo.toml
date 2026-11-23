@@ -2,8 +2,10 @@
 name = "mail2rust-sync"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Incremental delta sync, high-watermark UID tracking, and resumable migration checkpoint engine"
 
 [dependencies]

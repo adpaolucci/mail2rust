@@ -61,10 +61,10 @@ impl MergeSourceConfig {
     }
 
     pub fn resolved_alias(&self) -> String {
-        if let Some(ref a) = self.alias {
-            if !a.trim().is_empty() {
-                return a.trim().to_string();
-            }
+        if let Some(ref a) = self.alias
+            && !a.trim().is_empty()
+        {
+            return a.trim().to_string();
         }
         self.path
             .file_stem()

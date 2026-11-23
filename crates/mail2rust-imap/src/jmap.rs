@@ -238,14 +238,13 @@ impl JmapClient {
 
         if let Some(responses) = parsed.get("methodResponses").and_then(|r| r.as_array()) {
             for resp in responses {
-                if let Some(arr) = resp.as_array() {
-                    if arr.first().and_then(|v| v.as_str()) == Some("Mailbox/get") {
-                        if let Some(list) = arr.get(1).and_then(|args| args.get("list")).and_then(|l| l.as_array()) {
-                            for mb_val in list {
-                                if let Ok(mb) = serde_json::from_value::<JmapMailbox>(mb_val.clone()) {
-                                    mailboxes.push(mb);
-                                }
-                            }
+                if let Some(arr) = resp.as_array()
+                    && arr.first().and_then(|v| v.as_str()) == Some("Mailbox/get")
+                    && let Some(list) = arr.get(1).and_then(|args| args.get("list")).and_then(|l| l.as_array())
+                {
+                    for mb_val in list {
+                        if let Ok(mb) = serde_json::from_value::<JmapMailbox>(mb_val.clone()) {
+                            mailboxes.push(mb);
                         }
                     }
                 }
@@ -306,14 +305,13 @@ impl JmapClient {
 
         if let Some(responses) = parsed.get("methodResponses").and_then(|r| r.as_array()) {
             for resp in responses {
-                if let Some(arr) = resp.as_array() {
-                    if arr.first().and_then(|v| v.as_str()) == Some("Email/query") {
-                        if let Some(id_list) = arr.get(1).and_then(|args| args.get("ids")).and_then(|l| l.as_array()) {
-                            for id_val in id_list {
-                                if let Some(id_str) = id_val.as_str() {
-                                    ids.push(id_str.to_string());
-                                }
-                            }
+                if let Some(arr) = resp.as_array()
+                    && arr.first().and_then(|v| v.as_str()) == Some("Email/query")
+                    && let Some(id_list) = arr.get(1).and_then(|args| args.get("ids")).and_then(|l| l.as_array())
+                {
+                    for id_val in id_list {
+                        if let Some(id_str) = id_val.as_str() {
+                            ids.push(id_str.to_string());
                         }
                     }
                 }
@@ -374,14 +372,13 @@ impl JmapClient {
 
         if let Some(responses) = parsed.get("methodResponses").and_then(|r| r.as_array()) {
             for resp in responses {
-                if let Some(arr) = resp.as_array() {
-                    if arr.first().and_then(|v| v.as_str()) == Some("Email/get") {
-                        if let Some(list) = arr.get(1).and_then(|args| args.get("list")).and_then(|l| l.as_array()) {
-                            for item_val in list {
-                                if let Ok(item) = serde_json::from_value::<JmapEmailItem>(item_val.clone()) {
-                                    emails.push(item);
-                                }
-                            }
+                if let Some(arr) = resp.as_array()
+                    && arr.first().and_then(|v| v.as_str()) == Some("Email/get")
+                    && let Some(list) = arr.get(1).and_then(|args| args.get("list")).and_then(|l| l.as_array())
+                {
+                    for item_val in list {
+                        if let Ok(item) = serde_json::from_value::<JmapEmailItem>(item_val.clone()) {
+                            emails.push(item);
                         }
                     }
                 }
@@ -439,10 +436,10 @@ impl JmapClient {
                 break;
             }
 
-            if let Some(filter) = folder_filter {
-                if !filter.iter().any(|f| f.eq_ignore_ascii_case(&mb.name)) {
-                    continue;
-                }
+            if let Some(filter) = folder_filter
+                && !filter.iter().any(|f| f.eq_ignore_ascii_case(&mb.name))
+            {
+                continue;
             }
 
             info!(mailbox = %mb.name, total = mb.total_emails, "Syncing JMAP mailbox");
@@ -478,11 +475,11 @@ impl JmapClient {
                     total_ingested += 1;
                     msgs_since_last_flush += 1;
 
-                    if let Some(p) = checkpoint_path {
-                        if msgs_since_last_flush >= checkpoint_interval {
-                            msgs_since_last_flush = 0;
-                            let _ = mail2rust_sync::CheckpointManager::save_atomic(checkpoint, p);
-                        }
+                    if let Some(p) = checkpoint_path
+                        && msgs_since_last_flush >= checkpoint_interval
+                    {
+                        msgs_since_last_flush = 0;
+                        let _ = mail2rust_sync::CheckpointManager::save_atomic(checkpoint, p);
                     }
 
                     on_message(msg);
@@ -554,10 +551,10 @@ pub fn jmap_item_to_email_message(item: JmapEmailItem, mailbox_map: &HashMap<Str
     let mut body_text = String::new();
     if let Some(ref text_parts) = item.text_body {
         for part in text_parts {
-            if let Some(ref pid) = part.part_id {
-                if let Some(val) = item.body_values.get(pid) {
-                    body_text.push_str(&val.value);
-                }
+            if let Some(ref pid) = part.part_id
+                && let Some(val) = item.body_values.get(pid)
+            {
+                body_text.push_str(&val.value);
             }
         }
     }
@@ -566,10 +563,10 @@ pub fn jmap_item_to_email_message(item: JmapEmailItem, mailbox_map: &HashMap<Str
     if let Some(ref html_parts) = item.html_body {
         let mut html_str = String::new();
         for part in html_parts {
-            if let Some(ref pid) = part.part_id {
-                if let Some(val) = item.body_values.get(pid) {
-                    html_str.push_str(&val.value);
-                }
+            if let Some(ref pid) = part.part_id
+                && let Some(val) = item.body_values.get(pid)
+            {
+                html_str.push_str(&val.value);
             }
         }
         if !html_str.is_empty() {
@@ -673,7 +670,7 @@ fn http_request(
     let req = format!(
         "{} {} HTTP/1.1\r\n\
          Host: {}\r\n\
-         User-Agent: mail2rust/3.3.0\r\n\
+         User-Agent: mail2rust/3.5.0\r\n\
          Accept: application/json\r\n\
          Content-Type: application/json\r\n\
          {}Content-Length: {}\r\n\
@@ -708,10 +705,10 @@ fn http_request(
                 for line in header_part.lines() {
                     let lower = line.to_ascii_lowercase();
                     if lower.starts_with("content-length:") {
-                        if let Some(val_str) = line.split(':').nth(1) {
-                            if let Ok(cl) = val_str.trim().parse::<usize>() {
-                                expected_total_len = Some(header_end + 4 + cl);
-                            }
+                        if let Some(val_str) = line.split(':').nth(1)
+                            && let Ok(cl) = val_str.trim().parse::<usize>()
+                        {
+                            expected_total_len = Some(header_end + 4 + cl);
                         }
                     } else if lower.contains("transfer-encoding: chunked") {
                         is_chunked = true;
@@ -722,10 +719,10 @@ fn http_request(
                 for line in header_part.lines() {
                     let lower = line.to_ascii_lowercase();
                     if lower.starts_with("content-length:") {
-                        if let Some(val_str) = line.split(':').nth(1) {
-                            if let Ok(cl) = val_str.trim().parse::<usize>() {
-                                expected_total_len = Some(header_end + 2 + cl);
-                            }
+                        if let Some(val_str) = line.split(':').nth(1)
+                            && let Ok(cl) = val_str.trim().parse::<usize>()
+                        {
+                            expected_total_len = Some(header_end + 2 + cl);
                         }
                     } else if lower.contains("transfer-encoding: chunked") {
                         is_chunked = true;
@@ -734,10 +731,10 @@ fn http_request(
             }
         }
 
-        if let Some(expected) = expected_total_len {
-            if raw_response.len() >= expected {
-                break;
-            }
+        if let Some(expected) = expected_total_len
+            && raw_response.len() >= expected
+        {
+            break;
         }
 
         if is_chunked && raw_response.ends_with(b"0\r\n\r\n") {

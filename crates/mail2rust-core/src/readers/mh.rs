@@ -22,27 +22,27 @@ impl MhReader {
             }
 
             let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if let Ok(msg_num) = file_name.parse::<u32>() {
-                if let Ok(bytes) = std::fs::read(path) {
-                    let folder_path = vec!["MH_Mailbox".to_string()];
-                    if let Ok(mut msg) = EmlReader::parse(&bytes, folder_path) {
-                        msg.source_format = "MH".to_string();
-                        // Apply flags from sequences
-                        if let Some(seq_set) = sequences.get("unseen") {
-                            msg.flags.read = !seq_set.contains(&msg_num);
-                        }
-                        if let Some(seq_set) = sequences.get("flagged") {
-                            if seq_set.contains(&msg_num) {
-                                msg.flags.flagged = true;
-                            }
-                        }
-                        if let Some(seq_set) = sequences.get("replied") {
-                            if seq_set.contains(&msg_num) {
-                                msg.flags.replied = true;
-                            }
-                        }
-                        messages.push(msg);
+            if let Ok(msg_num) = file_name.parse::<u32>()
+                && let Ok(bytes) = std::fs::read(path)
+            {
+                let folder_path = vec!["MH_Mailbox".to_string()];
+                if let Ok(mut msg) = EmlReader::parse(&bytes, folder_path) {
+                    msg.source_format = "MH".to_string();
+                    // Apply flags from sequences
+                    if let Some(seq_set) = sequences.get("unseen") {
+                        msg.flags.read = !seq_set.contains(&msg_num);
                     }
+                    if let Some(seq_set) = sequences.get("flagged")
+                        && seq_set.contains(&msg_num)
+                    {
+                        msg.flags.flagged = true;
+                    }
+                    if let Some(seq_set) = sequences.get("replied")
+                        && seq_set.contains(&msg_num)
+                    {
+                        msg.flags.replied = true;
+                    }
+                    messages.push(msg);
                 }
             }
         }

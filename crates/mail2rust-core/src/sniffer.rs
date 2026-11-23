@@ -199,12 +199,11 @@ impl FormatSniffer {
         }
 
         // Check for EMLX: starts with ascii digits followed by newline
-        if let Some(pos) = bytes.iter().take(10).position(|&b| b == b'\n') {
-            if let Ok(s) = std::str::from_utf8(&bytes[..pos]) {
-                if s.trim().chars().all(|c| c.is_ascii_digit()) {
-                    return MailboxFormat::Emlx;
-                }
-            }
+        if let Some(pos) = bytes.iter().take(10).position(|&b| b == b'\n')
+            && let Ok(s) = std::str::from_utf8(&bytes[..pos])
+            && s.trim().chars().all(|c| c.is_ascii_digit())
+        {
+            return MailboxFormat::Emlx;
         }
 
         Self::from_extension(ext_hint)

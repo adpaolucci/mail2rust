@@ -365,7 +365,7 @@ fn https_post_form(url_str: &str, params: &[(&str, &str)]) -> Result<String, Box
     let request = format!(
         "POST {} HTTP/1.1\r\n\
          Host: {}\r\n\
-         User-Agent: mail2rust/3.3.0\r\n\
+         User-Agent: mail2rust/3.5.0\r\n\
          Content-Type: application/x-www-form-urlencoded\r\n\
          Content-Length: {}\r\n\
          Connection: close\r\n\r\n\

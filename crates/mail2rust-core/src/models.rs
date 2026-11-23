@@ -19,20 +19,20 @@ impl EmailAddress {
 
     pub fn parse(raw: &str) -> Self {
         let trimmed = raw.trim();
-        if let Some(start) = trimmed.find('<') {
-            if let Some(pos) = trimmed[start + 1..].find('>') {
-                let end = start + 1 + pos;
-                let name = trimmed[..start].trim().trim_matches('"').trim();
-                let email = trimmed[start + 1..end].trim();
-                return Self {
-                    name: if name.is_empty() {
-                        email.to_string()
-                    } else {
-                        name.to_string()
-                    },
-                    email: email.to_string(),
-                };
-            }
+        if let Some(start) = trimmed.find('<')
+            && let Some(pos) = trimmed[start + 1..].find('>')
+        {
+            let end = start + 1 + pos;
+            let name = trimmed[..start].trim().trim_matches('"').trim();
+            let email = trimmed[start + 1..end].trim();
+            return Self {
+                name: if name.is_empty() {
+                    email.to_string()
+                } else {
+                    name.to_string()
+                },
+                email: email.to_string(),
+            };
         }
         Self {
             name: trimmed.to_string(),

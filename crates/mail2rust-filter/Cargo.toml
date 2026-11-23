@@ -2,8 +2,10 @@
 name = "mail2rust-filter"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Message query filtering, de-duplication, thread clustering, and volume splitting engine"
 
 [dependencies]

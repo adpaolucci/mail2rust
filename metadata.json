@@ -1,8 +1,22 @@
 {
   "name": "Mail2Rust Studio Desktop",
-  "description": "Universal offline email and mailbox migration suite in pure Rust with zero-Outlook PST generation, forensic eDiscovery, and multi-format conversion.",
+  "version": "3.5.0",
+  "description": "Universal offline email and mailbox migration suite in pure Rust with zero-Outlook PST generation, forensic eDiscovery, dual Win32/Iced desktop GUIs, and stdio MCP server.",
+  "repository": "https://github.com/adpaolucci/mail2rust",
+  "homepage": "https://mail2rust.guap.ca",
+  "license": "Apache-2.0",
+  "binaries": [
+    "mail2rust",
+    "mail2rust-win32",
+    "mail2rust-iced",
+    "mail2rust-mcp"
+  ],
   "requestFramePermissions": [],
   "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+    "64-bit Unicode [MS-PST] binary container reader, writer & validator (zero Outlook COM)",
+    "15+ mailbox formats, IMAP/TLS, IMAP-to-IMAP sync & JMAP RFC 8620/8621",
+    "Forensic Bates stamping, SHA-256 Merkle roots & eDiscovery regex search",
+    "Native Win32 (WinSafe) & Iced 0.14 dual GUIs",
+    "6-tool MCP JSON-RPC stdio server"
   ]
 }

@@ -9,8 +9,8 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 use tracing::info;
-use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
+use zip::write::SimpleFileOptions;
 
 pub fn generate_all_samples(base_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(base_dir)?;
@@ -81,7 +81,7 @@ fn create_sample_messages() -> Vec<EmailMessage> {
             bcc: vec![],
             date: Utc.with_ymd_and_hms(2026, 11, 6, 15, 45, 0).unwrap(),
             size_bytes: 18_400,
-            body_text: "Evelyn,\n\nThe new pure-Rust PST writer creates valid NDB headers (!BDN, 0x4E44424E), BREF pointers, and compressible encryption tables. We verified that Outlook opens generated archives without errors.\n\nReady for v3.3.0 production deployment.\n\nMarcus".to_string(),
+            body_text: "Evelyn,\n\nThe new pure-Rust PST writer creates valid NDB headers (!BDN, 0x4E44424E), BREF pointers, and compressible encryption tables. We verified that Outlook opens generated archives without errors.\n\nReady for v3.5.0 production deployment.\n\nMarcus".to_string(),
             body_html: None,
             raw_mime: b"From: Marcus Brody <m.brody@titan.corp>\r\nTo: Dr. Evelyn Vance <evelyn.vance@titan.corp>\r\nSubject: Re: Project Titan: Architecture & Validation Specification\r\nIn-Reply-To: <spec-titan-001@mail2rust.local>\r\nDate: Fri, 06 Nov 2026 15:45:00 +0000\r\nMessage-ID: <spec-titan-002@mail2rust.local>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nEvelyn,\r\n\r\nThe new pure-Rust PST writer creates valid NDB headers.".to_vec(),
             attachments: vec![],
@@ -276,7 +276,7 @@ fn generate_icalendar_samples(base_dir: &Path) -> Result<(), Box<dyn std::error:
 
     let ics = r#"BEGIN:VCALENDAR
 VERSION:2.0
-PRODID:-//Mail2Rust//NONSGML Calendar 3.3.0//EN
+PRODID:-//Mail2Rust//NONSGML Calendar 3.5.0//EN
 CALSCALE:GREGORIAN
 METHOD:PUBLISH
 BEGIN:VEVENT

@@ -1,13 +1,13 @@
 use crate::ltp::{
-    PropertyContext, PR_BODY_HTML_W, PR_BODY_W, PR_CONTENT_COUNT, PR_CONTENT_UNREAD, PR_DISPLAY_NAME_W, PR_HASATTACH,
-    PR_IMPORTANCE, PR_INTERNET_MESSAGE_ID_W, PR_MESSAGE_CLASS_W, PR_MESSAGE_FLAGS, PR_PST_PASSWORD,
-    PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_W, PR_SUBFOLDERS, PR_SUBJECT_W,
+    PR_BODY_HTML_W, PR_BODY_W, PR_CONTENT_COUNT, PR_CONTENT_UNREAD, PR_DISPLAY_NAME_W, PR_HASATTACH, PR_IMPORTANCE,
+    PR_INTERNET_MESSAGE_ID_W, PR_MESSAGE_CLASS_W, PR_MESSAGE_FLAGS, PR_PST_PASSWORD, PR_SENDER_EMAIL_ADDRESS_W,
+    PR_SENDER_NAME_W, PR_SUBFOLDERS, PR_SUBJECT_W, PropertyContext,
 };
 use crate::ndb::{
-    calculate_partial_header_crc, compute_pst_password_crc, cyclic_crypt, permute_bytes, PageTrailer, PstEncryption,
     AMAP_START_OFFSET, DATA_START_OFFSET, NID_MESSAGE_STORE, NID_ROOT_FOLDER, PMAP_START_OFFSET, PST_CLIENT_MAGIC,
     PST_CLIENT_VER, PST_HEADER_SIZE, PST_PAGE_DATA_SIZE, PST_PAGE_SIZE, PST_UNICODE_VER, PTYPE_AMAP, PTYPE_BBT,
-    PTYPE_NBT, PTYPE_PMAP,
+    PTYPE_NBT, PTYPE_PMAP, PageTrailer, PstEncryption, calculate_partial_header_crc, compute_pst_password_crc,
+    cyclic_crypt, permute_bytes,
 };
 use mail2rust_core::EmailMessage;
 use std::collections::HashMap;
@@ -30,6 +30,7 @@ pub struct PstWriter<W: Write + Seek> {
     nbt_entries: Vec<(u32, u64, u32)>, // (NID, BID, ParentNID)
     bbt_entries: Vec<(u64, u64, u32)>, // (BID, FileOffset, ByteLength)
     folder_map: HashMap<String, u32>,
+    folder_path_nids: HashMap<Vec<String>, u32>,
     encryption: PstEncryption,
     password: Option<String>,
 }
@@ -65,6 +66,7 @@ impl<W: Write + Seek> PstWriter<W> {
             nbt_entries: Vec::new(),
             bbt_entries: Vec::new(),
             folder_map: HashMap::new(),
+            folder_path_nids: HashMap::new(),
             encryption,
             password,
         })
@@ -104,15 +106,9 @@ impl<W: Write + Seek> PstWriter<W> {
         Ok(bid)
     }
 
-    pub fn add_folder(&mut self, name: &str, parent_path: Option<&str>) -> io::Result<u32> {
+    fn add_folder_with_parent_nid(&mut self, name: &str, parent_nid: u32) -> io::Result<u32> {
         let nid = self.alloc_nid_counter;
         self.alloc_nid_counter += 1;
-
-        let parent_nid = if let Some(p) = parent_path {
-            *self.folder_map.get(p).unwrap_or(&NID_ROOT_FOLDER)
-        } else {
-            NID_ROOT_FOLDER
-        };
 
         let mut pc = PropertyContext::new();
         pc.add_string_w(PR_DISPLAY_NAME_W, name);
@@ -124,9 +120,61 @@ impl<W: Write + Seek> PstWriter<W> {
         let bid = self.write_block(data)?;
 
         self.nbt_entries.push((nid, bid, parent_nid));
-        self.folder_map.insert(name.to_string(), nid);
-        debug!(nid = nid, name = name, "Added folder to PST");
+        self.folder_map.entry(name.to_string()).or_insert(nid);
+        debug!(nid = nid, name = name, parent_nid = parent_nid, "Added folder to PST");
         Ok(nid)
+    }
+
+    pub fn add_folder(&mut self, name: &str, parent_path: Option<&str>) -> io::Result<u32> {
+        let parent_nid = if let Some(p) = parent_path {
+            *self.folder_map.get(p).unwrap_or(&NID_ROOT_FOLDER)
+        } else {
+            NID_ROOT_FOLDER
+        };
+        let nid = self.add_folder_with_parent_nid(name, parent_nid)?;
+        self.folder_map.insert(name.to_string(), nid);
+        Ok(nid)
+    }
+
+    /// Ensures every segment in `segments` exists as nested folders (optionally under `root_parent`),
+    /// returning the leaf folder NID. Defaults to `Inbox` when `segments` has no non-empty parts.
+    pub fn ensure_folder_path(&mut self, segments: &[String], root_parent: Option<&str>) -> io::Result<u32> {
+        let mut current_path = Vec::new();
+        let mut parent_nid = if let Some(root) = root_parent.map(str::trim).filter(|s| !s.is_empty()) {
+            current_path.push(root.to_string());
+            if let Some(&nid) = self.folder_path_nids.get(&current_path) {
+                nid
+            } else if let Some(&nid) = self.folder_map.get(root) {
+                self.folder_path_nids.insert(current_path.clone(), nid);
+                nid
+            } else {
+                let nid = self.add_folder_with_parent_nid(root, NID_ROOT_FOLDER)?;
+                self.folder_path_nids.insert(current_path.clone(), nid);
+                nid
+            }
+        } else {
+            NID_ROOT_FOLDER
+        };
+
+        let non_empty: Vec<&str> = segments.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let effective: Vec<&str> = if non_empty.is_empty() {
+            vec!["Inbox"]
+        } else {
+            non_empty
+        };
+
+        for seg in effective {
+            current_path.push(seg.to_string());
+            if let Some(&nid) = self.folder_path_nids.get(&current_path) {
+                parent_nid = nid;
+            } else {
+                let nid = self.add_folder_with_parent_nid(seg, parent_nid)?;
+                self.folder_path_nids.insert(current_path.clone(), nid);
+                parent_nid = nid;
+            }
+        }
+
+        Ok(parent_nid)
     }
 
     pub fn add_message(&mut self, msg: &EmailMessage, folder_nid: u32) -> io::Result<u32> {

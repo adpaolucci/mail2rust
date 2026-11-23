@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use chrono::{DateTime, Utc};
 use mail2rust_core::EmailMessage;
 use serde::{Deserialize, Serialize};
@@ -116,11 +118,12 @@ impl ForensicEngine {
         )?;
 
         for m in messages {
-            let bates = m.bates_number.as_deref().unwrap_or("").replace('"', "\"\"");
-            let safe_msgid = m.message_id.replace('"', "\"\"");
-            let safe_subj = m.subject.replace('"', "\"\"");
-            let safe_sender = m.from.email.replace('"', "\"\"");
-            let safe_folder = m.folder_path.join("/").replace('"', "\"\"");
+            let bates = neutralize_csv_quoted_field(m.bates_number.as_deref().unwrap_or(""));
+            let safe_msgid = neutralize_csv_quoted_field(&m.message_id);
+            let safe_subj = neutralize_csv_quoted_field(&m.subject);
+            let safe_sender = neutralize_csv_quoted_field(&m.from.email);
+            let folder_joined = m.folder_path.join("/");
+            let safe_folder = neutralize_csv_quoted_field(&folder_joined);
             writeln!(
                 file,
                 "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",{},\"{}\",{}",
@@ -141,6 +144,18 @@ impl ForensicEngine {
         info!(path = ?path, count = messages.len(), "Exported CSV forensic manifest");
         Ok(())
     }
+}
+
+fn neutralize_csv_quoted_field(raw: &str) -> String {
+    let single_line = raw.replace(['\r', '\n'], " ");
+    let neutralized = if single_line.starts_with(['=', '+', '-', '@', '\t'])
+        || single_line.trim_start_matches(' ').starts_with(['=', '+', '-', '@'])
+    {
+        format!("'{single_line}")
+    } else {
+        single_line
+    };
+    neutralized.replace('"', "\"\"")
 }
 
 #[cfg(test)]
@@ -231,5 +246,46 @@ mod tests {
         let content = std::fs::read_to_string(&temp_csv).expect("Failed to read CSV");
         assert!(content.contains("\"Subject with \"\"quotes\"\" and, commas\""));
         let _ = std::fs::remove_file(temp_csv);
+    }
+
+    #[test]
+    fn test_export_manifest_csv_neutralizes_formulas() {
+        let msg = EmailMessage {
+            id: "1".to_string(),
+            message_id: "=msg1".to_string(),
+            conversation_id: "c1".to_string(),
+            folder_path: vec!["+Inbox".to_string()],
+            subject: "=cmd|' /C calc'!A0".to_string(),
+            from: EmailAddress::new("Evil", "@formula@example.com"),
+            to: vec![],
+            cc: vec![],
+            bcc: vec![],
+            date: Utc::now(),
+            size_bytes: 10,
+            body_text: "Body".to_string(),
+            body_html: None,
+            raw_mime: vec![],
+            attachments: vec![],
+            mapi_properties: vec![],
+            flags: MessageFlags::default(),
+            importance: Importance::Normal,
+            sha256: "sha1".to_string(),
+            md5: "md51".to_string(),
+            bates_number: Some("  =BATES01".to_string()),
+            legal_hold: false,
+            source_format: "test".to_string(),
+        };
+        let temp_csv = std::env::temp_dir().join(format!(
+            "test_manifest_cwe1236_{}.csv",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        ForensicEngine::export_manifest_csv(&[msg], &temp_csv).expect("CSV export failed");
+        let content = std::fs::read_to_string(&temp_csv).expect("Failed to read CSV");
+        let _ = std::fs::remove_file(temp_csv);
+        assert!(content.contains("\"'  =BATES01\""));
+        assert!(content.contains("\"'=msg1\""));
+        assert!(content.contains("\"'=cmd|' /C calc'!A0\""));
+        assert!(content.contains("\"'@formula@example.com\""));
+        assert!(content.contains("\"'+Inbox\""));
     }
 }

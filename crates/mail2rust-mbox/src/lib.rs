@@ -1,5 +1,7 @@
-use flate2::write::GzEncoder;
+#![forbid(unsafe_code)]
+
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use mail2rust_core::EmailMessage;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};

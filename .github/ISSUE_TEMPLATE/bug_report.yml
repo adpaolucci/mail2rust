@@ -1,0 +1,54 @@
+name: Bug Report
+description: Report a bug in the Win32 GUI, Iced GUI, CLI, MCP server, or mailbox/[MS-PST] parsers
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component / Binary
+      options:
+        - mail2rust-win32 (Native WinSafe Win32 GUI)
+        - mail2rust-iced (Cross-platform Iced GUI)
+        - mail2rust (CLI)
+        - mail2rust-mcp (MCP Server)
+        - mail2rust-core / pst / eml / mbox / filter / forensics / sync / imap
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System & Session Type
+      options:
+        - Windows 11
+        - Windows 10
+        - Windows Server (Local / Console)
+        - Windows Server / Hyper-V / VM over RDP
+        - Linux (X11 / Wayland)
+        - macOS (Apple Silicon / Intel)
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or Commit Hash
+      placeholder: "e.g., v3.5.0 or commit hash"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug, steps to reproduce, and expected vs. actual behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: CLI Command / Diagnostic Logs (Optional)
+      description: Paste any command line or `--log-level debug` logs (sanitize credentials and mailbox contents).
+      render: bash

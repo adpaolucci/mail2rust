@@ -2,8 +2,10 @@
 name = "mail2rust-eml"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "EML exporter with multi-layout directory structures (folder, year, month, flat) and filename sanitization"
 
 [dependencies]

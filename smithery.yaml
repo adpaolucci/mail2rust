@@ -1,10 +1,10 @@
 # Smithery configuration for mail2rust
 # https://smithery.ai
 name: mail2rust-mcp
-version: "3.3.0"
+version: "3.5.0"
 description: "Universal offline email migration, forensic auditing, and MS-PST binary engine in 100% pure Rust (zero Outlook/MAPI dependencies)"
 repository: "https://github.com/adpaolucci/mail2rust"
-license: "MIT OR Apache-2.0"
+license: "Apache-2.0"
 
 entrypoint:
   type: stdio

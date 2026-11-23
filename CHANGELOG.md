@@ -5,11 +5,16 @@ All notable changes to `mail2rust` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.5.0] - 2026-11-08
+## [3.5.0] - 2026-11-19
+
+### Changed
+- **Dual-GUI Architecture (`mail2rust-win32` + `mail2rust-iced`)**: Replaced `eframe`/`egui` (`mail2rust-gui`) with two specialized pure-Rust frontends: **`mail2rust-win32`** (`winsafe 0.0.29`, zero-GPU native Win32 Common Controls v6, PerMonitorV2 DPI manifest, embedded `app.ico`, COM file/folder dialogs) as the Windows default, and **`mail2rust-iced`** (`iced 0.14` with `wgpu` + `tiny-skia` software rendering fallback and RGBA window icon) for Linux, macOS, and Windows (`mail2rust gui --iced`).
+- **Apache-2.0 Licensing & Governance**: Standardized repository license to `Apache-2.0` (`LICENSE`, `NOTICE`, `Cargo.toml`, `smithery.yaml`, `README.md`), upgraded workspace to Rust `edition = "2024"` and MSRV `1.88`, added `deny.toml` + `cargo-deny` CI job, `.github/dependabot.yml`, issue/PR templates, updated GitHub Actions workflows, and added ready-to-submit WinGet & Homebrew manifests in `packaging/`.
 
 ### Added
-- **Native Host OS File & Folder Pickers (`mail2rust-gui` & `mail2rust-cli`)**:
-  - Integrated `rfd` (Rusty File Dialogs) providing genuine host OS file dialogs (Win32 `IFileDialog` Common Item Dialogs on Windows, Cocoa `NSOpenPanel`/`NSSavePanel` on macOS, and XDG Desktop Portals on Linux).
+- **Dual-GUI CLI Launcher & Native Pickers (`mail2rust-cli`)**:
+  - Updated `mail2rust gui [PATH] [--iced] [--sample]` to launch `mail2rust-win32` by default on Windows and `mail2rust-iced` on Unix or with `--iced`.
+  - Integrated `rfd` (Rusty File Dialogs) providing genuine host OS file dialogs (Win32 `IFileDialog` Common Item Dialogs on Windows, Cocoa `NSOpenPanel`/`NSSavePanel` on macOS, and XDG Desktop Portals on Linux) across `mail2rust-iced` and `mail2rust pick`.
   - **Mail2Rust Studio GUI**:
     - Added "📁 Browse File..." and "📂 Browse Folder..." dialog buttons to the Open Mailbox Archive modal with format filters (`*.pst`, `*.ost`, `*.mbox`, `*.eml`, `*.emlx`, `*.msg`, `*.olm`, `*.zip`, `*.gz`, `*.bz2`, `*.xz`).
     - Added multi-file selection ("📁 Browse File(s)...") and directory selection ("📂 Browse Folder...") to the Merge Mailboxes modal.

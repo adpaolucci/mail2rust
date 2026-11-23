@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use chrono::Datelike;
 use mail2rust_core::EmailMessage;
 use std::collections::{HashMap, HashSet};

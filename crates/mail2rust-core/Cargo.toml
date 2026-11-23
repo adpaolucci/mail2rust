@@ -2,8 +2,10 @@
 name = "mail2rust-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Core email models, RFC 5322 MIME parser, and format readers for mail2rust"
 
 [dependencies]

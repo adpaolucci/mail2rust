@@ -1,10 +1,11 @@
 use crate::ltp::{
-    ParsedPropertyContext, PR_BODY_HTML_W, PR_BODY_W, PR_DISPLAY_NAME_W, PR_IMPORTANCE, PR_INTERNET_MESSAGE_ID_W,
-    PR_MESSAGE_CLASS_W, PR_MESSAGE_FLAGS, PR_PST_PASSWORD, PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_W, PR_SUBJECT_W,
+    PR_BODY_HTML_W, PR_BODY_W, PR_DISPLAY_NAME_W, PR_IMPORTANCE, PR_INTERNET_MESSAGE_ID_W, PR_MESSAGE_CLASS_W,
+    PR_MESSAGE_FLAGS, PR_PST_PASSWORD, PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_W, PR_SUBJECT_W,
+    ParsedPropertyContext,
 };
 use crate::ndb::{
-    compute_pst_password_crc, cyclic_crypt, depermute_bytes, PstEncryption, NID_MESSAGE_STORE, NID_ROOT_FOLDER,
-    PST_HEADER_SIZE, PST_PAGE_DATA_SIZE, PST_PAGE_SIZE, PST_TRAILER_SIG, PTYPE_BBT, PTYPE_NBT,
+    NID_MESSAGE_STORE, NID_ROOT_FOLDER, PST_HEADER_SIZE, PST_PAGE_DATA_SIZE, PST_PAGE_SIZE, PST_TRAILER_SIG, PTYPE_BBT,
+    PTYPE_NBT, PstEncryption, compute_pst_password_crc, cyclic_crypt, depermute_bytes,
 };
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use chrono::Utc;
@@ -194,37 +195,35 @@ impl<R: Read + Seek> PstReader<R> {
 
         // Step 1: Pre-scan folder nodes
         for (nid, bid, _parent) in &nodes {
-            if let Some(block) = self.read_block_by_bid(*bid) {
-                if let Some(pc) = ParsedPropertyContext::parse(&block) {
-                    if let Some(name) = pc
-                        .get_string_w(PR_DISPLAY_NAME_W)
-                        .or_else(|| pc.get_string_a(PR_DISPLAY_NAME_W))
-                    {
-                        folder_names.insert(*nid, name);
-                    }
-                }
+            if let Some(block) = self.read_block_by_bid(*bid)
+                && let Some(pc) = ParsedPropertyContext::parse(&block)
+                && let Some(name) = pc
+                    .get_string_w(PR_DISPLAY_NAME_W)
+                    .or_else(|| pc.get_string_a(PR_DISPLAY_NAME_W))
+            {
+                folder_names.insert(*nid, name);
             }
         }
 
         // Step 2: Read messages from NBT nodes
         for (nid, bid, parent_nid) in &nodes {
-            if let Some(block) = self.read_block_by_bid(*bid) {
-                if let Some(pc) = ParsedPropertyContext::parse(&block) {
-                    // Check if this node is an email message or item
-                    let subject = pc.get_string_w(PR_SUBJECT_W).or_else(|| pc.get_string_a(PR_SUBJECT_W));
-                    let body = pc.get_string_w(PR_BODY_W).or_else(|| pc.get_string_a(PR_BODY_W));
-                    let msg_class = pc
-                        .get_string_w(PR_MESSAGE_CLASS_W)
-                        .or_else(|| pc.get_string_a(PR_MESSAGE_CLASS_W));
+            if let Some(block) = self.read_block_by_bid(*bid)
+                && let Some(pc) = ParsedPropertyContext::parse(&block)
+            {
+                // Check if this node is an email message or item
+                let subject = pc.get_string_w(PR_SUBJECT_W).or_else(|| pc.get_string_a(PR_SUBJECT_W));
+                let body = pc.get_string_w(PR_BODY_W).or_else(|| pc.get_string_a(PR_BODY_W));
+                let msg_class = pc
+                    .get_string_w(PR_MESSAGE_CLASS_W)
+                    .or_else(|| pc.get_string_a(PR_MESSAGE_CLASS_W));
 
-                    if subject.is_some() || body.is_some() || msg_class.is_some() {
-                        let folder_name = folder_names
-                            .get(parent_nid)
-                            .cloned()
-                            .unwrap_or_else(|| "Inbox".to_string());
-                        let msg = self.build_email_message(*nid, &pc, vec![folder_name]);
-                        messages.push(msg);
-                    }
+                if subject.is_some() || body.is_some() || msg_class.is_some() {
+                    let folder_name = folder_names
+                        .get(parent_nid)
+                        .cloned()
+                        .unwrap_or_else(|| "Inbox".to_string());
+                    let msg = self.build_email_message(*nid, &pc, vec![folder_name]);
+                    messages.push(msg);
                 }
             }
         }
@@ -314,26 +313,26 @@ impl<R: Read + Seek> PstReader<R> {
             };
 
             // Test raw
-            if let Some(pc) = ParsedPropertyContext::parse(&chunk) {
-                if pc.get_string_w(PR_SUBJECT_W).is_some() || pc.get_string_w(PR_BODY_W).is_some() {
-                    let msg = self.build_email_message(offset as u32, &pc, vec!["Recovered Items".to_string()]);
-                    recovered.push(msg);
-                    offset += 64;
-                    continue;
-                }
+            if let Some(pc) = ParsedPropertyContext::parse(&chunk)
+                && (pc.get_string_w(PR_SUBJECT_W).is_some() || pc.get_string_w(PR_BODY_W).is_some())
+            {
+                let msg = self.build_email_message(offset as u32, &pc, vec!["Recovered Items".to_string()]);
+                recovered.push(msg);
+                offset += 64;
+                continue;
             }
 
             // Test depermuted
             if self.crypt_method == 0x01 || data[offset] == crate::ndb::MPBB[0xBC] {
                 let mut dep = chunk.clone();
                 depermute_bytes(&mut dep);
-                if let Some(pc) = ParsedPropertyContext::parse(&dep) {
-                    if pc.get_string_w(PR_SUBJECT_W).is_some() || pc.get_string_w(PR_BODY_W).is_some() {
-                        let msg = self.build_email_message(offset as u32, &pc, vec!["Recovered Items".to_string()]);
-                        recovered.push(msg);
-                        offset += 64;
-                        continue;
-                    }
+                if let Some(pc) = ParsedPropertyContext::parse(&dep)
+                    && (pc.get_string_w(PR_SUBJECT_W).is_some() || pc.get_string_w(PR_BODY_W).is_some())
+                {
+                    let msg = self.build_email_message(offset as u32, &pc, vec!["Recovered Items".to_string()]);
+                    recovered.push(msg);
+                    offset += 64;
+                    continue;
                 }
             }
 

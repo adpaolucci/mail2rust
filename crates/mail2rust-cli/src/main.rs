@@ -1,12 +1,14 @@
+#![forbid(unsafe_code)]
+
 use chrono::Datelike;
 use clap::{Parser, Subcommand, ValueEnum};
 use mail2rust_core::{
-    init_logging, EmailMessage, FormatSniffer, MailboxMerger, MergeFolderStrategy, MergeOptions, MergeSourceConfig,
+    EmailMessage, FormatSniffer, MailboxMerger, MergeFolderStrategy, MergeOptions, MergeSourceConfig, init_logging,
 };
 use mail2rust_eml::{EmlExporter, EmlLayout, EmlNaming, ManifestRecord, ManifestWriter};
 use mail2rust_filter::{
-    parse_cli_datetime, parse_size_bytes, DateFilter, DedupEngine, DedupStrategy, FolderFilter, MultiPatternMatcher,
-    SplitConfig, SplitMode, VolumeSplitter,
+    DateFilter, DedupEngine, DedupStrategy, FolderFilter, MultiPatternMatcher, SplitConfig, SplitMode, VolumeSplitter,
+    parse_cli_datetime, parse_size_bytes,
 };
 use mail2rust_forensics::{BatesRange, ForensicEngine};
 use mail2rust_imap::{ImapAuthMethod, OAuthProvider};
@@ -42,7 +44,7 @@ mod samples;
 #[command(
     name = "mail2rust",
     author = "Mail2Rust Contributors",
-    version = "3.5.0",
+    version,
     about = "Universal high-performance offline email & mailbox converter in 100% pure Rust"
 )]
 struct Cli {
@@ -108,7 +110,7 @@ struct Cli {
     pick: bool,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -366,8 +368,18 @@ enum Commands {
         #[arg(short, long, alias = "output", default_value = "samples")]
         output_dir: PathBuf,
     },
-    /// Launch the pure-Rust native GUI studio (zero Node.js or WebView2 dependencies)
-    Gui,
+    /// Launch the pure-Rust native GUI studio (Win32 default on Windows; Iced on Linux/macOS or with --iced)
+    Gui {
+        /// Optional mailbox file or folder path to open on launch
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+        /// Launch the cross-platform Iced GUI instead of the native Win32 GUI on Windows
+        #[arg(long)]
+        iced: bool,
+        /// Load built-in sample mailbox dataset on startup
+        #[arg(long)]
+        sample: bool,
+    },
     /// Direct server-to-server IMAP migration between accounts with zero local disk storage
     ImapSync {
         /// Source IMAP server hostname
@@ -649,11 +661,67 @@ fn resolve_file(
     Err("A file path is required. (Hint: pass --pick to select via native file dialog)".into())
 }
 
+fn append_error_log(path: &Path, message: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let line = serde_json::json!({
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "error": message,
+    });
+    writeln!(file, "{line}")
+}
+
+fn percent_decode_query_param(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex_str) = std::str::from_utf8(&bytes[i + 1..i + 3])
+                && let Ok(val) = u8::from_str_radix(hex_str, 16)
+            {
+                out.push(val);
+                i += 3;
+                continue;
+            }
+        } else if bytes[i] == b'+' {
+            out.push(b' ');
+            i += 1;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_signal_handler();
     let cli = Cli::parse();
+    let error_log_path = cli.error_log.clone();
+    if let Err(err) = run_cli(cli) {
+        if let Some(ref err_path) = error_log_path {
+            let _ = append_error_log(err_path, &err.to_string());
+        }
+        return Err(err);
+    }
+    Ok(())
+}
 
-    if let Commands::Mcp { tools } = &cli.command {
+fn run_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+    let default_gui = Commands::Gui {
+        path: None,
+        iced: false,
+        sample: false,
+    };
+    let command = cli.command.as_ref().unwrap_or(&default_gui);
+
+    if let Commands::Mcp { tools } = command {
         if *tools {
             println!(
                 "{}",
@@ -676,27 +744,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!(version = env!("CARGO_PKG_VERSION"), "Mail2Rust Engine Initialized");
 
-    match &cli.command {
-        Commands::Gui => {
+    match command {
+        Commands::Gui { path, iced, sample } => {
             println!("Launching Mail2Rust Studio (Pure-Rust native GUI)...");
             let current_exe = std::env::current_exe().unwrap_or_default();
             let parent_dir = current_exe.parent().unwrap_or(Path::new(""));
-            let gui_exe_name = if cfg!(windows) {
-                "mail2rust-gui.exe"
-            } else {
-                "mail2rust-gui"
-            };
-            let candidate_path = parent_dir.join(gui_exe_name);
 
-            let mut cmd = if candidate_path.exists() {
-                std::process::Command::new(candidate_path)
+            let win32_name = "mail2rust-win32.exe";
+            let iced_name = if cfg!(windows) {
+                "mail2rust-iced.exe"
             } else {
-                std::process::Command::new(gui_exe_name)
+                "mail2rust-iced"
             };
+
+            let target_path = if cfg!(windows) && !*iced {
+                let win32_candidate = parent_dir.join(win32_name);
+                let iced_candidate = parent_dir.join(iced_name);
+                if win32_candidate.exists() || !iced_candidate.exists() {
+                    if win32_candidate.exists() {
+                        win32_candidate
+                    } else {
+                        PathBuf::from(win32_name)
+                    }
+                } else {
+                    iced_candidate
+                }
+            } else {
+                let iced_candidate = parent_dir.join(iced_name);
+                if iced_candidate.exists() {
+                    iced_candidate
+                } else {
+                    PathBuf::from(iced_name)
+                }
+            };
+
+            let mut cmd = std::process::Command::new(&target_path);
+            if let Some(p) = path {
+                cmd.arg(p);
+            }
+            if *sample {
+                cmd.arg("--sample");
+            }
 
             let status = cmd.status()?;
             if !status.success() {
-                eprintln!("Mail2Rust GUI exited with code: {:?}", status.code());
+                eprintln!(
+                    "Mail2Rust GUI ({}) exited with code: {:?}",
+                    target_path.display(),
+                    status.code()
+                );
             }
         }
 
@@ -750,24 +846,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 report.bbt_root_bid, report.bbt_root_offset
             );
 
-            if let Ok(file_for_reader) = File::open(&pst) {
-                if let Ok(mut reader) = PstReader::open(file_for_reader) {
-                    let has_pwd = reader.is_password_protected();
-                    println!("Password Protected: {}", has_pwd);
-                    if has_pwd {
-                        if let Some(ref pwd) = password {
-                            let verified = reader.verify_password(pwd);
-                            println!(
-                                "Password Verification: {}",
-                                if verified {
-                                    "SUCCESS (MATCH)"
-                                } else {
-                                    "FAILED (INCORRECT)"
-                                }
-                            );
-                        } else {
-                            println!("Password Verification: (No password provided; pass --password <str> to verify)");
-                        }
+            if let Ok(file_for_reader) = File::open(&pst)
+                && let Ok(mut reader) = PstReader::open(file_for_reader)
+            {
+                let has_pwd = reader.is_password_protected();
+                println!("Password Protected: {}", has_pwd);
+                if has_pwd {
+                    if let Some(pwd) = password {
+                        let verified = reader.verify_password(pwd);
+                        println!(
+                            "Password Verification: {}",
+                            if verified {
+                                "SUCCESS (MATCH)"
+                            } else {
+                                "FAILED (INCORRECT)"
+                            }
+                        );
+                    } else {
+                        println!("Password Verification: (No password provided; pass --password <str> to verify)");
                     }
                 }
             }
@@ -825,16 +921,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let dest_is_mbox = dest_ext == "mbox" || dest_ext == "gz";
 
             if dest_is_pst {
-                let max_gb = if let Some(ref sz) = max_pst_size {
-                    parse_size_bytes(sz).unwrap_or(20 * 1024 * 1024 * 1024) / (1024 * 1024 * 1024)
-                } else {
-                    20
-                };
+                let max_pst_bytes = max_pst_size
+                    .as_deref()
+                    .and_then(|sz| parse_size_bytes(sz).ok())
+                    .unwrap_or(20 * 1024 * 1024 * 1024);
                 run_pst_conversion(
                     &cli,
                     &src,
                     &dst,
-                    max_gb,
+                    max_pst_bytes,
                     split_by.as_deref(),
                     *splits,
                     pst_root.as_deref(),
@@ -877,11 +972,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let src = resolve_source(source.as_ref(), cli.pick, "Select Mail Source File or Directory")?;
             let dst = resolve_destination(destination.as_ref(), cli.pick, "pst", false, "Select Output PST File")?;
-            let effective_gb = if let Some(ref sz) = max_pst_size {
-                parse_size_bytes(sz).unwrap_or(max_pst_gb * 1024 * 1024 * 1024) / (1024 * 1024 * 1024)
-            } else {
-                *max_pst_gb
-            };
+            let effective_bytes = max_pst_size
+                .as_deref()
+                .and_then(|sz| parse_size_bytes(sz).ok())
+                .unwrap_or((*max_pst_gb) * 1024 * 1024 * 1024);
             let enc: PstEncryption = if !*compress && *encryption == CliPstEncryption::Permute {
                 PstEncryption::None
             } else {
@@ -891,7 +985,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &cli,
                 &src,
                 &dst,
-                effective_gb,
+                effective_bytes,
                 split_by.as_deref(),
                 *splits,
                 pst_root.as_deref(),
@@ -976,10 +1070,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Commands::Pick { kind, title, ext, dir } => {
             let mut dlg = rfd::FileDialog::new();
-            if let Some(ref t) = title {
+            if let Some(t) = title {
                 dlg = dlg.set_title(t);
             }
-            if let Some(ref d) = dir {
+            if let Some(d) = dir {
                 dlg = dlg.set_directory(d);
             }
             match kind.to_lowercase().as_str() {
@@ -1061,7 +1155,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
 
-            let max_bytes = if let Some(ref sz) = split_size {
+            let max_bytes = if let Some(sz) = split_size {
                 parse_size_bytes(sz).unwrap_or(max_volume_mb * 1024 * 1024)
             } else {
                 max_volume_mb * 1024 * 1024
@@ -1088,16 +1182,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for vol in &volumes {
                 let out_file = destination_dir.join(&vol.file_name);
                 info!(volume = vol.volume_index, file = ?vol.file_name, count = vol.messages.len(), "Writing volume");
-                if target_ext == "pst" {
-                    let file = File::create(&out_file)?;
-                    let mut writer = PstWriter::new(file, true)?;
-                    let inbox = writer.add_folder("Inbox", None)?;
-                    for m in &vol.messages {
-                        writer.add_message(m, inbox)?;
+                match target_ext.to_lowercase().as_str() {
+                    "pst" => {
+                        let file = File::create(&out_file)?;
+                        let mut writer = PstWriter::new(file, true)?;
+                        for m in &vol.messages {
+                            let fnid = writer.ensure_folder_path(&m.folder_path, None)?;
+                            writer.add_message(m, fnid)?;
+                        }
+                        writer.finalize()?;
                     }
-                    writer.finalize()?;
-                } else {
-                    MboxFileExporter::export_to_file(&vol.messages, &out_file, false)?;
+                    "eml" => {
+                        let vol_dir = destination_dir.join(format!("vol_{:03}", vol.volume_index));
+                        std::fs::create_dir_all(&vol_dir)?;
+                        let mut exporter = EmlExporter::new(&vol_dir, EmlLayout::Folder).with_naming(EmlNaming::Subject);
+                        for m in &vol.messages {
+                            exporter.export_message(m)?;
+                        }
+                        exporter.finalize()?;
+                    }
+                    _ => {
+                        MboxFileExporter::export_to_file(&vol.messages, &out_file, false)?;
+                    }
                 }
             }
             println!("Successfully split mailbox into {} volumes", volumes.len());
@@ -1302,17 +1408,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ => {
                     let file = File::create(output)?;
                     let mut writer = PstWriter::new(file, true)?;
-                    let mut folder_map = std::collections::HashMap::new();
 
                     for msg in &messages {
-                        let folder_name = msg.folder_path.last().map(|s| s.as_str()).unwrap_or("Inbox");
-                        let nid = if let Some(&id) = folder_map.get(folder_name) {
-                            id
-                        } else {
-                            let id = writer.add_folder(folder_name, None)?;
-                            folder_map.insert(folder_name.to_string(), id);
-                            id
-                        };
+                        let nid = writer.ensure_folder_path(&msg.folder_path, None)?;
                         writer.add_message(msg, nid)?;
                     }
                     writer.finalize()?;
@@ -1467,11 +1565,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let summary = mail2rust_imap::ImapMigrator::migrate(&config, |prog| {
                 let subj = prog.current_subject.as_deref().unwrap_or("(No Subject)");
-                let subj_truncated = if subj.len() > 40 {
-                    format!("{}...", &subj[..37])
-                } else {
-                    subj.to_string()
-                };
+                let subj_truncated = truncate_utf8(subj, 40);
                 let mb = (prog.total_bytes_transferred as f64) / (1024.0 * 1024.0);
                 println!(
                     "[{}/{}] [{}] Msg #{} (Item ID {}) \"{}\" | Total: {} msgs ({:.2} MB)",
@@ -1608,7 +1702,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let query = &line[query_start + 1..end];
                         for pair in query.split('&') {
                             if let Some(c) = pair.strip_prefix("code=") {
-                                return Some(c.to_string());
+                                return Some(percent_decode_query_param(c));
                             }
                         }
                     }
@@ -1639,8 +1733,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokens.save_to_file(&cache_file)?;
             println!("\nSaved token cache to: {}", cache_file.display());
             println!("\nTo ingest emails using this token, run:");
-            println!("  mail2rust imap --host {} --username <YOUR_EMAIL> --auth-method xoauth2 --oauth-token \"{}\" -o mailbox.pst\n",
-                prov.default_imap_host(), tokens.access_token);
+            println!(
+                "  mail2rust imap --host {} --username <YOUR_EMAIL> --auth-method xoauth2 --oauth-token \"{}\" -o mailbox.pst\n",
+                prov.default_imap_host(),
+                tokens.access_token
+            );
             println!("======================================================================\n");
         }
 
@@ -1726,11 +1823,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 std::process::exit(130);
             }
-            println!(
-                "\nFetched {} messages from JMAP server ({} newly synced).",
-                messages.len(),
-                count
-            );
 
             apply_preprocessing(&cli, &mut messages)?;
 
@@ -1758,17 +1850,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ => {
                     let file = File::create(output)?;
                     let mut writer = PstWriter::new(file, true)?;
-                    let mut folder_map = std::collections::HashMap::new();
 
                     for msg in &messages {
-                        let folder_name = msg.folder_path.last().map(|s| s.as_str()).unwrap_or("Inbox");
-                        let nid = if let Some(&id) = folder_map.get(folder_name) {
-                            id
-                        } else {
-                            let id = writer.add_folder(folder_name, None)?;
-                            folder_map.insert(folder_name.to_string(), id);
-                            id
-                        };
+                        let nid = writer.ensure_folder_path(&msg.folder_path, None)?;
                         writer.add_message(msg, nid)?;
                     }
                     writer.finalize()?;
@@ -1885,11 +1969,11 @@ fn run_merge_conversion(
     let mut configs = Vec::new();
     for (i, src) in sources.iter().enumerate() {
         let mut cfg = MergeSourceConfig::new(src);
-        if let Some(&p) = prefix_list.get(i) {
-            if !p.is_empty() {
-                cfg.alias = Some(p.to_string());
-                cfg.custom_prefix = Some(p.to_string());
-            }
+        if let Some(&p) = prefix_list.get(i)
+            && !p.is_empty()
+        {
+            cfg.alias = Some(p.to_string());
+            cfg.custom_prefix = Some(p.to_string());
         }
         configs.push(cfg);
     }
@@ -2000,7 +2084,7 @@ fn run_pst_conversion(
     cli: &Cli,
     source: &Path,
     destination: &Path,
-    max_pst_gb: usize,
+    max_pst_bytes: usize,
     split_by: Option<&str>,
     splits: Option<usize>,
     pst_root: Option<&str>,
@@ -2024,7 +2108,7 @@ fn run_pst_conversion(
         return Ok(());
     }
 
-    let max_bytes = max_pst_gb * 1024 * 1024 * 1024;
+    let max_bytes = max_pst_bytes;
     let total_bytes: usize = messages.iter().map(|m| m.size_bytes).sum();
 
     let split_mode = if let Some("year") = split_by {
@@ -2076,19 +2160,9 @@ fn write_single_pst(
     let file = File::create(destination)?;
     let mut writer = PstWriter::with_encryption(file, encryption, password.map(|s| s.to_string()))?;
 
-    let mut folder_map = std::collections::HashMap::new();
-
     let root_nid = match pst_root {
-        Some(root_name) if !root_name.trim().is_empty() => {
-            let nid = writer.add_folder(root_name.trim(), None)?;
-            folder_map.insert(root_name.trim().to_string(), nid);
-            nid
-        }
-        _ => {
-            let nid = writer.add_folder("Inbox", None)?;
-            folder_map.insert("Inbox".to_string(), nid);
-            nid
-        }
+        Some(root_name) if !root_name.trim().is_empty() => writer.add_folder(root_name.trim(), None)?,
+        _ => writer.add_folder("Inbox", None)?,
     };
 
     let parent_folder_name = match pst_root {
@@ -2100,15 +2174,7 @@ fn write_single_pst(
         let fnid = if flatten {
             root_nid
         } else {
-            let folder_name = m.folder_path.last().cloned().unwrap_or_else(|| "Inbox".to_string());
-            match folder_map.get(&folder_name) {
-                Some(&nid) => nid,
-                None => {
-                    let new_nid = writer.add_folder(&folder_name, parent_folder_name)?;
-                    folder_map.insert(folder_name.clone(), new_nid);
-                    new_nid
-                }
-            }
+            writer.ensure_folder_path(&m.folder_path, parent_folder_name)?
         };
         writer.add_message(m, fnid)?;
     }
@@ -2212,7 +2278,7 @@ fn run_eml_conversion(
 
 #[allow(clippy::too_many_arguments)]
 fn run_search_discovery(
-    _cli: &Cli,
+    cli: &Cli,
     source: &Path,
     destination: &Path,
     rules_file: Option<&Path>,
@@ -2223,6 +2289,23 @@ fn run_search_discovery(
     encryption: PstEncryption,
     password: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let since_dt = if let Some(ref s) = cli.since {
+        Some(parse_cli_datetime(s, false).map_err(|e| format!("Invalid --since: {}", e))?)
+    } else {
+        None
+    };
+    let until_dt = if let Some(ref u) = cli.until {
+        Some(parse_cli_datetime(u, true).map_err(|e| format!("Invalid --until: {}", e))?)
+    } else {
+        None
+    };
+    let date_filter = DateFilter {
+        since: since_dt,
+        until: until_dt,
+        start_year: cli.start_year,
+        end_year: cli.end_year,
+    };
+    let folder_filter = FolderFilter::new(cli.include_folder.clone(), cli.exclude_folder.clone());
     let t_start = std::time::Instant::now();
     println!("================================================================================");
     println!("   mail2rust High-Throughput e-Discovery Regex Search & Extraction Engine       ");
@@ -2320,7 +2403,7 @@ fn run_search_discovery(
 
     println!("\n[*] Streaming mailbox source and evaluating rules in real time...");
 
-    mail2rust_core::ingest_path_streaming(source, |msg| {
+    ingest_source_streaming(source, |msg| {
         total_evaluated += 1;
         if total_evaluated.is_multiple_of(5000) {
             eprint!(
@@ -2331,6 +2414,13 @@ fn run_search_discovery(
 
         if is_shutdown_requested() {
             return Err("User interrupted search operation".into());
+        }
+
+        if (!cli.include_deleted && msg.flags.deleted)
+            || (date_filter.is_active() && !date_filter.matches(&msg.date))
+            || (folder_filter.is_active() && !folder_filter.matches(&msg.folder_path))
+        {
+            return Ok(());
         }
 
         // Evaluate against search rules
@@ -2583,19 +2673,35 @@ fn ingest_source(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::error:
     mail2rust_core::ingest_path(source)
 }
 
+fn ingest_source_streaming<F>(source: &Path, mut on_message: F) -> Result<usize, Box<dyn std::error::Error>>
+where
+    F: FnMut(EmailMessage) -> Result<(), Box<dyn std::error::Error>>,
+{
+    let fmt = FormatSniffer::sniff_path(source);
+    if fmt == mail2rust_core::MailboxFormat::Pst || fmt == mail2rust_core::MailboxFormat::Ost {
+        let messages = mail2rust_pst::PstReader::read_path(source)?;
+        let count = messages.len();
+        for msg in messages {
+            on_message(msg)?;
+        }
+        return Ok(count);
+    }
+    mail2rust_core::ingest_path_streaming(source, on_message)
+}
+
 fn apply_preprocessing(cli: &Cli, messages: &mut Vec<EmailMessage>) -> Result<(), Box<dyn std::error::Error>> {
     // 1. Resume / Checkpoint delta
-    if let Some(ref chk_path) = cli.resume {
-        if chk_path.exists() {
-            let chk = CheckpointManager::load(chk_path)?;
-            let (delta, already_done) = CheckpointManager::calculate_delta(messages, &chk);
-            info!(
-                already_done = already_done,
-                remaining = delta.len(),
-                "Resuming migration"
-            );
-            *messages = delta;
-        }
+    if let Some(ref chk_path) = cli.resume
+        && chk_path.exists()
+    {
+        let chk = CheckpointManager::load(chk_path)?;
+        let (delta, already_done) = CheckpointManager::calculate_delta(messages, &chk);
+        info!(
+            already_done = already_done,
+            remaining = delta.len(),
+            "Resuming migration"
+        );
+        *messages = delta;
     }
 
     // 2. Date Filtering
@@ -2698,4 +2804,54 @@ fn post_process(
     }
 
     Ok(())
+}
+
+fn truncate_utf8(s: &str, max_chars: usize) -> String {
+    if s.chars().count() > max_chars {
+        let keep = max_chars.saturating_sub(3);
+        let prefix: String = s.chars().take(keep).collect();
+        format!("{prefix}...")
+    } else {
+        s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_parses_gui_iced_sample_and_path_flags() {
+        let cli = Cli::try_parse_from(["mail2rust", "gui", "--iced", "--sample", "archive.pst"]).unwrap();
+        match cli.command {
+            Some(Commands::Gui { path, iced, sample }) => {
+                assert!(iced);
+                assert!(sample);
+                assert_eq!(path, Some(PathBuf::from("archive.pst")));
+            }
+            _ => panic!("expected Some(Commands::Gui)"),
+        }
+    }
+
+    #[test]
+    fn cli_defaults_to_none_command_for_gui_launch() {
+        let cli = Cli::try_parse_from(["mail2rust"]).unwrap();
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn truncate_utf8_handles_multibyte_boundaries_without_panic() {
+        let subj = "Re: Q4 Report — 🚨 Urgent Compliance Review Needed";
+        let truncated = truncate_utf8(subj, 40);
+        assert!(truncated.ends_with("..."));
+        assert_eq!(truncated.chars().count(), 40);
+
+        let cjk = "重要なお知らせ：".repeat(10);
+        let truncated_cjk = truncate_utf8(&cjk, 40);
+        assert_eq!(truncated_cjk.chars().count(), 40);
+        assert!(truncated_cjk.ends_with("..."));
+
+        let short = "Short Café — 👍";
+        assert_eq!(truncate_utf8(short, 40), short);
+    }
 }

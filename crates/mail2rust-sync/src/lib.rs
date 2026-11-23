@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use chrono::{DateTime, Utc};
 use mail2rust_core::EmailMessage;
 use serde::{Deserialize, Serialize};
@@ -132,10 +134,10 @@ impl CheckpointManager {
     /// Save checkpoint atomically by writing to a temporary file then renaming.
     /// This prevents 0-byte or corrupted checkpoint files during sudden interruptions.
     pub fn save_atomic(checkpoint: &SyncCheckpoint, path: &Path) -> io::Result<()> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)?;
         }
 
         let is_jsonl = path
@@ -208,10 +210,10 @@ impl CheckpointManager {
 
     /// Append a single completed record to a JSON Lines (.jsonl) checkpoint file.
     pub fn append_jsonl_record(path: &Path, record: &JsonlRecord) -> io::Result<()> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)?;
         }
         let mut file = OpenOptions::new().create(true).append(true).open(path)?;
         let line = serde_json::to_string(record).map_err(io::Error::other)?;

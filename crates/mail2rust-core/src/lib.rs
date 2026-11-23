@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod dedup;
 pub mod logging;
 pub mod merger;
@@ -46,13 +48,16 @@ pub fn ingest_path_streaming<F>(source: &Path, mut on_message: F) -> Result<usiz
 where
     F: FnMut(EmailMessage) -> Result<(), Box<dyn std::error::Error>>,
 {
-    use std::io::Read;
+    use std::io::{Read, Seek, SeekFrom};
 
     let format = FormatSniffer::sniff_path(source);
     info!(source = ?source, format = format.name(), "Streaming mailbox source ingestion");
     let mut total_count = 0usize;
 
     match format {
+        MailboxFormat::Pst | MailboxFormat::Ost => {
+            return Err("PST/OST containers require mail2rust_pst::PstReader; use ingest_source or mail2rust-pst".into());
+        }
         MailboxFormat::Zip => {
             let file = File::open(source)?;
             for msg in ArchiveReader::read_zip(file)? {
@@ -70,11 +75,13 @@ where
         }
         MailboxFormat::Mbox => {
             let file = File::open(source)?;
-            let folder = vec![source
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Inbox")
-                .to_string()];
+            let folder = vec![
+                source
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Inbox")
+                    .to_string(),
+            ];
             let n = MboxReader::read_streaming(file, folder, &mut on_message)?;
             total_count += n;
         }
@@ -140,11 +147,14 @@ where
                 };
 
                 if ext == "mbox" || is_mbox {
-                    let folder = vec![source
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("Inbox")
-                        .to_string()];
+                    (&file).seek(SeekFrom::Start(0))?;
+                    let folder = vec![
+                        source
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("Inbox")
+                            .to_string(),
+                    ];
                     let n = MboxReader::read_streaming(file, folder, &mut on_message)?;
                     total_count += n;
                 } else {
@@ -196,25 +206,25 @@ where
                     let file_stem = path.file_stem().and_then(|f| f.to_str()).unwrap_or("Inbox");
                     let has_msf_sibling = path.with_extension("msf").is_file();
 
-                    if ext == "mbox" || has_msf_sibling || ext.is_empty() {
-                        if let Ok(file) = File::open(path) {
-                            let mut test_header = [0u8; 5];
-                            let starts_from = if let Ok(n) = (&file).read(&mut test_header) {
-                                n >= 5 && &test_header == b"From "
-                            } else {
-                                false
-                            };
+                    if (ext == "mbox" || has_msf_sibling || ext.is_empty())
+                        && let Ok(file) = File::open(path)
+                    {
+                        let mut test_header = [0u8; 5];
+                        let starts_from = if let Ok(n) = (&file).read(&mut test_header) {
+                            n >= 5 && &test_header == b"From "
+                        } else {
+                            false
+                        };
 
-                            if ext == "mbox" || has_msf_sibling || starts_from {
-                                if folder.is_empty() {
-                                    folder = vec![file_stem.to_string()];
-                                }
-                                if let Ok(f) = File::open(path) {
-                                    if let Ok(n) = MboxReader::read_streaming(f, folder.clone(), &mut on_message) {
-                                        total_count += n;
-                                        continue;
-                                    }
-                                }
+                        if ext == "mbox" || has_msf_sibling || starts_from {
+                            if folder.is_empty() {
+                                folder = vec![file_stem.to_string()];
+                            }
+                            if let Ok(f) = File::open(path)
+                                && let Ok(n) = MboxReader::read_streaming(f, folder.clone(), &mut on_message)
+                            {
+                                total_count += n;
+                                continue;
                             }
                         }
                     }
@@ -244,11 +254,11 @@ where
                                     total_count += 1;
                                 }
                             }
-                        } else if ext == "eml" || ext.is_empty() {
-                            if let Ok(m) = EmlReader::parse(&bytes, folder) {
-                                on_message(m)?;
-                                total_count += 1;
-                            }
+                        } else if (ext == "eml" || ext.is_empty())
+                            && let Ok(m) = EmlReader::parse(&bytes, folder)
+                        {
+                            on_message(m)?;
+                            total_count += 1;
                         }
                     }
                 }

@@ -2,8 +2,10 @@
 name = "mail2rust-imap"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Pure-Rust direct IMAP ingestion client, folder synchronization, and live mailbox streaming"
 
 [dependencies]

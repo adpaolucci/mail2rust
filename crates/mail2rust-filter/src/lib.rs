@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use chrono::{DateTime, Datelike, TimeZone, Utc};
 use mail2rust_core::{EmailMessage, Importance};
 use serde::{Deserialize, Serialize};
@@ -136,25 +138,25 @@ impl DateFilter {
     }
 
     pub fn matches(&self, dt: &DateTime<Utc>) -> bool {
-        if let Some(since) = self.since {
-            if dt < &since {
-                return false;
-            }
+        if let Some(since) = self.since
+            && dt < &since
+        {
+            return false;
         }
-        if let Some(until) = self.until {
-            if dt > &until {
-                return false;
-            }
+        if let Some(until) = self.until
+            && dt > &until
+        {
+            return false;
         }
-        if let Some(sy) = self.start_year {
-            if dt.year() < sy {
-                return false;
-            }
+        if let Some(sy) = self.start_year
+            && dt.year() < sy
+        {
+            return false;
         }
-        if let Some(ey) = self.end_year {
-            if dt.year() > ey {
-                return false;
-            }
+        if let Some(ey) = self.end_year
+            && dt.year() > ey
+        {
+            return false;
         }
         true
     }
@@ -299,20 +301,20 @@ pub struct FilterEngine;
 
 impl FilterEngine {
     pub fn matches(msg: &EmailMessage, criteria: &FilterCriteria) -> bool {
-        if let Some(ref matcher) = criteria.search_matcher {
-            if matcher.matches_message(msg).is_none() {
-                return false;
-            }
+        if let Some(ref matcher) = criteria.search_matcher
+            && matcher.matches_message(msg).is_none()
+        {
+            return false;
         }
-        if let Some(start) = criteria.start_date {
-            if msg.date < start {
-                return false;
-            }
+        if let Some(start) = criteria.start_date
+            && msg.date < start
+        {
+            return false;
         }
-        if let Some(end) = criteria.end_date {
-            if msg.date > end {
-                return false;
-            }
+        if let Some(end) = criteria.end_date
+            && msg.date > end
+        {
+            return false;
         }
         if let Some(ref sender) = criteria.sender_search {
             let q = sender.to_lowercase();
@@ -334,50 +336,50 @@ impl FilterEngine {
                 return false;
             }
         }
-        if let Some(ref subj) = criteria.subject_search {
-            if !msg.subject.to_lowercase().contains(&subj.to_lowercase()) {
-                return false;
-            }
+        if let Some(ref subj) = criteria.subject_search
+            && !msg.subject.to_lowercase().contains(&subj.to_lowercase())
+        {
+            return false;
         }
-        if let Some(ref body) = criteria.body_search {
-            if !msg.body_text.to_lowercase().contains(&body.to_lowercase()) {
-                return false;
-            }
+        if let Some(ref body) = criteria.body_search
+            && !msg.body_text.to_lowercase().contains(&body.to_lowercase())
+        {
+            return false;
         }
-        if let Some(has_att) = criteria.has_attachments {
-            if (msg.attachments.is_empty()) == has_att {
-                return false;
-            }
+        if let Some(has_att) = criteria.has_attachments
+            && (msg.attachments.is_empty()) == has_att
+        {
+            return false;
         }
-        if let Some(min_s) = criteria.min_size_bytes {
-            if msg.size_bytes < min_s {
-                return false;
-            }
+        if let Some(min_s) = criteria.min_size_bytes
+            && msg.size_bytes < min_s
+        {
+            return false;
         }
-        if let Some(max_s) = criteria.max_size_bytes {
-            if msg.size_bytes > max_s {
-                return false;
-            }
+        if let Some(max_s) = criteria.max_size_bytes
+            && msg.size_bytes > max_s
+        {
+            return false;
         }
-        if let Some(imp) = criteria.importance {
-            if msg.importance != imp {
-                return false;
-            }
+        if let Some(imp) = criteria.importance
+            && msg.importance != imp
+        {
+            return false;
         }
-        if let Some(ro) = criteria.read_only {
-            if msg.flags.read != ro {
-                return false;
-            }
+        if let Some(ro) = criteria.read_only
+            && msg.flags.read != ro
+        {
+            return false;
         }
-        if let Some(true) = criteria.flagged_only {
-            if !msg.flags.flagged {
-                return false;
-            }
+        if let Some(true) = criteria.flagged_only
+            && !msg.flags.flagged
+        {
+            return false;
         }
-        if let Some(true) = criteria.legal_hold_only {
-            if !msg.legal_hold {
-                return false;
-            }
+        if let Some(true) = criteria.legal_hold_only
+            && !msg.legal_hold
+        {
+            return false;
         }
 
         true

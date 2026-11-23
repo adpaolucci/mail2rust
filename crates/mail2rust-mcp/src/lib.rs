@@ -1,14 +1,15 @@
+#![forbid(unsafe_code)]
+
 use mail2rust_core::{
-    ingest_path, DedupEngine, DedupStrategy, EmailMessage, FormatSniffer, MailboxFormat, MailboxMerger,
-    MergeFolderStrategy, MergeOptions, MergeSourceConfig,
+    DedupEngine, DedupStrategy, EmailMessage, FormatSniffer, MailboxFormat, MailboxMerger, MergeFolderStrategy,
+    MergeOptions, MergeSourceConfig, ingest_path,
 };
 use mail2rust_eml::{EmlExporter, EmlLayout, EmlNaming};
 use mail2rust_filter::{SplitConfig, SplitMode, VolumeSplitter};
 use mail2rust_forensics::{BatesRange, ForensicEngine};
 use mail2rust_mbox::MboxFileExporter;
 use mail2rust_pst::{PstReader, PstValidator, PstWriter};
-use serde_json::{json, Value};
-use std::collections::HashMap;
+use serde_json::{Value, json};
 use std::fs::File;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -16,7 +17,7 @@ use tracing::{debug, error, info};
 
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 pub const SERVER_NAME: &str = "mail2rust-mcp";
-pub const SERVER_VERSION: &str = "3.3.0";
+pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Universal reader helper that supports both PST/OST and other formats
 pub fn read_mailbox_messages(source: &Path) -> Result<Vec<EmailMessage>, Box<dyn std::error::Error>> {
@@ -34,17 +35,9 @@ pub fn export_pst_file(messages: &[EmailMessage], dest_path: &Path) -> Result<()
     }
     let file = File::create(dest_path)?;
     let mut writer = PstWriter::new(file, true)?;
-    let mut folder_map = HashMap::new();
 
     for msg in messages {
-        let folder_name = msg.folder_path.last().map(|s| s.as_str()).unwrap_or("Inbox");
-        let nid = if let Some(&id) = folder_map.get(folder_name) {
-            id
-        } else {
-            let id = writer.add_folder(folder_name, None)?;
-            folder_map.insert(folder_name.to_string(), id);
-            id
-        };
+        let nid = writer.ensure_folder_path(&msg.folder_path, None)?;
         writer.add_message(msg, nid)?;
     }
 
@@ -653,8 +646,8 @@ pub fn handle_jsonrpc_request(req: &Value) -> Option<Value> {
             })
         }
 
-        "notifications/initialized" => {
-            info!("Client initialized successfully");
+        m if m.starts_with("notifications/") => {
+            info!(method = m, "Handled MCP notification");
             None
         }
 
@@ -805,6 +798,7 @@ mod tests {
         assert_eq!(resp["id"], 1);
         assert_eq!(resp["result"]["protocolVersion"], "2024-11-05");
         assert_eq!(resp["result"]["serverInfo"]["name"], "mail2rust-mcp");
+        assert_eq!(resp["result"]["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
     }
 
     #[test]

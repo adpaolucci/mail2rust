@@ -1,9 +1,15 @@
 # `mail2rust` — Universal High-Fidelity Email & Mailbox Migration Suite in Pure Rust
 
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
-[![Rust: 1.80+](https://img.shields.io/badge/Rust-1.80%2B-orange.svg)](Cargo.toml)
+Part of the **GUAP** Ecosystem (`guap.ca`) • [**Project Hub & Web Documentation: https://mail2rust.guap.ca**](https://mail2rust.guap.ca) • [**Project Wiki**](https://github.com/adpaolucci/mail2rust/wiki)
+
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![CI](https://github.com/adpaolucci/mail2rust/actions/workflows/ci.yml/badge.svg)](https://github.com/adpaolucci/mail2rust/actions/workflows/ci.yml)
+[![Rust: 1.88+](https://img.shields.io/badge/Rust-1.88%2B-orange.svg)](Cargo.toml)
 [![PST: Zero Outlook](https://img.shields.io/badge/MS--PST-Zero%20Outlook%20Dependency-success.svg)](crates/mail2rust-pst)
 [![RFC Compliant](https://img.shields.io/badge/RFC-5322%20%7C%204155%20%7C%202047%20%7C%206234-emerald.svg)](crates/mail2rust-core)
+[![Architecture: 12 Crates](https://img.shields.io/badge/Workspace-12%20Crates-emerald.svg)](Cargo.toml)
+[![GUI: WinSafe Win32 + Iced 0.14](https://img.shields.io/badge/GUI-WinSafe%20Win32%20%2B%20Iced%200.14-cyan.svg)](crates/mail2rust-win32)
+[![MCP: stdio JSON-RPC](https://img.shields.io/badge/MCP-stdio%20JSON--RPC%202.0-purple.svg)](crates/mail2rust-mcp)
 
 **`mail2rust`** is an ultra-fast, memory-safe, multi-platform email and mailbox conversion suite written in **100% pure Rust**. It converts between **MBOX**, **Maildir / Maildir++**, **Outlook PST**, **Outlook MSG**, **Apple Mail EMLX**, **Outlook for Mac OLM**, **Thunderbird MSF/SBD**, **MH / Sylpheed / Claws Mail**, **MMDF**, **Emacs Babyl**, and **EML hierarchies** with zero data loss, bit-exact MIME fidelity, conversation thread preservation, and cryptographic chain-of-custody tracking.
 
@@ -42,7 +48,7 @@
 | :---: | :---: |
 | ![Forensics Modal](docs/screenshots/forensics-modal.png) | ![Compliance Report](docs/screenshots/export-report-modal.png) |
 
-| Rust Workspace Architecture (10 Crates) | |
+| Rust Workspace Architecture (12 Crates) | |
 | :---: | :---: |
 | ![Rust Codebase](docs/screenshots/rust-codebase-modal.png) | |
 
@@ -52,16 +58,16 @@
 
 ## Pre-Compiled Binaries & Direct Download
 
-Self-contained native executables with **zero external runtime dependencies** (no Microsoft Outlook, no MAPI DLLs, no Python, no Node.js) are compiled and published for every release:
+Self-contained native executables with **zero external runtime dependencies** (no Microsoft Outlook, no MAPI DLLs, no Python, no Node.js) are compiled and published for every release alongside `LICENSE`, `NOTICE`, and `SHA256SUMS.txt`:
 
 | Platform | Target Architecture | Distribution Package | Included Binaries |
 | :--- | :--- | :--- | :--- |
-| **Windows (64-bit)** | `x86_64-pc-windows-msvc` | [**`mail2rust-x86_64-pc-windows-msvc.zip`**](https://github.com/adpaolucci/mail2rust/releases/latest/download/mail2rust-x86_64-pc-windows-msvc.zip) | `mail2rust.exe`, `mail2rust-gui.exe` |
-| **Linux (64-bit)** | `x86_64-unknown-linux-gnu` | [**`mail2rust-x86_64-unknown-linux-gnu.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest/download/mail2rust-x86_64-unknown-linux-gnu.tar.gz) | `mail2rust`, `mail2rust-gui` |
-| **macOS Apple Silicon** | `aarch64-apple-darwin` (M1/M2/M3/M4) | [**`mail2rust-aarch64-apple-darwin.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest/download/mail2rust-aarch64-apple-darwin.tar.gz) | `mail2rust`, `mail2rust-gui` |
-| **macOS Intel** | `x86_64-apple-darwin` | [**`mail2rust-x86_64-apple-darwin.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest/download/mail2rust-x86_64-apple-darwin.tar.gz) | `mail2rust`, `mail2rust-gui` |
+| **Windows (64-bit)** | `x86_64-pc-windows-msvc` | [**`mail2rust-x86_64-pc-windows-msvc.zip`**](https://github.com/adpaolucci/mail2rust/releases/latest/download/mail2rust-x86_64-pc-windows-msvc.zip) | `mail2rust.exe`, `mail2rust-win32.exe`, `mail2rust-iced.exe`, `mail2rust-mcp.exe` |
+| **Linux (64-bit)** | `x86_64-unknown-linux-gnu` | [**`mail2rust-x86_64-unknown-linux-gnu.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest/download/mail2rust-x86_64-unknown-linux-gnu.tar.gz) | `mail2rust`, `mail2rust-iced`, `mail2rust-mcp` |
+| **macOS Apple Silicon** | `aarch64-apple-darwin` (M1/M2/M3/M4) | [**`mail2rust-aarch64-apple-darwin.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest/download/mail2rust-aarch64-apple-darwin.tar.gz) | `mail2rust`, `mail2rust-iced`, `mail2rust-mcp` |
+| **macOS Intel** | `x86_64-apple-darwin` | [**`mail2rust-x86_64-apple-darwin.tar.gz`**](https://github.com/adpaolucci/mail2rust/releases/latest/download/mail2rust-x86_64-apple-darwin.tar.gz) | `mail2rust`, `mail2rust-iced`, `mail2rust-mcp` |
 
-> Every release archive includes cryptographic `SHA256SUMS.txt` hashes and both the high-throughput CLI engine (`mail2rust`) and the native desktop management utility (`mail2rust-gui`).
+> Ready-to-submit **WinGet** and **Homebrew** manifests are stored under [`packaging/`](packaging/), and dependency advisories/licenses are audited with `cargo-deny` ([`deny.toml`](deny.toml)).
 
 ---
 
@@ -69,7 +75,9 @@ Self-contained native executables with **zero external runtime dependencies** (n
 
 ```text
 mail2rust/
-├── Cargo.toml                     # Workspace root manifest
+├── Cargo.toml                     # Workspace root manifest (Edition 2024, MSRV 1.88, Apache-2.0)
+├── LICENSE / NOTICE / deny.toml   # Apache-2.0 license, attribution notice & cargo-deny audit policy
+├── packaging/                     # WinGet & Homebrew distribution manifests
 ├── crates/
 │   ├── mail2rust-core/            # RFC 5322 MIME, headers, vCard (RFC 6350), iCalendar (RFC 5545), format sniffers
 │   ├── mail2rust-pst/             # Pure Rust MS-PST writer & reader, NDB/LTP layers, B-Trees, mpbbR decryption, and validator
@@ -81,7 +89,8 @@ mail2rust/
 │   ├── mail2rust-imap/            # Pure-Rust direct IMAP/TLS client, live mailbox streaming, folder discovery
 │   ├── mail2rust-mcp/             # Model Context Protocol (MCP) server for Claude, Cursor, Antigravity, and AutoGPT
 │   ├── mail2rust-cli/             # Unified command-line interface binary (`mail2rust`)
-│   └── mail2rust-gui/             # Classic Win32/MMC administrative management console GUI (`mail2rust-gui`)
+│   ├── mail2rust-win32/           # Zero-GPU native Win32 studio built on WinSafe (`winsafe 0.0.29`)
+│   └── mail2rust-iced/            # Cross-platform pure-Rust GUI studio built on Iced 0.14 (`wgpu` + `tiny-skia`)
 └── tests/                         # End-to-end integration and mutational fuzz test suites
 ```
 
@@ -115,7 +124,7 @@ mail2rust/
 ## Quick Start & Compilation
 
 ### Prerequisites
-- [Rust toolchain](https://rustup.rs/) (1.80 or newer).
+- [Rust toolchain](https://rustup.rs/) (1.88 or newer).
 
 ### Build Release Binaries
 ```bash
@@ -123,22 +132,28 @@ mail2rust/
 git clone https://github.com/adpaolucci/mail2rust.git
 cd mail2rust
 
-# Build optimized release binaries (both CLI and Native GUI)
-cargo build --release
+# Build optimized release binaries (CLI, Dual GUIs, and MCP server)
+cargo build --release --workspace
 
 # The compiled executables are located at:
-# CLI:  target/release/mail2rust.exe (Windows) or target/release/mail2rust (Linux/macOS)
-# GUI:  target/release/mail2rust-gui.exe (Windows) or target/release/mail2rust-gui (Linux/macOS)
+# CLI:       target/release/mail2rust.exe (Windows) or target/release/mail2rust (Linux/macOS)
+# Win32 GUI: target/release/mail2rust-win32.exe (Windows default desktop UI)
+# Iced GUI:  target/release/mail2rust-iced.exe / mail2rust-iced (Cross-platform UI)
+# MCP:       target/release/mail2rust-mcp.exe / mail2rust-mcp
 ```
 
-### Launch Native Pure-Rust GUI
-Launch the zero-dependency native 3-pane Outlook desktop GUI directly:
+### Launch Dual Pure-Rust GUIs
+Launch the native Windows Win32 console (`mail2rust-win32`) or cross-platform Iced studio (`mail2rust-iced`):
 ```bash
-# Via CLI subcommand:
+# Default GUI for the host OS (mail2rust-win32 on Windows, mail2rust-iced on Linux/macOS):
 mail2rust gui
 
-# Or run the GUI crate directly:
-cargo run -p mail2rust-gui --release
+# Explicitly launch the cross-platform Iced GUI on any OS:
+mail2rust gui --iced
+
+# Or run either GUI crate directly:
+cargo run -p mail2rust-win32 --release
+cargo run -p mail2rust-iced --release
 ```
 
 ### Run Tests
@@ -175,7 +190,7 @@ mail2rust convert "backup.mbox" "D:\Archive2024.pst" \
   --until "2024-12-31" \
   --exclude-folder "*Trash*" \
   --exclude-folder "*Spam*" \
-  --dedup auto
+  --dedup sha256
 
 # Target specific folders with wildcards
 mail2rust eml "CompanyArchive.zip" "D:\EML_Export" \
@@ -249,10 +264,11 @@ mail2rust pst "evidence.mbox" "secure_archive.pst" \
 mail2rust validate-pst "secure_archive.pst" --password "TopSecretLegal2026!"
 ```
 
-### 10. Native Desktop GUI Studio
-Launch the 100% pure Rust desktop workbench (zero Node.js or WebView2 dependencies):
+### 10. Dual Pure-Rust Desktop GUIs
+Launch `mail2rust-win32` (native zero-GPU Win32 on Windows) or `mail2rust-iced` (`--iced` / cross-platform):
 ```bash
 mail2rust gui
+mail2rust gui --iced --sample
 ```
 
 ### 11. Direct IMAP Live Ingestion (`mail2rust imap`)
@@ -303,7 +319,7 @@ Features:
 - **Microsecond Timestamp Fidelity**: Retains the exact original server delivery timestamp (`INTERNALDATE`) instead of stamping the migration moment.
 - **Status Flag Preservation**: Retains unread/read, starred, answered, deleted, and draft status on the destination server.
 - **Hierarchy Auto-Creation**: Missing target mailbox folders are created automatically.
-- **GUI Access**: Also available in `mail2rust-gui` under **File > IMAP-to-IMAP Account Sync** or the toolbar **Sync IMAP...** button.
+- **GUI Access**: Also available in `mail2rust-win32` and `mail2rust-iced` under **Live IMAP & Sync** / **Sync IMAP...**.
 
 ### 13. Multi-Format Mailbox Merger & Consolidation (`mail2rust merge`)
 Consolidate disparate mailbox sources across completely different formats (e.g. an MBOX from Google Takeout, a Linux Maildir, an Apple Mail `.emlx` archive, Outlook `.msg` files, vCard contacts `.vcf`, and calendar `.ics` appointments) into a single unified container (PST, MBOX, or EML):
@@ -341,7 +357,7 @@ Key Merger Capabilities:
   - `prefix`: Keeps archives partitioned under root labels (e.g., `[Gmail]/Inbox`, `[Work]/Inbox`).
   - `flatten`: Merges all messages into a single root folder.
 - **Chronological Sorting**: Automatically orders the unified message timeline sequentially by date (UTC).
-- **GUI Studio Integration**: Open **File > Merge Mailboxes (Multi-Format)...** or click the toolbar **Merge...** button to merge and either export directly or load all unified mail directly into the interactive 3-pane workbench for immediate inspection.
+- **GUI Studio Integration**: Open **Multi-Format Merger** (`mail2rust-win32`) or click **Merge...** (`mail2rust-iced`) to consolidate and either export directly or load unified mail into the workbench.
 
 ### 14. Native Fastmail & JMAP (RFC 8620 / 8621) Ingestion (`mail2rust jmap`)
 Fastmail and modern email servers (Stalwart, Apache James, Cyrus) support **JMAP** (JSON Meta Application Protocol, RFC 8620 / RFC 8621), the modern IETF JSON-over-HTTP replacement for IMAP. `mail2rust` includes a pure-Rust, zero-external-dependency JMAP client for high-throughput batch synchronization directly into PST, MBOX, or EML:
@@ -370,7 +386,7 @@ Advantages of Native JMAP Ingestion:
 
 ---
 
-### 14. Modern OAuth 2.0 & Provider App Passwords (Google, Microsoft, Yahoo)
+### 15. Modern OAuth 2.0 & Provider App Passwords (Google, Microsoft, Yahoo)
 Modern email services (Google Gmail/Workspace, Microsoft Outlook/Office 365, and Yahoo Mail) disallow raw account passwords over standard IMAP. Mail2Rust provides **first-class support for both modern access paths**:
 
 #### Method 1: Provider App Passwords (Quickest & Recommended)
@@ -462,7 +478,7 @@ Because Proton Mail enforces client-side zero-access encryption (OpenPGP), direc
 
 #### Automated Diagnostics & GUI Support
 - **Actionable Authentication Diagnostics**: When an IMAP login fails against Google, Microsoft, Yahoo, or Proton, Mail2Rust analyzes the response and automatically prints actionable guidance tailored to that specific provider.
-- **Native GUI Preset & Auth Selector**: In `mail2rust-gui`, the **Connect to IMAP Mailbox** and **IMAP-to-IMAP Account Sync** dialogs offer one-click presets for **Gmail**, **Outlook**, **Yahoo**, **Proton (Bridge)**, **iCloud**, and **Fastmail**, plus radio buttons to toggle between **Password / App Pass**, **OAuth 2.0 (XOAUTH2)**, and **OAUTHBEARER**.
+- **Native GUI Preset & Auth Selector**: In `mail2rust-win32` and `mail2rust-iced`, the IMAP connection controls offer one-click presets for **Gmail**, **Outlook**, **Yahoo**, **Proton (Bridge)**, **iCloud**, and **Fastmail**, plus selectors for **Password / App Pass**, **OAuth 2.0 (XOAUTH2)**, and **OAUTHBEARER**.
 
 ---
 
@@ -507,9 +523,9 @@ Or use the standalone `mail2rust-mcp` binary package configured in [`smithery.ya
 
 | Capability / Requirement | `mail2mail` (Python) | `mail2rust` (Rust) | Parity Status |
 | :--- | :---: | :---: | :---: |
-| **Model Context Protocol (MCP)** | No | **Yes (`mail2rust mcp` / `mail2rust-mcp`)** — Native JSON-RPC stdio tools for AI agents | **Exceeds** |
-| **Native Desktop GUI** | Tkinter / Webview wrapper | **100% Pure Rust GUI (`eframe`/`egui`)** | **Exceeds** (Zero Node.js/Webview) |
-| **Fastmail & JMAP (RFC 8620 / 8621)** | No | **Yes (`mail2rust jmap`)** — Pure Rust JSON-over-HTTP client | **Exceeds** |
+| **Model Context Protocol (MCP)** | Yes (5-tool JSON-RPC stdio server) | **Yes (`mail2rust mcp` / `mail2rust-mcp`)** — 6 native JSON-RPC stdio tools for AI agents | **Exceeds** |
+| **Native Desktop GUI** | Native OS File Pickers + CLI | **Dual Pure-Rust GUIs: WinSafe Win32 (`mail2rust-win32`) + Iced 0.14 (`mail2rust-iced`)** | **Exceeds** (Zero Node.js/Webview) |
+| **Fastmail & JMAP (RFC 8620 / 8621)** | Yes (`mail2jmap.py`) | **Yes (`mail2rust jmap`)** — Pure Rust JSON-over-HTTP client | **Parity** |
 | **OAuth 2.0 & App Password Diagnostics** | Basic | **Yes (`XOAUTH2`, `OAUTHBEARER`, `oauth-login`, `app-passwords`, automated error diagnostics & GUI)** | **Exceeds** |
 | **Multi-Format Mailbox Merger** | Manual individual conversions | **Yes (`mail2rust merge` & GUI)** — Merge PST, MBOX, Maildir, EMLX, MSG, OLM, VCF, ICS, and Takeout ZIP with cross-source deduplication | **Exceeds** |
 | **Direct IMAP Server-to-Server Sync** | No (requires exporting to local disk) | **Yes (`mail2rust imap-sync` & GUI)** — 100% in-memory streaming over TLS, zero disk footprint | **Exceeds** |
@@ -527,15 +543,19 @@ Or use the standalone `mail2rust-mcp` binary package configured in [`smithery.ya
 | **Pre-Flight Dry Run (`--dry-run`)** | Yes | **Yes** (Includes oversized attachment scan) | **Parity** |
 | **In-Flight Deduplication (`--dedup`)** | Yes | **Yes** (SHA-256, Message-ID, Normalized content) | **Parity** |
 | **Delta Sync & Resumption** | Yes | **Yes** (`--state-file`, `--resume`) | **Parity** |
-| **Forensic Bates Stamping** | No | **Yes** (`--bates-prefix`, `--bates-start`) | **Exceeds** |
-| **Root Merkle Hash Digest** | No | **Yes** (Forensic tamper-evident chain) | **Exceeds** |
+| **Forensic Bates Stamping** | Yes (`mail_audit.py`) | **Yes** (`--bates-prefix`, `--bates-start`) | **Parity** |
+| **Root Merkle Hash Digest** | Yes (`mail_audit.py`) | **Yes** (Forensic tamper-evident chain) | **Parity** |
 | **Execution Speed & Concurrency** | Python GIL bound | **Native compiled code (10-50x faster)** | **Exceeds** |
 | **Zero External Runtime Dependencies** | Requires Python + Pip + pywin32 | **Single standalone static executable** | **Exceeds** |
 
 ---
 
+## Security Hardening & Supply Chain
+
+- **`#![forbid(unsafe_code)]` Core & Tooling**: Compiled with `#![forbid(unsafe_code)]` across `core`, `pst`, `eml`, `mbox`, `filter`, `forensics`, `sync`, `imap`, `mcp`, `cli`, and `iced` (`unsafe` isolated strictly to native Win32 windowing calls in `mail2rust-win32`).
+- **Air-Gapped HTML Index CSP**: Generated interactive HTML deliverable indexes enforce `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none';` with zero external requests.
+- **MSVC Binary Mitigations & SBOM**: Windows `x86_64` MSVC release builds combine `/STACK:16777216`, Control Flow Guard (`-C control-flow-guard=on`), and CET Shadow Stack (`/CETCOMPAT`), and all release archives ship `SBOM-crates.txt` (`cargo tree --workspace --locked`).
+
 ## License
 
-Dual-licensed under either:
-* **MIT License** ([LICENSE-MIT](LICENSE) or http://opensource.org/licenses/MIT)
-* **Apache License, Version 2.0** ([LICENSE-APACHE](LICENSE) or http://www.apache.org/licenses/LICENSE-2.0)
+Licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.

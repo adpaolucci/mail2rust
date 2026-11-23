@@ -1,6 +1,5 @@
 # Rust build artifacts
 target/
-Cargo.lock
 
 # OS / Editor artifacts
 .DS_Store

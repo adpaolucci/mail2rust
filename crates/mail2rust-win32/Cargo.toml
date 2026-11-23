@@ -1,0 +1,36 @@
+[package]
+name = "mail2rust-win32"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Native zero-GPU Win32 desktop email & MS-PST studio for mail2rust built on WinSafe"
+
+[[bin]]
+name = "mail2rust-win32"
+path = "src/main.rs"
+
+[dependencies]
+mail2rust-core.workspace = true
+mail2rust-pst.workspace = true
+mail2rust-eml.workspace = true
+mail2rust-mbox.workspace = true
+mail2rust-filter.workspace = true
+mail2rust-forensics.workspace = true
+mail2rust-sync.workspace = true
+mail2rust-imap.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winsafe.workspace = true
+arboard.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3.0"
+
+[dev-dependencies]
+tempfile.workspace = true

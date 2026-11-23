@@ -1,5 +1,5 @@
 use std::path::Path;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub fn init_logging(log_level: &str, log_file: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));

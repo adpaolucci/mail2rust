@@ -1,9 +1,11 @@
+#![forbid(unsafe_code)]
+
 use chrono::{DateTime, FixedOffset, NaiveDate};
-use imap::types::Flag;
 use imap::Session;
+use imap::types::Flag;
+use mail2rust_core::EmailMessage;
 use mail2rust_core::models::MapiProperty;
 use mail2rust_core::readers::eml::EmlReader;
-use mail2rust_core::EmailMessage;
 use mail2rust_sync::SyncCheckpoint;
 use native_tls::{TlsConnector, TlsStream};
 use serde::{Deserialize, Serialize};
@@ -15,8 +17,8 @@ use tracing::{debug, info, warn};
 
 pub mod oauth;
 pub use oauth::{
-    build_authorization_url, diagnose_auth_failure, exchange_code_for_token, refresh_access_token, ImapAuthMethod,
-    OAuthBearerAuthenticator, OAuthProvider, OAuthTokenResponse, XOAuth2Authenticator,
+    ImapAuthMethod, OAuthBearerAuthenticator, OAuthProvider, OAuthTokenResponse, XOAuth2Authenticator,
+    build_authorization_url, diagnose_auth_failure, exchange_code_for_token, refresh_access_token,
 };
 
 pub mod jmap;
@@ -370,16 +372,16 @@ impl ImapClient {
         let current_uv = mailbox.uid_validity;
         let mut effective_watermark = watermark;
 
-        if let (Some(rec_uv), Some(cur_uv)) = (recorded_uidvalidity, current_uv) {
-            if rec_uv != cur_uv {
-                warn!(
-                    folder = folder_name,
-                    recorded = rec_uv,
-                    current = cur_uv,
-                    "IMAP UIDVALIDITY changed on server! High-watermark invalidated to prevent skipping messages."
-                );
-                effective_watermark = None;
-            }
+        if let (Some(rec_uv), Some(cur_uv)) = (recorded_uidvalidity, current_uv)
+            && rec_uv != cur_uv
+        {
+            warn!(
+                folder = folder_name,
+                recorded = rec_uv,
+                current = cur_uv,
+                "IMAP UIDVALIDITY changed on server! High-watermark invalidated to prevent skipping messages."
+            );
+            effective_watermark = None;
         }
 
         let total_in_folder = mailbox.exists as usize;
@@ -404,10 +406,10 @@ impl ImapClient {
         }
 
         // Apply max_messages limit if requested
-        if let Some(limit) = self.config.max_messages_per_folder {
-            if uids.len() > limit {
-                uids.truncate(limit);
-            }
+        if let Some(limit) = self.config.max_messages_per_folder
+            && uids.len() > limit
+        {
+            uids.truncate(limit);
         }
 
         if uids.is_empty() {
@@ -454,10 +456,10 @@ impl ImapClient {
                             }
 
                             // Fallback to internal date if received date is missing
-                            if let Some(internal_date) = fetch.internal_date() {
-                                if let Some(dt) = DateTime::from_timestamp(internal_date.timestamp(), 0) {
-                                    email.date = dt;
-                                }
+                            if let Some(internal_date) = fetch.internal_date()
+                                && let Some(dt) = DateTime::from_timestamp(internal_date.timestamp(), 0)
+                            {
+                                email.date = dt;
                             }
 
                             // Record IMAP metadata into properties
@@ -521,10 +523,10 @@ impl ImapClient {
             }
 
             // Check if folder is excluded by filter
-            if let Some(ref filter) = self.config.folder_filter {
-                if !filter.iter().any(|f| folder_info.name.eq_ignore_ascii_case(f)) {
-                    continue;
-                }
+            if let Some(ref filter) = self.config.folder_filter
+                && !filter.iter().any(|f| folder_info.name.eq_ignore_ascii_case(f))
+            {
+                continue;
             }
 
             let folder_name = folder_info.name.clone();
@@ -558,11 +560,11 @@ impl ImapClient {
                         *mark = uid;
                     }
 
-                    if let Some(p) = checkpoint_path {
-                        if msgs_since_last_flush >= checkpoint_interval {
-                            msgs_since_last_flush = 0;
-                            let _ = mail2rust_sync::CheckpointManager::save_atomic(checkpoint, p);
-                        }
+                    if let Some(p) = checkpoint_path
+                        && msgs_since_last_flush >= checkpoint_interval
+                    {
+                        msgs_since_last_flush = 0;
+                        let _ = mail2rust_sync::CheckpointManager::save_atomic(checkpoint, p);
                     }
 
                     let progress = ImapSyncProgress {
@@ -676,10 +678,10 @@ impl ImapClient {
             uids.retain(|&uid| (uid as u64) > wm);
         }
 
-        if let Some(limit) = self.config.max_messages_per_folder {
-            if uids.len() > limit {
-                uids.truncate(limit);
-            }
+        if let Some(limit) = self.config.max_messages_per_folder
+            && uids.len() > limit
+        {
+            uids.truncate(limit);
         }
 
         if uids.is_empty() {

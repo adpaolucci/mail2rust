@@ -1,0 +1,32 @@
+[package]
+name = "mail2rust-iced"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Cross-platform pure-Rust Iced 0.14 desktop email & MS-PST studio for mail2rust (Linux, macOS, and Windows)"
+
+[[bin]]
+name = "mail2rust-iced"
+path = "src/main.rs"
+
+[dependencies]
+mail2rust-core.workspace = true
+mail2rust-pst.workspace = true
+mail2rust-eml.workspace = true
+mail2rust-mbox.workspace = true
+mail2rust-filter.workspace = true
+mail2rust-forensics.workspace = true
+mail2rust-sync.workspace = true
+mail2rust-imap.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+iced.workspace = true
+rfd.workspace = true
+arboard.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

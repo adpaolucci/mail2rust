@@ -1,5 +1,7 @@
+#![forbid(unsafe_code)]
+
 use clap::Parser;
-use mail2rust_mcp::{get_tools_manifest, run_stdio_server, SERVER_NAME, SERVER_VERSION};
+use mail2rust_mcp::{SERVER_NAME, SERVER_VERSION, get_tools_manifest, run_stdio_server};
 use std::process;
 use tracing_subscriber::EnvFilter;
 

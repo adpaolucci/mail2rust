@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Project Hub & Web Documentation
+    url: https://mail2rust.guap.ca
+    about: Browse architecture docs, [MS-PST] specs, CLI examples, and MCP setup guides.
+  - name: Security Vulnerability Reporting
+    url: https://github.com/adpaolucci/mail2rust/security/advisories/new
+    about: Please report security, parser crash, or chain-of-custody issues privately.
