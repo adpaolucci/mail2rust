@@ -14,6 +14,7 @@ use std::path::PathBuf;
 pub struct LaunchArgs {
     pub path: Option<PathBuf>,
     pub sample: bool,
+    pub pick: bool,
 }
 
 pub fn parse_launch_args_from<I>(args: I) -> LaunchArgs
@@ -25,6 +26,7 @@ where
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--sample" => out.sample = true,
+            "--pick" => out.pick = true,
             "--path" => {
                 if let Some(p) = iter.next() {
                     out.path = Some(PathBuf::from(p));
@@ -32,7 +34,7 @@ where
             }
             "--help" | "-h" => {
                 println!(
-                    "mail2rust-iced [PATH] [--path DIR_OR_FILE] [--sample]\n\
+                    "mail2rust-iced [PATH] [--path DIR_OR_FILE] [--sample] [--pick]\n\
                      Launch the cross-platform Iced 0.14 desktop studio for mail2rust (Linux, macOS, Windows)."
                 );
                 std::process::exit(0);

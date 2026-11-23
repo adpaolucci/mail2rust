@@ -1,5 +1,5 @@
 use crate::LaunchArgs;
-use crate::win32_dialogs::{copy_to_clipboard, pick_folder, pick_open_file, pick_save_file};
+use crate::win32_dialogs::{copy_to_clipboard, pick_folder, pick_open_file, pick_open_files, pick_save_file};
 use crate::win32_state::{ExportFormat, ExportScope, PreviewTab, SortColumn, Win32State, format_size};
 use mail2rust_core::EmailMessage;
 use mail2rust_pst::PstEncryption;
@@ -442,11 +442,18 @@ struct ImapPage {
     sync_src_host: gui::Edit,
     sync_src_port: gui::Edit,
     sync_src_user: gui::Edit,
+    sync_src_auth_combo: gui::ComboBox,
     sync_src_pass: gui::Edit,
+    sync_src_oauth: gui::Edit,
+    sync_src_chk_tls: gui::CheckBox,
     sync_dst_host: gui::Edit,
     sync_dst_port: gui::Edit,
     sync_dst_user: gui::Edit,
+    sync_dst_auth_combo: gui::ComboBox,
     sync_dst_pass: gui::Edit,
+    sync_dst_oauth: gui::Edit,
+    sync_dst_chk_tls: gui::CheckBox,
+    sync_chk_insecure: gui::CheckBox,
     sync_folders: gui::Edit,
     sync_prefix: gui::Edit,
     sync_chk_flags: gui::CheckBox,
@@ -506,24 +513,36 @@ impl ImapPage {
             (gui::Horz::None, gui::Vert::None),
         );
 
-        lbl(&page, "Server-to-Server IMAP Sync (Zero Disk):", 12, 134, 300);
-        lbl(&page, "Src Host:", 12, 160, 64);
-        let sync_src_host = edit(&page, 80, 156, 175, 22, (gui::Horz::None, gui::Vert::None));
-        lbl(&page, "Port:", 260, 160, 34);
-        let sync_src_port = edit(&page, 296, 156, 52, 22, (gui::Horz::None, gui::Vert::None));
-        lbl(&page, "User:", 356, 160, 36);
-        let sync_src_user = edit(&page, 396, 156, 150, 22, (gui::Horz::None, gui::Vert::None));
-        lbl(&page, "Pass:", 554, 160, 36);
-        let sync_src_pass = edit_pass(&page, 594, 156, 140, 22);
+        lbl(&page, "Server-to-Server IMAP Sync (Zero Disk):", 12, 134, 280);
+        let sync_chk_insecure = chk(&page, "Accept Self-Signed Certs (Sync)", 310, 132);
 
-        lbl(&page, "Dst Host:", 12, 188, 64);
-        let sync_dst_host = edit(&page, 80, 184, 175, 22, (gui::Horz::None, gui::Vert::None));
-        lbl(&page, "Port:", 260, 188, 34);
-        let sync_dst_port = edit(&page, 296, 184, 52, 22, (gui::Horz::None, gui::Vert::None));
-        lbl(&page, "User:", 356, 188, 36);
-        let sync_dst_user = edit(&page, 396, 184, 150, 22, (gui::Horz::None, gui::Vert::None));
-        lbl(&page, "Pass:", 554, 188, 36);
-        let sync_dst_pass = edit_pass(&page, 594, 184, 140, 22);
+        lbl(&page, "Src Host:", 12, 160, 60);
+        let sync_src_host = edit(&page, 74, 156, 140, 22, (gui::Horz::None, gui::Vert::None));
+        lbl(&page, "Port:", 220, 160, 32);
+        let sync_src_port = edit(&page, 254, 156, 44, 22, (gui::Horz::None, gui::Vert::None));
+        lbl(&page, "User:", 304, 160, 34);
+        let sync_src_user = edit(&page, 340, 156, 120, 22, (gui::Horz::None, gui::Vert::None));
+        lbl(&page, "Auth:", 466, 160, 34);
+        let sync_src_auth_combo = combo(&page, 502, 156, 96, &["password", "xoauth2", "oauthbearer"]);
+        lbl(&page, "Pass:", 604, 160, 34);
+        let sync_src_pass = edit_pass(&page, 640, 156, 100, 22);
+        lbl(&page, "Tok:", 746, 160, 28);
+        let sync_src_oauth = edit_pass(&page, 776, 156, 100, 22);
+        let sync_src_chk_tls = chk(&page, "Src TLS", 884, 158);
+
+        lbl(&page, "Dst Host:", 12, 188, 60);
+        let sync_dst_host = edit(&page, 74, 184, 140, 22, (gui::Horz::None, gui::Vert::None));
+        lbl(&page, "Port:", 220, 188, 32);
+        let sync_dst_port = edit(&page, 254, 184, 44, 22, (gui::Horz::None, gui::Vert::None));
+        lbl(&page, "User:", 304, 188, 34);
+        let sync_dst_user = edit(&page, 340, 184, 120, 22, (gui::Horz::None, gui::Vert::None));
+        lbl(&page, "Auth:", 466, 188, 34);
+        let sync_dst_auth_combo = combo(&page, 502, 184, 96, &["password", "xoauth2", "oauthbearer"]);
+        lbl(&page, "Pass:", 604, 188, 34);
+        let sync_dst_pass = edit_pass(&page, 640, 184, 100, 22);
+        lbl(&page, "Tok:", 746, 188, 28);
+        let sync_dst_oauth = edit_pass(&page, 776, 184, 100, 22);
+        let sync_dst_chk_tls = chk(&page, "Dst TLS", 884, 186);
 
         lbl(&page, "Folders:", 12, 218, 56);
         let sync_folders = edit(&page, 72, 214, 160, 22, (gui::Horz::None, gui::Vert::None));
@@ -581,11 +600,18 @@ impl ImapPage {
             sync_src_host,
             sync_src_port,
             sync_src_user,
+            sync_src_auth_combo,
             sync_src_pass,
+            sync_src_oauth,
+            sync_src_chk_tls,
             sync_dst_host,
             sync_dst_port,
             sync_dst_user,
+            sync_dst_auth_combo,
             sync_dst_pass,
+            sync_dst_oauth,
+            sync_dst_chk_tls,
+            sync_chk_insecure,
             sync_folders,
             sync_prefix,
             sync_chk_flags,
@@ -1287,11 +1313,26 @@ impl Win32App {
         st.imap_sync_src_host = self.imap_pg.sync_src_host.text().unwrap_or_default();
         st.imap_sync_src_port = self.imap_pg.sync_src_port.text().unwrap_or_default();
         st.imap_sync_src_user = self.imap_pg.sync_src_user.text().unwrap_or_default();
+        st.imap_sync_src_auth_method = match self.imap_pg.sync_src_auth_combo.items().selected_index() {
+            Some(1) => "xoauth2".to_string(),
+            Some(2) => "oauthbearer".to_string(),
+            _ => "password".to_string(),
+        };
         st.imap_sync_src_pass = self.imap_pg.sync_src_pass.text().unwrap_or_default();
+        st.imap_sync_src_oauth_token = self.imap_pg.sync_src_oauth.text().unwrap_or_default();
+        st.imap_sync_src_tls = self.imap_pg.sync_src_chk_tls.is_checked();
         st.imap_sync_dst_host = self.imap_pg.sync_dst_host.text().unwrap_or_default();
         st.imap_sync_dst_port = self.imap_pg.sync_dst_port.text().unwrap_or_default();
         st.imap_sync_dst_user = self.imap_pg.sync_dst_user.text().unwrap_or_default();
+        st.imap_sync_dst_auth_method = match self.imap_pg.sync_dst_auth_combo.items().selected_index() {
+            Some(1) => "xoauth2".to_string(),
+            Some(2) => "oauthbearer".to_string(),
+            _ => "password".to_string(),
+        };
         st.imap_sync_dst_pass = self.imap_pg.sync_dst_pass.text().unwrap_or_default();
+        st.imap_sync_dst_oauth_token = self.imap_pg.sync_dst_oauth.text().unwrap_or_default();
+        st.imap_sync_dst_tls = self.imap_pg.sync_dst_chk_tls.is_checked();
+        st.imap_sync_insecure = self.imap_pg.sync_chk_insecure.is_checked();
         st.imap_sync_folders = self.imap_pg.sync_folders.text().unwrap_or_default();
         st.imap_sync_folder_prefix = self.imap_pg.sync_prefix.text().unwrap_or_default();
         st.imap_sync_preserve_flags = self.imap_pg.sync_chk_flags.is_checked();
@@ -1353,13 +1394,41 @@ impl Win32App {
 
         let _ = self.imap_pg.host_edit.set_text(&st.imap_host);
         let _ = self.imap_pg.port_edit.set_text(&st.imap_port);
+        self.imap_pg
+            .auth_combo
+            .items()
+            .select(Some(match st.imap_auth_method.to_ascii_lowercase().as_str() {
+                "xoauth2" => 1,
+                "oauthbearer" => 2,
+                _ => 0,
+            }));
         let _ = self.imap_pg.user_edit.set_text(&st.imap_username);
+        let _ = self.imap_pg.oauth_edit.set_text(&st.imap_oauth_token);
         self.imap_pg.chk_tls.set_check(st.imap_use_tls);
         self.imap_pg.chk_insecure.set_check(st.imap_insecure_certs);
         let _ = self.imap_pg.sync_src_host.set_text(&st.imap_sync_src_host);
         let _ = self.imap_pg.sync_src_port.set_text(&st.imap_sync_src_port);
+        self.imap_pg.sync_src_auth_combo.items().select(Some(
+            match st.imap_sync_src_auth_method.to_ascii_lowercase().as_str() {
+                "xoauth2" => 1,
+                "oauthbearer" => 2,
+                _ => 0,
+            },
+        ));
+        let _ = self.imap_pg.sync_src_oauth.set_text(&st.imap_sync_src_oauth_token);
+        self.imap_pg.sync_src_chk_tls.set_check(st.imap_sync_src_tls);
         let _ = self.imap_pg.sync_dst_host.set_text(&st.imap_sync_dst_host);
         let _ = self.imap_pg.sync_dst_port.set_text(&st.imap_sync_dst_port);
+        self.imap_pg.sync_dst_auth_combo.items().select(Some(
+            match st.imap_sync_dst_auth_method.to_ascii_lowercase().as_str() {
+                "xoauth2" => 1,
+                "oauthbearer" => 2,
+                _ => 0,
+            },
+        ));
+        let _ = self.imap_pg.sync_dst_oauth.set_text(&st.imap_sync_dst_oauth_token);
+        self.imap_pg.sync_dst_chk_tls.set_check(st.imap_sync_dst_tls);
+        self.imap_pg.sync_chk_insecure.set_check(st.imap_sync_insecure);
         self.imap_pg.sync_chk_flags.set_check(st.imap_sync_preserve_flags);
         self.imap_pg.sync_chk_dates.set_check(st.imap_sync_preserve_dates);
         self.imap_pg.sync_chk_dry_run.set_check(st.imap_sync_dry_run);
@@ -1616,17 +1685,23 @@ impl Win32App {
             self2.populate_controls_from_state();
             self2.layout_active_tab_page(0);
 
+            let mut should_pick = false;
             if let Some(launch) = self2.launch.lock().unwrap().take() {
-                let mut st = self2.state.lock().unwrap();
                 if let Some(p) = launch.path {
+                    let mut st = self2.state.lock().unwrap();
                     st.open_mailbox_path = p.to_string_lossy().to_string();
                     st.execute_open_mailbox();
                 } else if launch.sample {
-                    st.load_sample_data();
+                    self2.state.lock().unwrap().load_sample_data();
+                } else if launch.pick {
+                    should_pick = true;
                 }
             }
             self2.populate_controls_from_state();
             self2.refresh_all_views();
+            if should_pick {
+                self2.open_mailbox_file_dialog();
+            }
             Ok(0)
         });
 
@@ -1910,12 +1985,16 @@ impl Win32App {
         {
             let app = self.clone();
             self.merge_pg.btn_add_file.on().bn_clicked(move || {
-                if let Ok(Some(p)) = pick_open_file(app.wnd.hwnd(), "Add Source Mailbox File", MAIL_OPEN_FILTERS, None)
+                if let Ok(paths) =
+                    pick_open_files(app.wnd.hwnd(), "Add Source Mailbox File(s)", MAIL_OPEN_FILTERS, None)
+                    && !paths.is_empty()
                 {
                     let mut st = app.state.lock().unwrap();
-                    let s = p.to_string_lossy().to_string();
-                    if !st.merge_source_paths.contains(&s) {
-                        st.merge_source_paths.push(s);
+                    for p in paths {
+                        let s = p.to_string_lossy().to_string();
+                        if !st.merge_source_paths.contains(&s) {
+                            st.merge_source_paths.push(s);
+                        }
                     }
                     let txt = st.merge_source_paths.join("\r\n");
                     drop(st);

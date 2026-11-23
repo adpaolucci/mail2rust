@@ -157,11 +157,7 @@ impl<W: Write + Seek> PstWriter<W> {
         };
 
         let non_empty: Vec<&str> = segments.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-        let effective: Vec<&str> = if non_empty.is_empty() {
-            vec!["Inbox"]
-        } else {
-            non_empty
-        };
+        let effective: Vec<&str> = if non_empty.is_empty() { vec!["Inbox"] } else { non_empty };
 
         for seg in effective {
             current_path.push(seg.to_string());

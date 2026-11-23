@@ -781,6 +781,8 @@ fn run_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             let mut cmd = std::process::Command::new(&target_path);
             if let Some(p) = path {
                 cmd.arg(p);
+            } else if cli.pick {
+                cmd.arg("--pick");
             }
             if *sample {
                 cmd.arg("--sample");
@@ -964,7 +966,7 @@ fn run_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             splits,
             pst_root,
             flatten,
-            overwrite_pst: _,
+            overwrite_pst,
             cluster_threads,
             compress,
             encryption,
@@ -972,6 +974,10 @@ fn run_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let src = resolve_source(source.as_ref(), cli.pick, "Select Mail Source File or Directory")?;
             let dst = resolve_destination(destination.as_ref(), cli.pick, "pst", false, "Select Output PST File")?;
+            if *overwrite_pst && dst.exists() && !cli.dry_run {
+                info!(dest = ?dst, "Removing existing PST target (--overwrite-pst)");
+                std::fs::remove_file(&dst)?;
+            }
             let effective_bytes = max_pst_size
                 .as_deref()
                 .and_then(|sz| parse_size_bytes(sz).ok())
@@ -1061,11 +1067,56 @@ fn run_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             destination,
             compress,
             append,
-            split_size: _,
+            split_size,
         } => {
             let src = resolve_source(source.as_ref(), cli.pick, "Select Mail Source File or Directory")?;
             let dst = resolve_destination(destination.as_ref(), cli.pick, "mbox", false, "Select Output MBOX File")?;
-            run_mbox_conversion(&cli, &src, &dst, *compress, *append)?;
+            if let Some(sz_str) = split_size {
+                let max_bytes = parse_size_bytes(sz_str).map_err(|e| format!("Invalid --split-size: {e}"))?;
+                info!(source = ?src, dest = ?dst, split_size = sz_str, "Starting split MBOX export");
+                let mut messages = ingest_source(&src)?;
+                apply_preprocessing(&cli, &mut messages)?;
+                if cli.dry_run {
+                    perform_dry_run(&messages, &src);
+                    return Ok(());
+                }
+                let prefix = dst
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(|name| {
+                        name.strip_suffix(".mbox.gz")
+                            .or_else(|| name.strip_suffix(".mbox"))
+                            .unwrap_or_else(|| dst.file_stem().and_then(|s| s.to_str()).unwrap_or("Volume"))
+                    })
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("Volume")
+                    .to_string();
+                let target_ext = if *compress { "mbox.gz" } else { "mbox" }.to_string();
+                let cfg = SplitConfig {
+                    max_volume_bytes: max_bytes,
+                    cluster_threads: true,
+                    file_prefix: prefix,
+                    target_ext,
+                };
+                let volumes = VolumeSplitter::split_with_mode(&messages, &cfg, &SplitMode::Size);
+                let parent_dir = dst
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or_else(|| Path::new("."));
+                std::fs::create_dir_all(parent_dir)?;
+                for vol in &volumes {
+                    let out_file = parent_dir.join(&vol.file_name);
+                    MboxFileExporter::export_to_file_options(&vol.messages, &out_file, *compress, *append)?;
+                }
+                println!(
+                    "Exported {} split MBOX volumes into {}",
+                    volumes.len(),
+                    parent_dir.display()
+                );
+                post_process(&cli, &messages, &src, &dst)?;
+            } else {
+                run_mbox_conversion(&cli, &src, &dst, *compress, *append)?;
+            }
         }
 
         Commands::Pick { kind, title, ext, dir } => {
@@ -1195,7 +1246,8 @@ fn run_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     "eml" => {
                         let vol_dir = destination_dir.join(format!("vol_{:03}", vol.volume_index));
                         std::fs::create_dir_all(&vol_dir)?;
-                        let mut exporter = EmlExporter::new(&vol_dir, EmlLayout::Folder).with_naming(EmlNaming::Subject);
+                        let mut exporter =
+                            EmlExporter::new(&vol_dir, EmlLayout::Folder).with_naming(EmlNaming::Subject);
                         for m in &vol.messages {
                             exporter.export_message(m)?;
                         }

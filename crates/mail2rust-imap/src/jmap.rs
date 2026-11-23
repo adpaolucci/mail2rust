@@ -670,7 +670,7 @@ fn http_request(
     let req = format!(
         "{} {} HTTP/1.1\r\n\
          Host: {}\r\n\
-         User-Agent: mail2rust/3.5.0\r\n\
+         User-Agent: mail2rust/{}\r\n\
          Accept: application/json\r\n\
          Content-Type: application/json\r\n\
          {}Content-Length: {}\r\n\
@@ -679,6 +679,7 @@ fn http_request(
         method,
         path,
         host,
+        env!("CARGO_PKG_VERSION"),
         auth_header,
         body_str.len(),
         body_str

@@ -48,6 +48,38 @@ pub fn pick_open_file(
     Ok(None)
 }
 
+pub fn pick_open_files(
+    parent: &w::HWND,
+    title: &str,
+    filters: &[(&str, &str)],
+    initial_dir: Option<&str>,
+) -> w::AnyResult<Vec<PathBuf>> {
+    let dlg = w::CoCreateInstance::<w::IFileOpenDialog>(
+        &co::CLSID::FileOpenDialog,
+        None::<&w::IUnknown>,
+        co::CLSCTX::INPROC_SERVER,
+    )?;
+    dlg.SetTitle(title)?;
+    dlg.SetOptions(dlg.GetOptions()? | co::FOS::FORCEFILESYSTEM | co::FOS::FILEMUSTEXIST | co::FOS::ALLOWMULTISELECT)?;
+    if !filters.is_empty() {
+        dlg.SetFileTypes(filters)?;
+        dlg.SetFileTypeIndex(1)?;
+    }
+    apply_initial_dir(&dlg, initial_dir);
+    if dlg.Show(parent)? {
+        let items = dlg.GetResults()?;
+        let count = items.GetCount()?;
+        let mut out = Vec::with_capacity(count as usize);
+        for idx in 0..count {
+            let item = items.GetItemAt(idx)?;
+            let path = item.GetDisplayName(co::SIGDN::FILESYSPATH)?;
+            out.push(PathBuf::from(path));
+        }
+        return Ok(out);
+    }
+    Ok(Vec::new())
+}
+
 pub fn pick_folder(parent: &w::HWND, title: &str, initial_dir: Option<&str>) -> w::AnyResult<Option<PathBuf>> {
     let dlg = w::CoCreateInstance::<w::IFileOpenDialog>(
         &co::CLSID::FileOpenDialog,

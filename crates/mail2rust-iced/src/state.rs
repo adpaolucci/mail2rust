@@ -1024,7 +1024,9 @@ fn export_messages_to_target(
             let root_nid = writer.add_folder(root_name, None).unwrap_or(0x8000);
 
             for msg in messages {
-                let target_nid = writer.ensure_folder_path(&msg.folder_path, Some(root_name)).unwrap_or(root_nid);
+                let target_nid = writer
+                    .ensure_folder_path(&msg.folder_path, Some(root_name))
+                    .unwrap_or(root_nid);
                 let _ = writer.add_message(msg, target_nid);
             }
 

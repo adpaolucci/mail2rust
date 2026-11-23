@@ -56,7 +56,9 @@ where
 
     match format {
         MailboxFormat::Pst | MailboxFormat::Ost => {
-            return Err("PST/OST containers require mail2rust_pst::PstReader; use ingest_source or mail2rust-pst".into());
+            return Err(
+                "PST/OST containers require mail2rust_pst::PstReader; use ingest_source or mail2rust-pst".into(),
+            );
         }
         MailboxFormat::Zip => {
             let file = File::open(source)?;

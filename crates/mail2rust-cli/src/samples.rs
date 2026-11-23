@@ -31,6 +31,7 @@ pub fn generate_all_samples(base_dir: &Path) -> Result<(), Box<dyn std::error::E
     generate_mh_samples(base_dir)?;
     generate_mmdf_samples(base_dir)?;
     generate_babyl_samples(base_dir)?;
+    generate_jmap_samples(base_dir, &messages)?;
     generate_forensic_samples(base_dir, &messages)?;
     generate_sync_samples(base_dir, &messages)?;
     generate_samples_readme(base_dir)?;
@@ -442,6 +443,68 @@ fn generate_sync_samples(base_dir: &Path, msgs: &[EmailMessage]) -> Result<(), B
     Ok(())
 }
 
+fn generate_jmap_samples(base_dir: &Path, msgs: &[EmailMessage]) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = base_dir.join("jmap");
+    fs::create_dir_all(&dir)?;
+
+    let items: Vec<serde_json::Value> = msgs
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            serde_json::json!({
+                "id": format!("jmap_{}", m.id),
+                "blobId": format!("blob_{:03}", i + 1),
+                "threadId": m.conversation_id,
+                "mailboxIds": { "mb_inbox": true },
+                "keywords": {
+                    "$seen": m.flags.read,
+                    "$flagged": m.flags.flagged
+                },
+                "size": m.size_bytes,
+                "receivedAt": m.date.to_rfc3339(),
+                "sentAt": m.date.to_rfc3339(),
+                "messageId": [m.message_id],
+                "inReplyTo": [],
+                "references": [],
+                "subject": m.subject,
+                "from": [{ "name": m.from.name, "email": m.from.email }],
+                "to": m.to.iter().map(|a| serde_json::json!({ "name": a.name, "email": a.email })).collect::<Vec<_>>(),
+                "cc": m.cc.iter().map(|a| serde_json::json!({ "name": a.name, "email": a.email })).collect::<Vec<_>>(),
+                "bcc": [],
+                "replyTo": [],
+                "textBody": [{ "partId": format!("text_{i}"), "blobId": format!("blob_txt_{i}"), "size": m.body_text.len(), "type": "text/plain" }],
+                "bodyValues": {
+                    format!("text_{i}"): {
+                        "value": m.body_text,
+                        "isTruncated": false,
+                        "isEncodingProblem": false
+                    }
+                },
+                "attachments": []
+            })
+        })
+        .collect();
+
+    let payload = serde_json::json!({
+        "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"],
+        "methodResponses": [
+            [
+                "Email/get",
+                {
+                    "accountId": "u12345678",
+                    "state": "s1234",
+                    "list": items
+                },
+                "e0"
+            ]
+        ]
+    });
+
+    let mut file = File::create(dir.join("sample_jmap_export.json"))?;
+    file.write_all(serde_json::to_string_pretty(&payload)?.as_bytes())?;
+    Ok(())
+}
+
 fn generate_samples_readme(base_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let readme = r#"# Mail2Rust Multi-Format Sample & Evaluation Suite
 
@@ -467,6 +530,7 @@ This directory contains verified, production-compliant sample data for all major
 | `mh/` | **MH** | MH / Sylpheed numbered mail files with `.mh_sequences` | `MH / Sylpheed / Claws Mail` | `mail2rust pst mh out.pst` |
 | `mmdf/sample_mmdf.txt` | **MMDF** | Multichannel Memorandum Distribution Facility (`\x01\x01\x01\x01\n` delimiters) | `MMDF Mailbox` | `mail2rust sniff mmdf/sample_mmdf.txt` |
 | `babyl/sample_babyl.txt` | **Babyl** | Emacs RMAIL Babyl format (`BABYL OPTIONS:` and `\x1F\x0C` delimiters) | `Emacs Babyl` | `mail2rust sniff babyl/sample_babyl.txt` |
+| `jmap/sample_jmap_export.json` | **JMAP** | RFC 8620 / RFC 8621 JMAP `Email/get` JSON export bundle | `JMAP RFC 8621 Payload` | `cat jmap/sample_jmap_export.json` |
 | `forensics/sample_manifest.json` | **JSON** | Forensic eDiscovery manifest with RFC 6234 Merkle root & Bates range | `JSON Forensic Manifest` | `cat forensics/sample_manifest.json` |
 | `forensics/sample_manifest.csv` | **CSV** | Chain-of-custody CSV ledger with dual SHA-256 and MD5 hashes | `CSV Forensic Manifest` | `cat forensics/sample_manifest.csv` |
 | `sync/sample_checkpoint.json` | **JSON** | ACID sync checkpoint tracking migrated message IDs and folder watermarks | `Sync Checkpoint` | `cat sync/sample_checkpoint.json` |

@@ -40,6 +40,11 @@ impl Mail2RustApp {
             state.execute_open_mailbox();
         } else if launch.sample {
             state.load_sample_data();
+        } else if launch.pick
+            && let Some(picked) = mail_file_dialog("Open Mailbox Archive / File").pick_file()
+        {
+            state.open_mailbox_path = picked.to_string_lossy().to_string();
+            state.execute_open_mailbox();
         }
         (Self { state }, Task::none())
     }

@@ -19,4 +19,4 @@ imap = { version = "3.0.0-alpha.15", default-features = false, features = ["nati
 native-tls = "0.2"
 
 [dev-dependencies]
-tempfile = "3.17"
+tempfile.workspace = true
