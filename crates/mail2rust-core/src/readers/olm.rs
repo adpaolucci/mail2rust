@@ -17,7 +17,7 @@ impl OlmReader {
 
         for i in 0..zip.len() {
             let mut file = zip.by_index(i)?;
-            let name = file.name().to_string();
+            let name = file.name()?.into_owned();
 
             // OLM messages reside under com.microsoft.__Messages or end with .xml
             if (name.contains("com.microsoft.__Messages") || name.contains("message_")) && name.ends_with(".xml") {

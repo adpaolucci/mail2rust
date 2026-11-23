@@ -18,7 +18,7 @@ resolver = "2"
 [workspace.package]
 version = "3.5.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 authors = ["Andrew Paolucci <andrew@paolucci.ca>", "Mail2Rust Contributors"]
 license = "Apache-2.0"
 repository = "https://github.com/adpaolucci/mail2rust"
@@ -44,12 +44,12 @@ walkdir = "2.5"
 regex = "1.11"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 clap = { version = "4.5", features = ["derive"] }
-zip = { version = "2.2", default-features = false, features = ["deflate"] }
+zip = { version = "9.8", default-features = false, features = ["deflate"] }
 ctrlc = "3.4"
 rfd = "0.18"
 arboard = "3.6"
 winsafe = { version = "0.0.29", features = ["gui", "shell"] }
-iced = { version = "0.14", default-features = false, features = ["wgpu", "tiny-skia", "tokio", "image-without-codecs"] }
+iced = { version = "0.14", features = ["wgpu", "tiny-skia", "tokio", "image-without-codecs"] }
 tempfile = "3.17"
 
 mail2rust-core = { path = "crates/mail2rust-core" }

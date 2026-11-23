@@ -24,7 +24,7 @@ impl ArchiveReader {
                 continue;
             }
 
-            let entry_name = file.name().to_string();
+            let entry_name = file.name()?.into_owned();
             let lower_name = entry_name.to_lowercase();
 
             // Extract folder path from ZIP path
