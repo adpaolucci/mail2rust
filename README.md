@@ -7,9 +7,9 @@ Part of the **GUAP** Ecosystem (`guap.ca`) • [**Project Hub & Web Documentatio
 [![Rust: 1.88+](https://img.shields.io/badge/Rust-1.88%2B-orange.svg)](Cargo.toml)
 [![PST: Zero Outlook](https://img.shields.io/badge/MS--PST-Zero%20Outlook%20Dependency-success.svg)](crates/mail2rust-pst)
 [![RFC Compliant](https://img.shields.io/badge/RFC-5322%20%7C%204155%20%7C%202047%20%7C%206234-emerald.svg)](crates/mail2rust-core)
-[![Architecture: 12 Crates](https://img.shields.io/badge/Workspace-12%20Crates-emerald.svg)](Cargo.toml)
+[![Architecture: 13 Crates](https://img.shields.io/badge/Workspace-13%20Crates-emerald.svg)](Cargo.toml)
 [![GUI: WinSafe Win32 + Iced 0.14](https://img.shields.io/badge/GUI-WinSafe%20Win32%20%2B%20Iced%200.14-cyan.svg)](crates/mail2rust-win32)
-[![MCP: stdio JSON-RPC](https://img.shields.io/badge/MCP-stdio%20JSON--RPC%202.0-purple.svg)](crates/mail2rust-mcp)
+[![MCP: stdio JSON-RPC](https://img.shields.io/badge/MCP-stdio%20JSON--RPC%202.0%20(15%20Tools)-purple.svg)](crates/mail2rust-mcp)
 
 **`mail2rust`** is an ultra-fast, memory-safe, multi-platform email and mailbox conversion suite written in **100% pure Rust**. It converts between **MBOX**, **Maildir / Maildir++**, **Outlook PST**, **Outlook MSG**, **Apple Mail EMLX**, **Outlook for Mac OLM**, **Thunderbird MSF/SBD**, **MH / Sylpheed / Claws Mail**, **MMDF**, **Emacs Babyl**, and **EML hierarchies** with zero data loss, bit-exact MIME fidelity, conversation thread preservation, and cryptographic chain-of-custody tracking.
 
@@ -87,10 +87,11 @@ mail2rust/
 │   ├── mail2rust-forensics/       # Bates stamping, SHA-256/MD5 hashing, legal hold, and audit manifests
 │   ├── mail2rust-sync/            # Incremental delta sync engine & checkpoint persistence
 │   ├── mail2rust-imap/            # Pure-Rust direct IMAP/TLS client, live mailbox streaming, folder discovery
-│   ├── mail2rust-mcp/             # Model Context Protocol (MCP) server for Claude, Cursor, Antigravity, and AutoGPT
+│   ├── mail2rust-outlook/         # Pure-Rust NK2Edit, OutlookAttachView, OutlookStatView, OutlookAddressBookView & OfficeIns (with regf + OLE2)
+│   ├── mail2rust-mcp/             # Model Context Protocol (MCP) server (15 tools, PolicyMode gates via guap-mcp)
 │   ├── mail2rust-cli/             # Unified command-line interface binary (`mail2rust`)
-│   ├── mail2rust-win32/           # Zero-GPU native Win32 studio built on WinSafe (`winsafe 0.0.29`)
-│   └── mail2rust-iced/            # Cross-platform pure-Rust GUI studio built on Iced 0.14 (`wgpu` + `tiny-skia`)
+│   ├── mail2rust-win32/           # Zero-GPU native Win32 studio built on WinSafe (`winsafe 0.0.29`) + guap-gui-win32
+│   └── mail2rust-iced/            # Cross-platform pure-Rust GUI studio built on Iced 0.14 (`wgpu` + `tiny-skia`) + guap-gui-iced
 └── tests/                         # End-to-end integration and mutational fuzz test suites
 ```
 
@@ -482,17 +483,38 @@ Because Proton Mail enforces client-side zero-access encryption (OpenPGP), direc
 
 ---
 
-### 16. Model Context Protocol (MCP) for Autonomous AI Agents (`mail2rust mcp`)
+### 16. Outlook AutoComplete (`.NK2`), Attachments, Comms Stats, Contacts & Office Add-Ins (`mail2rust-outlook`)
+Powered by `guap-kit` (`guap-table`, `guap-export`, `guap-mcp`), `mail2rust` provides 5 Outlook & Office forensic/diagnostic tools:
+```bash
+# NK2Edit: inspect or policy-gated edit Outlook .NK2 / Stream_Autocomplete_*.dat files
+mail2rust nk2 inspect outlook.NK2 --format json --export nk2.csv
+mail2rust nk2 edit outlook.NK2 --dedup --dry-run
 
-`mail2rust` includes a built-in [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server allowing LLM agents (Claude Desktop, Cursor, Google Antigravity, Windsurf, AutoGPT) to inspect, validate, convert, audit, split, and merge mailbox datasets using standardized JSON-RPC 2.0 tools over `stdio`.
+# OutlookAttachView, OutlookStatView & OutlookAddressBookView
+mail2rust outlook attach sample.msg --format json
+mail2rust outlook stats archive.pst --format csv --export stats.csv
+mail2rust outlook contacts outlook.NK2 --format markdown
 
-#### Available Agent Tools
+# OfficeIns: inspect live Registry or offline NTUSER.DAT/SOFTWARE regf hives
+mail2rust office addins list --hive NTUSER.DAT --format json
+```
+
+### 17. Model Context Protocol (MCP) for Autonomous AI Agents (`mail2rust mcp`)
+
+`mail2rust` includes a built-in [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server allowing LLM agents (Claude Desktop, Cursor, Google Antigravity, Windsurf, AutoGPT) to inspect, validate, convert, audit, split, and merge mailbox datasets using standardized JSON-RPC 2.0 tools over `stdio` (**15 total tools**, with `-32003` policy gates on mutating tools).
+
+#### Available Agent Tools (15 Total)
+**Core Mailbox Tools (`6`)**:
 1. **`mail2rust_sniff`**: Magic-byte sniffing and classification across 15+ formats.
 2. **`mail2rust_validate_pst`**: Validates 64-bit Unicode MS-PST binary integrity, CRC-32 header, and B-Trees without Microsoft Outlook.
 3. **`mail2rust_convert`**: Converts between PST, MBOX, and EML hierarchies with optional SHA-256 deduplication.
 4. **`mail2rust_audit`**: Computes cryptographic fingerprints (SHA-256 / MD5), applies Bates numbering, and outputs forensic CSV manifests.
 5. **`mail2rust_split`**: Splits large archives (>20GB or >50GB) into chunked volume archives preserving folder trees.
 6. **`mail2rust_merge`**: Merges disparate archives into a unified container with cross-archive deduplication.
+
+**Outlook & Office Tools (`9`: `6` Read-Only + `3` Mutating `-32003` Gated)**:
+- **Read-Only**: `mail2rust_nk2_inspect`, `mail2rust_outlook_attach`, `mail2rust_outlook_attach_extract`, `mail2rust_outlook_stats`, `mail2rust_outlook_contacts`, `mail2rust_office_addins`
+- **Mutating (`AllowMutating` + `confirm_destructive: true` required)**: `mail2rust_nk2_edit`, `mail2rust_outlook_attach_strip`, `mail2rust_office_addins_toggle`
 
 #### Launching the MCP Server
 ```bash
@@ -523,7 +545,7 @@ Or use the standalone `mail2rust-mcp` binary package configured in [`smithery.ya
 
 | Capability / Requirement | `mail2mail` (Python) | `mail2rust` (Rust) | Parity Status |
 | :--- | :---: | :---: | :---: |
-| **Model Context Protocol (MCP)** | Yes (5-tool JSON-RPC stdio server) | **Yes (`mail2rust mcp` / `mail2rust-mcp`)** — 6 native JSON-RPC stdio tools for AI agents | **Exceeds** |
+| **Model Context Protocol (MCP)** | Yes (5-tool JSON-RPC stdio server) | **Yes (`mail2rust mcp` / `mail2rust-mcp`)** — 15 JSON-RPC stdio tools (`guap-mcp` policy gates) | **Exceeds** |
 | **Native Desktop GUI** | Native OS File Pickers + CLI | **Dual Pure-Rust GUIs: WinSafe Win32 (`mail2rust-win32`) + Iced 0.14 (`mail2rust-iced`)** | **Exceeds** (Zero Node.js/Webview) |
 | **Fastmail & JMAP (RFC 8620 / 8621)** | Yes (`mail2jmap.py`) | **Yes (`mail2rust jmap`)** — Pure Rust JSON-over-HTTP client | **Parity** |
 | **OAuth 2.0 & App Password Diagnostics** | Basic | **Yes (`XOAUTH2`, `OAUTHBEARER`, `oauth-login`, `app-passwords`, automated error diagnostics & GUI)** | **Exceeds** |
@@ -559,3 +581,5 @@ Or use the standalone `mail2rust-mcp` binary package configured in [`smithery.ya
 ## License
 
 Licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
+
+Explore the full [**Project Wiki**](https://github.com/adpaolucci/mail2rust/wiki) ([Outlook NK2, Attachments & Office Add-Ins](https://github.com/adpaolucci/mail2rust/wiki/Outlook-NK2-Attachments-and-Office-Addins), [CLI Reference](https://github.com/adpaolucci/mail2rust/wiki/CLI-Reference), [MCP Server Guide](https://github.com/adpaolucci/mail2rust/wiki/MCP-Server-Guide)).
