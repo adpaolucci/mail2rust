@@ -925,6 +925,112 @@ impl ValidatorPage {
 }
 
 #[derive(Clone)]
+struct OutlookPage {
+    page: gui::TabPage,
+    tool_combo: gui::ComboBox,
+    source_edit: gui::Edit,
+    btn_browse: gui::Button,
+    btn_scan: gui::Button,
+    filter_edit: gui::Edit,
+    btn_export: gui::Button,
+    btn_mutate: gui::Button,
+    list: gui::ListView,
+    detail_edit: gui::Edit,
+}
+
+impl OutlookPage {
+    fn new(parent: &(impl GuiParent + 'static)) -> Self {
+        let page = tab_page(parent);
+
+        lbl(&page, "Tool:", 10, 12, 36);
+        let tool_combo = combo(
+            &page,
+            48,
+            9,
+            230,
+            &[
+                "NK2Edit (.nk2 / Stream_Autocomplete)",
+                "OutlookAttachView (PST/OST/MSG/EML)",
+                "OutlookStatView (Correspondent Stats)",
+                "OutlookAddressBookView (Contacts/OAB)",
+                "OfficeIns (Office/Outlook Add-ins)",
+            ],
+        );
+
+        lbl(&page, "Source / Hive:", 286, 12, 86);
+        let source_edit = edit(&page, 374, 9, 250, 22, (gui::Horz::None, gui::Vert::None));
+        let btn_browse = btn(&page, "Browse...", 628, 8, 72, 24, (gui::Horz::None, gui::Vert::None));
+        let btn_scan = btn(&page, "Scan / Load", 704, 8, 84, 24, (gui::Horz::None, gui::Vert::None));
+
+        lbl(&page, "Filter:", 10, 42, 40);
+        let filter_edit = edit(&page, 54, 39, 280, 22, (gui::Horz::None, gui::Vert::None));
+        let btn_export = btn(
+            &page,
+            "Export CSV...",
+            342,
+            38,
+            96,
+            24,
+            (gui::Horz::None, gui::Vert::None),
+        );
+        let btn_mutate = btn(
+            &page,
+            "Dedup NK2 / Toggle Add-in...",
+            444,
+            38,
+            180,
+            24,
+            (gui::Horz::None, gui::Vert::None),
+        );
+
+        let list = make_list(
+            &page,
+            10,
+            68,
+            640,
+            460,
+            &[("Column", 180), ("Value", 240), ("Info", 180)],
+            true,
+        );
+        let detail_edit = readonly_multiline(&page, 658, 68, 400, 460);
+
+        {
+            let list = list.clone();
+            let detail_edit = detail_edit.clone();
+            page.on().wm_size(move |p| {
+                if p.request == co::SIZE_R::MINIMIZED || p.client_area.cx <= 0 || p.client_area.cy <= 0 {
+                    return Ok(());
+                }
+                let w = p.client_area.cx;
+                let h = p.client_area.cy;
+                let pad = gui::dpi_x(10);
+                let gap = gui::dpi_x(8);
+                let top = gui::dpi_y(68);
+                let body_h = (h - top - gui::dpi_y(8)).max(gui::dpi_y(120));
+                let insp_w = ((w - 2 * pad) * 35 / 100).clamp(gui::dpi_x(260), gui::dpi_x(480));
+                let list_w = (w - 2 * pad - gap - insp_w).max(gui::dpi_x(280));
+                move_ctrl(&list, pad, top, list_w, body_h);
+                move_ctrl(&detail_edit, pad + list_w + gap, top, insp_w, body_h);
+                Ok(())
+            });
+        }
+
+        Self {
+            page,
+            tool_combo,
+            source_edit,
+            btn_browse,
+            btn_scan,
+            filter_edit,
+            btn_export,
+            btn_mutate,
+            list,
+            detail_edit,
+        }
+    }
+}
+
+#[derive(Clone)]
 struct Win32App {
     wnd: gui::WindowMain,
     path_edit: gui::Edit,
@@ -942,6 +1048,7 @@ struct Win32App {
     merge_pg: MergePage,
     forensics_pg: ForensicsPage,
     val_pg: ValidatorPage,
+    outlook_pg: OutlookPage,
 
     status_bar: gui::StatusBar,
     state: Arc<Mutex<Win32State>>,
@@ -1062,6 +1169,10 @@ fn build_main_menu() -> w::SysResult<w::HMENU> {
             cmd_id: IDM_TAB_BASE + 5,
             text: "PST Validator",
         },
+        w::MenuItem::Entry {
+            cmd_id: IDM_TAB_BASE + 6,
+            text: "Outlook && Office",
+        },
     ])?;
 
     let help_m = w::HMENU::CreatePopupMenu()?;
@@ -1161,6 +1272,7 @@ pub fn run(launch: LaunchArgs) -> anyhow::Result<()> {
     let merge_pg = MergePage::new(&wnd);
     let forensics_pg = ForensicsPage::new(&wnd);
     let val_pg = ValidatorPage::new(&wnd);
+    let outlook_pg = OutlookPage::new(&wnd);
 
     let tab_pages = vec![
         wb_pg.page.clone(),
@@ -1169,6 +1281,7 @@ pub fn run(launch: LaunchArgs) -> anyhow::Result<()> {
         merge_pg.page.clone(),
         forensics_pg.page.clone(),
         val_pg.page.clone(),
+        outlook_pg.page.clone(),
     ];
 
     let tab = gui::Tab::new(
@@ -1184,6 +1297,7 @@ pub fn run(launch: LaunchArgs) -> anyhow::Result<()> {
                 ("Multi-Format Merger", merge_pg.page.clone()),
                 ("eDiscovery Forensics", forensics_pg.page.clone()),
                 ("PST Validator", val_pg.page.clone()),
+                ("Outlook && Office", outlook_pg.page.clone()),
             ],
             ..Default::default()
         },
@@ -1215,6 +1329,7 @@ pub fn run(launch: LaunchArgs) -> anyhow::Result<()> {
         merge_pg,
         forensics_pg,
         val_pg,
+        outlook_pg,
         status_bar,
         state,
         displayed_ids: Arc::new(Mutex::new(Vec::new())),
@@ -1630,6 +1745,48 @@ impl Win32App {
         self.refresh_status_bar(&st);
         drop(st);
         self.refresh_preview();
+    }
+
+    fn refresh_outlook_grid(&self, rebuild_cols: bool) {
+        let st = self.state.lock().unwrap();
+        self.outlook_pg.list.set_redraw(false);
+        let _ = self.outlook_pg.list.items().delete_all();
+
+        if rebuild_cols {
+            loop {
+                let count = self.outlook_pg.list.cols().count().unwrap_or(0);
+                if count == 0 {
+                    break;
+                }
+                if unsafe {
+                    self.outlook_pg
+                        .list
+                        .hwnd()
+                        .SendMessage(msg::LvmDeleteColumn { index: 0 })
+                }
+                .is_err()
+                {
+                    break;
+                }
+            }
+            for col in st.outlook_grid.columns() {
+                let w = gui::dpi_x(i32::from(col.width_hint.max(70)));
+                let _ = self.outlook_pg.list.cols().add(&col.label, w);
+            }
+        }
+
+        let col_count = st.outlook_grid.columns().len();
+        let row_count = st.outlook_grid.row_count();
+        for r in 0..row_count {
+            let cells: Vec<String> = (0..col_count).map(|c| st.outlook_grid.cell_text(r, c)).collect();
+            let refs: Vec<&str> = cells.iter().map(String::as_str).collect();
+            let _ = self.outlook_pg.list.items().add(&refs, None, ());
+        }
+        self.outlook_pg.list.set_redraw(true);
+        let detail = st.outlook_grid.format_inspector_crlf();
+        self.refresh_status_bar(&st);
+        drop(st);
+        let _ = self.outlook_pg.detail_edit.set_text(&detail);
     }
 
     fn refresh_all_views(&self) {
@@ -2218,6 +2375,207 @@ impl Win32App {
             });
         }
 
+        // Outlook & Office Diagnostics page (Tab 7 - guap-gui-win32 + guap-export)
+        {
+            let app = self.clone();
+            self.outlook_pg.btn_browse.on().bn_clicked(move || {
+                if let Ok(Some(p)) = pick_open_file(
+                    app.wnd.hwnd(),
+                    "Select Outlook/Office Artifact (.nk2, .dat, .pst, .ost, .msg, .oab, .vcf, hive)",
+                    &[
+                        (
+                            "Outlook & Office Files",
+                            "*.nk2;*.dat;*.pst;*.ost;*.msg;*.eml;*.mbox;*.oab;*.vcf",
+                        ),
+                        ("All Files", "*.*"),
+                    ],
+                    None,
+                ) {
+                    let s = p.to_string_lossy().to_string();
+                    let _ = app.outlook_pg.source_edit.set_text(&s);
+                    app.state.lock().unwrap().outlook_source_path = s;
+                }
+                Ok(())
+            });
+        }
+        {
+            let app = self.clone();
+            self.outlook_pg.btn_scan.on().bn_clicked(move || {
+                let tool_idx = app.outlook_pg.tool_combo.items().selected_index().unwrap_or(0) as usize;
+                let src = app.outlook_pg.source_edit.text().unwrap_or_default();
+                let res = app.state.lock().unwrap().load_outlook_tool(tool_idx, &src);
+                match res {
+                    Ok(_) => app.refresh_outlook_grid(true),
+                    Err(err) => {
+                        let _ = app.outlook_pg.detail_edit.set_text(&to_crlf(&format!("Error: {err}")));
+                    }
+                }
+                Ok(())
+            });
+        }
+        {
+            let app = self.clone();
+            self.outlook_pg.filter_edit.on().en_change(move || {
+                let txt = app.outlook_pg.filter_edit.text().unwrap_or_default();
+                app.state.lock().unwrap().outlook_grid.set_filter(txt);
+                app.refresh_outlook_grid(false);
+                Ok(())
+            });
+        }
+        {
+            let app = self.clone();
+            self.outlook_pg.list.on().lvn_item_changed(move |p| {
+                if p.uNewState.has(co::LVIS::SELECTED) && p.iItem >= 0 {
+                    let detail = {
+                        let mut st = app.state.lock().unwrap();
+                        st.outlook_grid.selected_row = Some(p.iItem as usize);
+                        st.outlook_grid.format_inspector_crlf()
+                    };
+                    let _ = app.outlook_pg.detail_edit.set_text(&detail);
+                }
+                Ok(())
+            });
+        }
+        {
+            let app = self.clone();
+            self.outlook_pg.list.on().lvn_column_click(move |p| {
+                if p.iSubItem >= 0 {
+                    app.state.lock().unwrap().outlook_grid.toggle_sort(p.iSubItem as usize);
+                    app.refresh_outlook_grid(false);
+                }
+                Ok(())
+            });
+        }
+        {
+            let app = self.clone();
+            self.outlook_pg.btn_export.on().bn_clicked(move || {
+                if let Ok(Some(p)) = pick_save_file(
+                    app.wnd.hwnd(),
+                    "Export Outlook/Office Grid",
+                    "outlook_export.csv",
+                    "csv",
+                    &[
+                        ("CSV Spreadsheet (*.csv)", "*.csv"),
+                        ("JSON (*.json)", "*.json"),
+                        ("Markdown (*.md)", "*.md"),
+                    ],
+                ) {
+                    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("csv");
+                    let fmt = guap_export::ExportFormat::parse(ext).unwrap_or(guap_export::ExportFormat::Csv);
+                    let res = app.state.lock().unwrap().export_outlook_grid(&p, fmt);
+                    match res {
+                        Ok(msg) => {
+                            let _ = app
+                                .wnd
+                                .hwnd()
+                                .MessageBox(&msg, "Export Complete", co::MB::ICONINFORMATION);
+                        }
+                        Err(err) => {
+                            let _ = app.wnd.hwnd().MessageBox(&err, "Export Failed", co::MB::ICONERROR);
+                        }
+                    }
+                }
+                Ok(())
+            });
+        }
+        {
+            let app = self.clone();
+            self.outlook_pg.btn_mutate.on().bn_clicked(move || {
+                let (tool_idx, src, selected_prog_id, selected_enabled) = {
+                    let st = app.state.lock().unwrap();
+                    let prog_id = if st.outlook_tool_idx == 4 {
+                        st.outlook_grid
+                            .selected_row
+                            .map(|r| st.outlook_grid.cell_text(r, 2))
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    let enabled = if st.outlook_tool_idx == 4 {
+                        st.outlook_grid
+                            .selected_row
+                            .map(|r| st.outlook_grid.cell_text(r, 8).eq_ignore_ascii_case("true"))
+                            .unwrap_or(true)
+                    } else {
+                        true
+                    };
+                    (st.outlook_tool_idx, st.outlook_source_path.clone(), prog_id, enabled)
+                };
+
+                if tool_idx == 0 && !src.is_empty() {
+                    let Ok(co::DLGID::YES) = app.wnd.hwnd().MessageBox(
+                        &format!("Deduplicate and atomically save '{src}' (creating .bak)?"),
+                        "Confirm Mutating NK2 Edit",
+                        co::MB::YESNO | co::MB::ICONWARNING,
+                    ) else {
+                        return Ok(());
+                    };
+                    let p = Path::new(&src);
+                    if let Ok(mut arc) = mail2rust_outlook::Nk2Archive::from_file(p) {
+                        let removed = arc.dedup();
+                        match arc.save_atomic(p, true) {
+                            Ok(()) => {
+                                let _ = app.state.lock().unwrap().load_outlook_tool(0, &src);
+                                app.refresh_outlook_grid(true);
+                                let _ = app.wnd.hwnd().MessageBox(
+                                    &format!("Deduplicated {removed} duplicate NK2 entry(ies) and saved atomically."),
+                                    "NK2 Saved",
+                                    co::MB::ICONINFORMATION,
+                                );
+                            }
+                            Err(e) => {
+                                let _ = app
+                                    .wnd
+                                    .hwnd()
+                                    .MessageBox(&e.to_string(), "NK2 Error", co::MB::ICONERROR);
+                            }
+                        }
+                    }
+                } else if tool_idx == 4 && !selected_prog_id.is_empty() {
+                    let target_enable = !selected_enabled;
+                    let action_lbl = if target_enable { "ENABLE" } else { "DISABLE" };
+                    let Ok(co::DLGID::YES) = app.wnd.hwnd().MessageBox(
+                        &format!("{action_lbl} Office add-in '{selected_prog_id}' in live Windows Registry?"),
+                        "Confirm Mutating Registry Toggle",
+                        co::MB::YESNO | co::MB::ICONWARNING,
+                    ) else {
+                        return Ok(());
+                    };
+                    let backend = mail2rust_outlook::LiveWindowsRegistry;
+                    match mail2rust_outlook::toggle_office_addin(
+                        &backend,
+                        &selected_prog_id,
+                        None,
+                        target_enable,
+                        false,
+                    ) {
+                        Ok((reg_path, old_v, new_v)) => {
+                            let _ = app.state.lock().unwrap().load_outlook_tool(4, &src);
+                            app.refresh_outlook_grid(true);
+                            let _ = app.wnd.hwnd().MessageBox(
+                                &format!("Updated {reg_path}: LoadBehavior {old_v} -> {new_v}"),
+                                "Add-in Updated",
+                                co::MB::ICONINFORMATION,
+                            );
+                        }
+                        Err(e) => {
+                            let _ =
+                                app.wnd
+                                    .hwnd()
+                                    .MessageBox(&e.to_string(), "Registry Toggle Failed", co::MB::ICONERROR);
+                        }
+                    }
+                } else {
+                    let _ = app.wnd.hwnd().MessageBox(
+                        "Load an NK2 file (Tool 0) to deduplicate or select an Office Add-in (Tool 4) to toggle.",
+                        "Outlook & Office",
+                        co::MB::ICONINFORMATION,
+                    );
+                }
+                Ok(())
+            });
+        }
+
         // Menu command dispatcher
         let wire_menu = |id: u16, handler: Box<dyn Fn(&Win32App)>| {
             let app = self.clone();
@@ -2329,7 +2687,7 @@ impl Win32App {
                 app.refresh_message_list();
             }),
         );
-        for tab_idx in 0..6u32 {
+        for tab_idx in 0..7u32 {
             wire_menu(
                 IDM_TAB_BASE + tab_idx as u16,
                 Box::new(move |app| app.select_tab_index(tab_idx)),

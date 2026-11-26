@@ -57,6 +57,7 @@ pub enum ActiveModal {
     Forensics,
     DryRun,
     ValidatePst,
+    ConfirmOutlookMutate,
     About,
 }
 
@@ -184,6 +185,13 @@ pub struct AppState {
     pub validate_pst_path: String,
     pub validate_pst_password: String,
     pub validation_report: Option<String>,
+
+    // Outlook & Office Diagnostics (guap-gui-iced)
+    pub show_outlook_tools: bool,
+    pub outlook_tool_idx: usize,
+    pub outlook_source_path: String,
+    pub outlook_status: Option<String>,
+    pub outlook_grid: guap_gui_iced::IcedDataGrid,
 }
 
 impl Default for AppState {
@@ -278,6 +286,12 @@ impl Default for AppState {
             validate_pst_path: String::new(),
             validate_pst_password: String::new(),
             validation_report: None,
+
+            show_outlook_tools: false,
+            outlook_tool_idx: 0,
+            outlook_source_path: String::new(),
+            outlook_status: None,
+            outlook_grid: guap_gui_iced::IcedDataGrid::new(Vec::new()),
         }
     }
 }
@@ -944,6 +958,121 @@ impl AppState {
 
         list
     }
+
+    pub fn load_outlook_providers(&mut self) {
+        use std::sync::Arc;
+        let src = self.outlook_source_path.trim().to_string();
+        let res: Result<Vec<Arc<dyn guap_table::TableProvider>>, String> = match self.outlook_tool_idx {
+            0 => mail2rust_outlook::Nk2TableProvider::from_path(Path::new(&src))
+                .map(|p| vec![Arc::new(p) as Arc<dyn guap_table::TableProvider>])
+                .map_err(|e| e.to_string()),
+            1 => mail2rust_outlook::AttachTableProvider::from_source(
+                Path::new(&src),
+                &mail2rust_outlook::AttachmentFilter {
+                    include_inline: true,
+                    ..Default::default()
+                },
+            )
+            .map(|p| vec![Arc::new(p) as Arc<dyn guap_table::TableProvider>])
+            .map_err(|e| e.to_string()),
+            2 => mail2rust_outlook::StatsTableProvider::from_source(
+                Path::new(&src),
+                &mail2rust_outlook::StatsOptions::default(),
+            )
+            .map(|p| vec![Arc::new(p) as Arc<dyn guap_table::TableProvider>])
+            .map_err(|e| e.to_string()),
+            3 => mail2rust_outlook::ContactsTableProvider::from_source(Path::new(&src))
+                .map(|p| vec![Arc::new(p) as Arc<dyn guap_table::TableProvider>])
+                .map_err(|e| e.to_string()),
+            _ => {
+                let hives: Vec<std::path::PathBuf> = src
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .collect();
+                mail2rust_outlook::OfficeAddinsTableProvider::scan_from_hives(&hives, None)
+                    .map(|p| vec![Arc::new(p) as Arc<dyn guap_table::TableProvider>])
+                    .map_err(|e| e.to_string())
+            }
+        };
+
+        match res {
+            Ok(providers) => {
+                self.outlook_grid = guap_gui_iced::IcedDataGrid::new(providers).with_dark_mode(self.dark_mode);
+                let msg = format!("Outlook/Office scan loaded: {}", self.outlook_grid.status_message());
+                self.outlook_status = Some(msg.clone());
+                self.status_message = msg;
+            }
+            Err(err) => {
+                let msg = format!("Outlook/Office error: {err}");
+                self.outlook_status = Some(msg.clone());
+                self.status_message = msg;
+            }
+        }
+    }
+
+    pub fn execute_confirmed_outlook_mutate(&mut self) {
+        let src = self.outlook_source_path.trim().to_string();
+        if self.outlook_tool_idx == 0 && !src.is_empty() {
+            let p = Path::new(&src);
+            match mail2rust_outlook::Nk2Archive::from_file(p).and_then(|mut arc| {
+                let removed = arc.dedup();
+                arc.save_atomic(p, true)?;
+                Ok(removed)
+            }) {
+                Ok(removed) => {
+                    self.load_outlook_providers();
+                    let msg = format!("NK2 deduplicated {removed} duplicate(s) and saved atomically.");
+                    self.outlook_status = Some(msg.clone());
+                    self.status_message = msg;
+                }
+                Err(e) => {
+                    let msg = format!("NK2 edit failed: {e}");
+                    self.outlook_status = Some(msg.clone());
+                    self.status_message = msg;
+                }
+            }
+        } else if self.outlook_tool_idx == 4 {
+            #[cfg(windows)]
+            {
+                let prog_id = self
+                    .outlook_grid
+                    .selected_row()
+                    .and_then(|r| r.cells.get(2))
+                    .map(|c| c.to_string())
+                    .unwrap_or_default();
+                let enabled = self
+                    .outlook_grid
+                    .selected_row()
+                    .and_then(|r| r.cells.get(8))
+                    .map(|c| c.to_string().eq_ignore_ascii_case("true"))
+                    .unwrap_or(true);
+                if prog_id.is_empty() {
+                    self.outlook_status = Some("Select an Office Add-in row to toggle.".to_string());
+                    return;
+                }
+                let backend = mail2rust_outlook::LiveWindowsRegistry;
+                match mail2rust_outlook::toggle_office_addin(&backend, &prog_id, None, !enabled, false) {
+                    Ok((reg_path, old_v, new_v)) => {
+                        self.load_outlook_providers();
+                        let msg = format!("Toggled {prog_id} ({reg_path}): LoadBehavior {old_v} -> {new_v}");
+                        self.outlook_status = Some(msg.clone());
+                        self.status_message = msg;
+                    }
+                    Err(e) => {
+                        let msg = format!("Office add-in toggle failed: {e}");
+                        self.outlook_status = Some(msg.clone());
+                        self.status_message = msg;
+                    }
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                self.outlook_status = Some("Live Registry toggle requires Windows.".to_string());
+            }
+        }
+    }
 }
 
 fn parse_folder_patterns(raw: &str) -> Vec<String> {
@@ -1269,5 +1398,24 @@ mod tests {
             inbox.selected = false;
         }
         assert_eq!(st.filtered_messages().len(), 1);
+    }
+
+    #[test]
+    fn outlook_iced_grid_loads_nk2_and_office_hives() {
+        let dir = tempfile::tempdir().unwrap();
+        let fx = mail2rust_outlook::fixtures::generate_all_outlook_fixtures(dir.path()).unwrap();
+
+        let mut st = AppState {
+            outlook_tool_idx: 0,
+            outlook_source_path: fx.nk2_path.to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        st.load_outlook_providers();
+        assert_eq!(st.outlook_grid.total_rows(), 3);
+
+        st.outlook_tool_idx = 4;
+        st.outlook_source_path = format!("{};{}", fx.ntuser_dat_path.display(), fx.software_hive_path.display());
+        st.load_outlook_providers();
+        assert!(st.outlook_grid.total_rows() >= 2);
     }
 }

@@ -41,6 +41,13 @@ pub fn view_toolbar(state: &AppState) -> Element<'_, Message> {
         button(text("Dry-Run").size(12))
             .on_press(Message::OpenModal(ActiveModal::DryRun))
             .style(button::secondary),
+        button(text("Outlook / Office").size(12))
+            .on_press(Message::ToggleOutlookToolsView)
+            .style(if state.show_outlook_tools {
+                button::primary
+            } else {
+                button::secondary
+            }),
     ]
     .spacing(5)
     .align_y(Alignment::Center);

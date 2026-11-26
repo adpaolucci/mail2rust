@@ -20,6 +20,9 @@ mail2rust-mbox = { workspace = true }
 mail2rust-filter = { workspace = true }
 mail2rust-forensics = { workspace = true }
 mail2rust-sync = { workspace = true }
+mail2rust-outlook = { workspace = true }
+guap-mcp = { workspace = true }
+guap-table = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }

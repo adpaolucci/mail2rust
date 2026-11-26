@@ -546,6 +546,167 @@ enum Commands {
         /// Print tools manifest in JSON schema format and exit
         #[arg(long)]
         tools: bool,
+        /// Allow mutating Outlook/Office MCP actions when confirm_destructive=true
+        #[arg(long)]
+        allow_mutating: bool,
+    },
+    /// Inspect or safely edit Outlook AutoComplete (.NK2 / Stream_Autocomplete_*.dat)
+    Nk2 {
+        #[command(subcommand)]
+        action: Nk2Subcommand,
+    },
+    /// Outlook forensic & diagnostic views (attachments, communication stats, contacts)
+    Outlook {
+        #[command(subcommand)]
+        action: OutlookSubcommand,
+    },
+    /// Microsoft Office / Outlook add-ins inspector & toggle (live Registry or offline regf hives)
+    Office {
+        #[command(subcommand)]
+        action: OfficeSubcommand,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum Nk2Subcommand {
+    /// Inspect .NK2 or Stream_Autocomplete_*.dat entries (read-only)
+    Inspect {
+        path: PathBuf,
+        #[arg(long)]
+        filter: Option<String>,
+        #[arg(long)]
+        export: Option<PathBuf>,
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Edit .NK2 / Stream_Autocomplete_*.dat entries (mutating; requires -y/--allow-mutating or --dry-run)
+    Edit {
+        path: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        remove_email: Vec<String>,
+        #[arg(long)]
+        add_name: Option<String>,
+        #[arg(long)]
+        add_email: Option<String>,
+        #[arg(long)]
+        set_weight_email: Option<String>,
+        #[arg(long)]
+        set_weight: Option<i32>,
+        #[arg(long)]
+        dedup_entries: bool,
+        #[arg(long)]
+        merge: Option<PathBuf>,
+        #[arg(short = 'y', long, alias = "allow-mutating")]
+        allow_mutating: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum OutlookSubcommand {
+    /// Enumerate, extract, or policy-gated strip attachments from PST/OST/MSG/MBOX/EML
+    Attach {
+        source: PathBuf,
+        #[arg(long)]
+        extract_dir: Option<PathBuf>,
+        #[arg(long)]
+        filter: Option<String>,
+        #[arg(long)]
+        ext: Vec<String>,
+        #[arg(long)]
+        include_inline: bool,
+        #[arg(long)]
+        strip: bool,
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        in_place: bool,
+        #[arg(short = 'y', long, alias = "allow-mutating")]
+        allow_mutating: bool,
+        #[arg(long)]
+        export: Option<PathBuf>,
+        #[arg(long, default_value = "csv")]
+        format: String,
+    },
+    /// Aggregate sent/received statistics by correspondent, domain, folder, or month (read-only)
+    Stats {
+        source: PathBuf,
+        #[arg(long, default_value = "correspondent")]
+        group_by: String,
+        #[arg(long)]
+        self_email: Vec<String>,
+        #[arg(long)]
+        filter: Option<String>,
+        #[arg(long)]
+        export: Option<PathBuf>,
+        #[arg(long, default_value = "csv")]
+        format: String,
+    },
+    /// Decode contacts and distribution lists from PST/OST, OAB, NK2, or vCard (read-only)
+    Contacts {
+        source: PathBuf,
+        #[arg(long)]
+        filter: Option<String>,
+        #[arg(long)]
+        vcard_out: Option<PathBuf>,
+        #[arg(long)]
+        export: Option<PathBuf>,
+        #[arg(long, default_value = "csv")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum OfficeSubcommand {
+    /// List or toggle Microsoft Office / Outlook add-ins (COM/VSTO/XLL/WLL/DOTM/OTM)
+    Addins(OfficeAddinsArgs),
+}
+
+#[derive(clap::Args, Debug, Clone)]
+struct OfficeAddinsArgs {
+    #[command(subcommand)]
+    action: Option<OfficeAddinsSubcommand>,
+    /// Offline NTUSER.DAT / SOFTWARE regf hive path(s)
+    #[arg(long)]
+    hive: Vec<PathBuf>,
+    /// Optional AppData\Microsoft directory override
+    #[arg(long)]
+    appdata: Option<PathBuf>,
+    #[arg(long)]
+    filter: Option<String>,
+    #[arg(long)]
+    export: Option<PathBuf>,
+    #[arg(long, default_value = "csv")]
+    format: String,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum OfficeAddinsSubcommand {
+    /// List Office/Outlook add-ins (read-only)
+    List {
+        #[arg(long)]
+        hive: Vec<PathBuf>,
+        #[arg(long)]
+        appdata: Option<PathBuf>,
+        #[arg(long)]
+        filter: Option<String>,
+        #[arg(long)]
+        export: Option<PathBuf>,
+        #[arg(long, default_value = "csv")]
+        format: String,
+    },
+    /// Enable or disable an Office add-in's LoadBehavior in live Registry (mutating; requires -y/--allow-mutating or --dry-run)
+    Toggle {
+        prog_id: String,
+        #[arg(long)]
+        app: Option<String>,
+        #[arg(long)]
+        enable: bool,
+        #[arg(long)]
+        disable: bool,
+        #[arg(short = 'y', long, alias = "allow-mutating")]
+        allow_mutating: bool,
     },
 }
 
@@ -721,7 +882,7 @@ fn run_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     };
     let command = cli.command.as_ref().unwrap_or(&default_gui);
 
-    if let Commands::Mcp { tools } = command {
+    if let Commands::Mcp { tools, allow_mutating } = command {
         if *tools {
             println!(
                 "{}",
@@ -736,7 +897,12 @@ fn run_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             .with_env_filter(filter)
             .init();
 
-        mail2rust_mcp::run_stdio_server()?;
+        let policy = if *allow_mutating {
+            mail2rust_mcp::PolicyMode::AllowMutating
+        } else {
+            mail2rust_mcp::PolicyMode::ReadOnlyOnly
+        };
+        mail2rust_mcp::run_stdio_server_with_policy(policy)?;
         return Ok(());
     }
 
@@ -1986,8 +2152,297 @@ fn run_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             println!("======================================================================\n");
         }
         Commands::Mcp { .. } => unreachable!(),
+
+        Commands::Nk2 { action } => match action {
+            Nk2Subcommand::Inspect {
+                path,
+                filter,
+                export,
+                format,
+            } => {
+                let provider = mail2rust_outlook::Nk2TableProvider::from_path(path)?;
+                render_and_export_table(&provider, filter.as_deref(), export.as_deref(), format)?;
+            }
+            Nk2Subcommand::Edit {
+                path,
+                output,
+                remove_email,
+                add_name,
+                add_email,
+                set_weight_email,
+                set_weight,
+                dedup_entries,
+                merge,
+                allow_mutating,
+            } => {
+                require_mutating_cli(*allow_mutating, cli.dry_run, "nk2 edit")?;
+                let mut arc = mail2rust_outlook::Nk2Archive::from_file(path)?;
+                let before = arc.entries.len();
+                let mut added = 0usize;
+                if let Some(em) = add_email {
+                    let nm = add_name.as_deref().unwrap_or(em);
+                    let w = set_weight.unwrap_or(100);
+                    arc.add_entry(mail2rust_outlook::Nk2Entry::new_smtp(nm, em, w));
+                    added += 1;
+                }
+                let mut removed = 0usize;
+                for rem in remove_email {
+                    removed += arc.remove_by_email(rem);
+                }
+                let mut updated = 0usize;
+                if let (Some(em), Some(w)) = (set_weight_email, set_weight) {
+                    updated = arc.update_weight(em, *w);
+                }
+                if let Some(mp) = merge {
+                    let other = mail2rust_outlook::Nk2Archive::from_file(mp)?;
+                    added += arc.merge(&other);
+                }
+                let deduped = if *dedup_entries { arc.dedup() } else { 0 };
+                let dest = output.as_deref().unwrap_or(path.as_path());
+                if !cli.dry_run {
+                    arc.save_atomic(dest, output.is_none())?;
+                }
+                println!(
+                    "NK2 Edit [{}]: {} -> {} | rows: {} -> {} (added={}, removed={}, updated={}, deduped={})",
+                    if cli.dry_run { "DRY-RUN" } else { "SAVED" },
+                    path.display(),
+                    dest.display(),
+                    before,
+                    arc.entries.len(),
+                    added,
+                    removed,
+                    updated,
+                    deduped
+                );
+            }
+        },
+
+        Commands::Outlook { action } => match action {
+            OutlookSubcommand::Attach {
+                source,
+                extract_dir,
+                filter,
+                ext,
+                include_inline,
+                strip,
+                output,
+                in_place,
+                allow_mutating,
+                export,
+                format,
+            } => {
+                let att_filter = mail2rust_outlook::AttachmentFilter {
+                    extensions: ext.clone(),
+                    include_inline: *include_inline,
+                    ..Default::default()
+                };
+                if *strip {
+                    require_mutating_cli(*allow_mutating, cli.dry_run, "outlook attach --strip")?;
+                    let (dest, stripped) = mail2rust_outlook::strip_attachments_from_source(
+                        source,
+                        output.as_deref(),
+                        &att_filter,
+                        *in_place,
+                        cli.dry_run,
+                    )?;
+                    println!(
+                        "Attachment Strip [{}]: {} -> {} (stripped={})",
+                        if cli.dry_run { "DRY-RUN" } else { "DONE" },
+                        source.display(),
+                        dest.display(),
+                        stripped
+                    );
+                } else {
+                    let records = mail2rust_outlook::collect_attachments(source, &att_filter)?;
+                    let provider = mail2rust_outlook::AttachTableProvider::from_records(&records);
+                    render_and_export_table(&provider, filter.as_deref(), export.as_deref(), format)?;
+                    if let Some(dir) = extract_dir {
+                        if cli.dry_run {
+                            println!(
+                                "[DRY-RUN] Would extract {} attachment(s) to {}",
+                                records.len(),
+                                dir.display()
+                            );
+                        } else {
+                            let res = mail2rust_outlook::extract_attachments_to_dir(&records, dir)?;
+                            println!(
+                                "Extracted {} attachment(s) ({} bytes) to {} | Custody Merkle SHA-256: {}",
+                                res.extracted_files.len(),
+                                res.total_bytes,
+                                dir.display(),
+                                res.manifest.merkle_root_sha256
+                            );
+                        }
+                    }
+                }
+            }
+            OutlookSubcommand::Stats {
+                source,
+                group_by,
+                self_email,
+                filter,
+                export,
+                format,
+            } => {
+                let gb = mail2rust_outlook::StatsGroupBy::parse(group_by).ok_or_else(|| {
+                    format!("Invalid --group-by '{group_by}' (expected correspondent|domain|folder|month)")
+                })?;
+                let opts = mail2rust_outlook::StatsOptions {
+                    group_by: gb,
+                    self_emails: self_email.clone(),
+                    ..Default::default()
+                };
+                let provider = mail2rust_outlook::StatsTableProvider::from_source(source, &opts)?;
+                render_and_export_table(&provider, filter.as_deref(), export.as_deref(), format)?;
+            }
+            OutlookSubcommand::Contacts {
+                source,
+                filter,
+                vcard_out,
+                export,
+                format,
+            } => {
+                let contacts = mail2rust_outlook::collect_contacts(source)?;
+                let provider = mail2rust_outlook::ContactsTableProvider::from_records(&contacts);
+                render_and_export_table(&provider, filter.as_deref(), export.as_deref(), format)?;
+                if let Some(vcf_path) = vcard_out {
+                    let vcf = mail2rust_outlook::export_contacts_vcf(&contacts);
+                    if let Some(parent) = vcf_path.parent()
+                        && !parent.as_os_str().is_empty()
+                    {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(vcf_path, vcf)?;
+                    println!(
+                        "Exported {} contact(s) as vCard 3.0 to {}",
+                        contacts.len(),
+                        vcf_path.display()
+                    );
+                }
+            }
+        },
+
+        Commands::Office { action } => match action {
+            OfficeSubcommand::Addins(args) => match &args.action {
+                Some(OfficeAddinsSubcommand::Toggle {
+                    prog_id,
+                    app,
+                    enable,
+                    disable,
+                    allow_mutating,
+                }) => {
+                    require_mutating_cli(*allow_mutating, cli.dry_run, "office addins toggle")?;
+                    let target_enable = if *disable {
+                        false
+                    } else if *enable {
+                        true
+                    } else {
+                        return Err("Specify either --enable or --disable".into());
+                    };
+                    #[cfg(windows)]
+                    {
+                        let backend = mail2rust_outlook::LiveWindowsRegistry;
+                        let (reg_path, old_v, new_v) = mail2rust_outlook::toggle_office_addin(
+                            &backend,
+                            prog_id,
+                            app.as_deref(),
+                            target_enable,
+                            cli.dry_run,
+                        )?;
+                        println!(
+                            "Office Add-in Toggle [{}]: {} ({}) LoadBehavior {} -> {}",
+                            if cli.dry_run { "DRY-RUN" } else { "UPDATED" },
+                            prog_id,
+                            reg_path,
+                            old_v,
+                            new_v
+                        );
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        let _ = (prog_id, app, target_enable);
+                        return Err("Live Windows Registry toggle requires Windows".into());
+                    }
+                }
+                Some(OfficeAddinsSubcommand::List {
+                    hive,
+                    appdata,
+                    filter,
+                    export,
+                    format,
+                }) => {
+                    let provider =
+                        mail2rust_outlook::OfficeAddinsTableProvider::scan_from_hives(hive, appdata.as_deref())?;
+                    for w in &provider.warnings {
+                        eprintln!("[warning] {}: {}", w.scope, w.message);
+                    }
+                    render_and_export_table(&provider, filter.as_deref(), export.as_deref(), format)?;
+                }
+                None => {
+                    let provider = mail2rust_outlook::OfficeAddinsTableProvider::scan_from_hives(
+                        &args.hive,
+                        args.appdata.as_deref(),
+                    )?;
+                    for w in &provider.warnings {
+                        eprintln!("[warning] {}: {}", w.scope, w.message);
+                    }
+                    render_and_export_table(&provider, args.filter.as_deref(), args.export.as_deref(), &args.format)?;
+                }
+            },
+        },
     }
 
+    Ok(())
+}
+
+fn require_mutating_cli(allow_mutating: bool, dry_run: bool, op: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if allow_mutating || dry_run {
+        Ok(())
+    } else {
+        Err(format!("SAFETY REFUSAL: '{op}' modifies state and requires -y / --allow-mutating (or --dry-run).").into())
+    }
+}
+
+fn render_and_export_table(
+    provider: &dyn guap_table::TableProvider,
+    filter_expr: Option<&str>,
+    export_path: Option<&Path>,
+    format_str: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let filter = match filter_expr {
+        Some(f) if !f.trim().is_empty() => Some(guap_table::GetNirQuery::parse_filter(f)?),
+        _ => None,
+    };
+    let data = provider.query(&guap_table::TableQuery {
+        filter,
+        ..Default::default()
+    })?;
+
+    if let Some(path) = export_path {
+        let fmt = guap_export::ExportFormat::parse(format_str)?;
+        let opts = guap_export::ExportOptions {
+            tool_version: env!("CARGO_PKG_VERSION").to_string(),
+            ..Default::default()
+        };
+        let manifest = guap_export::write_table_export(&data, path, fmt, &opts)?;
+        let custody_path = PathBuf::from(format!("{}.custody.json", path.display()));
+        guap_export::write_custody_manifest_json(&manifest, &custody_path)?;
+        println!(
+            "Exported {} row(s) as {} to {} (SHA-256 Merkle: {})",
+            data.rows.len(),
+            fmt,
+            path.display(),
+            manifest.merkle_root_sha256
+        );
+    } else {
+        let opts = guap_export::ExportOptions {
+            tool_version: env!("CARGO_PKG_VERSION").to_string(),
+            ..Default::default()
+        };
+        let fmt = guap_export::ExportFormat::parse(format_str).unwrap_or(guap_export::ExportFormat::Json);
+        let bytes = guap_export::export_table(&data, fmt, &opts)?;
+        println!("{}", String::from_utf8_lossy(&bytes));
+    }
     Ok(())
 }
 
@@ -2905,5 +3360,35 @@ mod tests {
 
         let short = "Short Café — 👍";
         assert_eq!(truncate_utf8(short, 40), short);
+    }
+
+    #[test]
+    fn cli_parses_outlook_nk2_and_office_subcommands() {
+        assert!(Cli::try_parse_from(["mail2rust", "nk2", "inspect", "out.nk2"]).is_ok());
+        assert!(Cli::try_parse_from(["mail2rust", "nk2", "edit", "out.nk2", "--dedup-entries", "-y"]).is_ok());
+        assert!(Cli::try_parse_from(["mail2rust", "outlook", "attach", "mail.pst", "--ext", "pdf"]).is_ok());
+        assert!(Cli::try_parse_from(["mail2rust", "outlook", "stats", "mail.pst", "--group-by", "month"]).is_ok());
+        assert!(Cli::try_parse_from(["mail2rust", "outlook", "contacts", "mail.pst"]).is_ok());
+        assert!(Cli::try_parse_from(["mail2rust", "office", "addins", "--hive", "NTUSER.DAT"]).is_ok());
+        assert!(
+            Cli::try_parse_from([
+                "mail2rust",
+                "office",
+                "addins",
+                "toggle",
+                "Titan.OutlookAddin",
+                "--disable",
+                "-y"
+            ])
+            .is_ok()
+        );
+        assert!(Cli::try_parse_from(["mail2rust", "mcp", "--tools", "--allow-mutating"]).is_ok());
+    }
+
+    #[test]
+    fn mutating_cli_gate_refuses_without_allow_mutating_or_dry_run() {
+        assert!(require_mutating_cli(false, false, "nk2 edit").is_err());
+        assert!(require_mutating_cli(true, false, "nk2 edit").is_ok());
+        assert!(require_mutating_cli(false, true, "nk2 edit").is_ok());
     }
 }

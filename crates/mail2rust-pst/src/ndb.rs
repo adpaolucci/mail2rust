@@ -26,6 +26,14 @@ pub const DATA_START_OFFSET: u64 = 0x4800;
 pub const NID_MESSAGE_STORE: u32 = 0x21;
 pub const NID_NAME_TO_ID_MAP: u32 = 0x61;
 pub const NID_ROOT_FOLDER: u32 = 0x122;
+pub const NID_ATTACHMENT_TABLE: u32 = 0x0671;
+pub const NID_RECIPIENT_TABLE: u32 = 0x0692;
+
+pub const NID_TYPE_NORMAL_FOLDER: u8 = 0x02;
+pub const NID_TYPE_NORMAL_MESSAGE: u8 = 0x04;
+pub const NID_TYPE_ATTACHMENT: u8 = 0x0E;
+pub const NID_TYPE_ATTACHMENT_TABLE: u8 = 0x11;
+pub const NID_TYPE_RECIPIENT_TABLE: u8 = 0x12;
 
 pub const NDB_CRYPT_NONE: u8 = 0x00;
 pub const NDB_CRYPT_PERMUTE: u8 = 0x01;

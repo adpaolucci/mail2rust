@@ -2,7 +2,7 @@ use crate::LaunchArgs;
 use crate::message::Message;
 use crate::state::{ActiveModal, AppState, ExportFormat};
 use crate::views;
-use iced::widget::{column, container, mouse_area, row, rule, space, text};
+use iced::widget::{button, column, container, mouse_area, row, rule, space, text, text_input};
 use iced::{Alignment, Color, Element, Length, Task, Theme};
 use std::path::Path;
 
@@ -387,6 +387,43 @@ impl Mail2RustApp {
             }
             Message::ValidatePstPasswordChanged(v) => self.state.validate_pst_password = v,
             Message::ExecuteValidatePst => self.state.execute_validate_pst(),
+
+            // Outlook & Office Diagnostics View
+            Message::ToggleOutlookToolsView => {
+                self.state.show_outlook_tools = !self.state.show_outlook_tools;
+            }
+            Message::OutlookToolSelected(idx) => {
+                self.state.outlook_tool_idx = idx;
+            }
+            Message::OutlookSourceChanged(v) => {
+                self.state.outlook_source_path = v;
+            }
+            Message::BrowseOutlookSource => {
+                if let Some(p) = rfd::FileDialog::new()
+                    .set_title("Select Outlook / Office File (.nk2, .dat, .pst, .ost, .msg, .oab, .vcf, hive)")
+                    .add_filter(
+                        "Outlook & Office",
+                        &["nk2", "dat", "pst", "ost", "msg", "eml", "mbox", "oab", "vcf"],
+                    )
+                    .add_filter("All Files", &["*"])
+                    .pick_file()
+                {
+                    self.state.outlook_source_path = p.to_string_lossy().to_string();
+                }
+            }
+            Message::LoadOutlookProviders => {
+                self.state.load_outlook_providers();
+            }
+            Message::OutlookGrid(grid_msg) => {
+                return self.state.outlook_grid.update(grid_msg).map(Message::OutlookGrid);
+            }
+            Message::RequestOutlookMutate => {
+                self.state.active_modal = ActiveModal::ConfirmOutlookMutate;
+            }
+            Message::ConfirmOutlookMutate => {
+                self.state.active_modal = ActiveModal::None;
+                self.state.execute_confirmed_outlook_mutate();
+            }
         }
 
         Task::none()
@@ -394,7 +431,55 @@ impl Mail2RustApp {
 
     pub fn view(&self) -> Element<'_, Message> {
         let toolbar = views::toolbar::view_toolbar(&self.state);
-        let workbench = views::workbench::view_workbench(&self.state);
+        let main_area: Element<'_, Message> = if self.state.show_outlook_tools {
+            let tool_btn = |label: &'static str, idx: usize| {
+                button(text(label).size(11))
+                    .on_press(Message::OutlookToolSelected(idx))
+                    .style(if self.state.outlook_tool_idx == idx {
+                        button::primary
+                    } else {
+                        button::secondary
+                    })
+            };
+            let source_bar = container(
+                row![
+                    tool_btn("NK2Edit", 0),
+                    tool_btn("AttachView", 1),
+                    tool_btn("StatView", 2),
+                    tool_btn("AddressBook", 3),
+                    tool_btn("OfficeIns", 4),
+                    text_input(
+                        "Source (.nk2/.pst/.msg/.oab/.vcf or NTUSER.DAT;SOFTWARE)...",
+                        &self.state.outlook_source_path
+                    )
+                    .on_input(Message::OutlookSourceChanged)
+                    .size(12)
+                    .width(Length::Fill),
+                    button(text("Browse...").size(12))
+                        .on_press(Message::BrowseOutlookSource)
+                        .style(button::secondary),
+                    button(text("Scan / Load").size(12))
+                        .on_press(Message::LoadOutlookProviders)
+                        .style(button::primary),
+                    button(text("Mutate (Dedup/Toggle)...").size(12))
+                        .on_press(Message::RequestOutlookMutate)
+                        .style(button::danger),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .padding([6, 10])
+            .width(Length::Fill)
+            .style(container::bordered_box);
+
+            column![source_bar, self.state.outlook_grid.view().map(Message::OutlookGrid)]
+                .spacing(4)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            views::workbench::view_workbench(&self.state)
+        };
 
         let filtered_count = self.state.filtered_messages().len();
         let status_bar = container(
@@ -419,7 +504,7 @@ impl Mail2RustApp {
         .height(Length::Shrink)
         .style(container::bordered_box);
 
-        let main_layout = column![toolbar, rule::horizontal(1), workbench, rule::horizontal(1), status_bar]
+        let main_layout = column![toolbar, rule::horizontal(1), main_area, rule::horizontal(1), status_bar]
             .width(Length::Fill)
             .height(Length::Fill);
 

@@ -27,3 +27,21 @@ tools:
     description: "Split oversized mailbox into chunked volume archives preserving folder hierarchies."
   - name: mail2rust_merge
     description: "Merge multiple disparate mailbox archives into a unified container with cross-archive deduplication."
+  - name: mail2rust_nk2_inspect
+    description: "Parse and query an Outlook .NK2 or Stream_Autocomplete_*.dat autocomplete cache file (read-only)."
+  - name: mail2rust_nk2_edit
+    description: "Add, update, remove, deduplicate, or merge entries in an .NK2 / Stream_Autocomplete_*.dat file (mutating; requires AllowMutating + confirm_destructive=true)."
+  - name: mail2rust_outlook_attach
+    description: "List attachments in a PST, OST, MSG, MBOX, or EML source (read-only)."
+  - name: mail2rust_outlook_attach_extract
+    description: "Bulk extract filtered attachments from PST/OST/MSG/MBOX/EML into a destination directory with SHA-256 custody manifest (read-only on source)."
+  - name: mail2rust_outlook_attach_strip
+    description: "Strip matching attachments from a PST/OST/MSG container (mutating; requires AllowMutating + confirm_destructive=true)."
+  - name: mail2rust_outlook_stats
+    description: "Aggregate PST/OST/MSG/MBOX/EML communication statistics by correspondent, domain, folder, or month (read-only)."
+  - name: mail2rust_outlook_contacts
+    description: "Extract contacts and distribution lists from PST/OST (IPM.Contact/IPM.DistList), OAB, NK2, or vCard files (read-only)."
+  - name: mail2rust_office_addins
+    description: "List Microsoft Office & Outlook add-ins from live Windows Registry or offline NTUSER.DAT/SOFTWARE regf hives (read-only)."
+  - name: mail2rust_office_addins_toggle
+    description: "Enable or disable an Office/Outlook add-in LoadBehavior in live Windows Registry (mutating; requires AllowMutating + confirm_destructive=true)."

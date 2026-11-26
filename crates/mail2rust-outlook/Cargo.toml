@@ -1,0 +1,34 @@
+[package]
+name = "mail2rust-outlook"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure-Rust Outlook & Office forensic/admin suite: NK2Edit, OutlookAttachView, OutlookStatView, OutlookAddressBookView, and OfficeIns"
+
+[dependencies]
+mail2rust-core.workspace = true
+mail2rust-pst.workspace = true
+mail2rust-forensics.workspace = true
+guap-table.workspace = true
+guap-export.workspace = true
+guap-mcp.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+byteorder.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+crc32fast.workspace = true
+regex.workspace = true
+tracing.workspace = true
+walkdir.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winreg.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

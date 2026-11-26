@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+use guap_mcp::McpServerRegistry;
+pub use guap_mcp::PolicyMode;
 use mail2rust_core::{
     DedupEngine, DedupStrategy, EmailMessage, FormatSniffer, MailboxFormat, MailboxMerger, MergeFolderStrategy,
     MergeOptions, MergeSourceConfig, ingest_path,
@@ -67,12 +69,20 @@ pub fn export_mbox_file(
     Ok(MboxFileExporter::export_to_file(messages, dest_path, compress)?)
 }
 
-/// Returns list of available tools with their JSON schema
+/// Builds a `guap_mcp::McpServerRegistry` containing all Outlook & Office tools under `policy`.
+pub fn build_outlook_registry(policy: PolicyMode) -> McpServerRegistry {
+    let mut reg = McpServerRegistry::new(policy).with_server_info(SERVER_NAME, SERVER_VERSION);
+    mail2rust_outlook::register_outlook_mcp_commands(&mut reg);
+    reg
+}
+
+/// Returns list of available tools with their JSON schema (6 legacy + 9 Outlook/Office = 15 tools)
 pub fn get_tools_manifest() -> Value {
-    json!([
-        {
+    let mut tools = vec![
+        json!({
             "name": "mail2rust_sniff",
             "description": "Inspect magic bytes and identify mailbox format (PST, OST, MBOX, EML, EMLX, MSG, OLM, Maildir).",
+            "annotations": { "readOnlyHint": true, "destructiveHint": false },
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -83,10 +93,11 @@ pub fn get_tools_manifest() -> Value {
                 },
                 "required": ["path"]
             }
-        },
-        {
+        }),
+        json!({
             "name": "mail2rust_validate_pst",
             "description": "Validate 64-bit Unicode MS-PST binary integrity, CRC-32 header, and B-Trees without Outlook.",
+            "annotations": { "readOnlyHint": true, "destructiveHint": false },
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -97,10 +108,11 @@ pub fn get_tools_manifest() -> Value {
                 },
                 "required": ["path"]
             }
-        },
-        {
+        }),
+        json!({
             "name": "mail2rust_convert",
             "description": "Convert mailbox between formats (e.g. MBOX to PST, PST to EML tree, EML to PST, Maildir to PST).",
+            "annotations": { "readOnlyHint": false, "destructiveHint": false },
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -132,10 +144,11 @@ pub fn get_tools_manifest() -> Value {
                 },
                 "required": ["source", "destination"]
             }
-        },
-        {
+        }),
+        json!({
             "name": "mail2rust_audit",
             "description": "Perform forensic audit on mailbox: compute SHA-256 hashes, Bates stamping, and chain of custody.",
+            "annotations": { "readOnlyHint": true, "destructiveHint": false },
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -162,10 +175,11 @@ pub fn get_tools_manifest() -> Value {
                 },
                 "required": ["path"]
             }
-        },
-        {
+        }),
+        json!({
             "name": "mail2rust_split",
             "description": "Split oversized mailbox (e.g. >20GB or >50GB) into chunked volume archives preserving folder hierarchies.",
+            "annotations": { "readOnlyHint": false, "destructiveHint": false },
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -194,10 +208,11 @@ pub fn get_tools_manifest() -> Value {
                 },
                 "required": ["source", "destination_dir"]
             }
-        },
-        {
+        }),
+        json!({
             "name": "mail2rust_merge",
             "description": "Merge multiple disparate mailbox archives into a unified container with cross-archive deduplication.",
+            "annotations": { "readOnlyHint": false, "destructiveHint": false },
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -217,8 +232,14 @@ pub fn get_tools_manifest() -> Value {
                 },
                 "required": ["sources", "destination"]
             }
-        }
-    ])
+        }),
+    ];
+
+    let outlook_reg = build_outlook_registry(PolicyMode::ReadOnlyOnly);
+    if let Value::Array(extra) = outlook_reg.list_tools() {
+        tools.extend(extra);
+    }
+    Value::Array(tools)
 }
 
 /// Executes a tool call and returns the JSON result
@@ -605,12 +626,33 @@ pub fn call_tool(name: &str, arguments: &Value) -> Result<Value, String> {
             }))
         }
 
-        unknown => Err(format!("Unknown tool: {}", unknown)),
+        unknown => {
+            let reg = build_outlook_registry(PolicyMode::ReadOnlyOnly);
+            reg.dispatch(unknown, arguments)
+                .map_err(|e| format!("{} ({})", e.message, e.code))
+        }
     }
 }
 
-/// Handles a single incoming JSON-RPC request and returns the response Value if needed
+fn is_legacy_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "mail2rust_sniff"
+            | "mail2rust_validate_pst"
+            | "mail2rust_convert"
+            | "mail2rust_audit"
+            | "mail2rust_split"
+            | "mail2rust_merge"
+    )
+}
+
+/// Handles a single incoming JSON-RPC request under the default `PolicyMode::ReadOnlyOnly` policy.
 pub fn handle_jsonrpc_request(req: &Value) -> Option<Value> {
+    handle_jsonrpc_request_with_policy(req, PolicyMode::ReadOnlyOnly)
+}
+
+/// Handles a single incoming JSON-RPC request under an explicit `guap_mcp::PolicyMode`.
+pub fn handle_jsonrpc_request_with_policy(req: &Value, policy: PolicyMode) -> Option<Value> {
     let id = req.get("id").cloned();
     let method = match req.get("method").and_then(|m| m.as_str()) {
         Some(m) => m,
@@ -674,38 +716,43 @@ pub fn handle_jsonrpc_request(req: &Value) -> Option<Value> {
             let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
             let arguments = params.get("arguments").unwrap_or(&Value::Null);
 
-            let res = call_tool(tool_name, arguments);
-            id.map(|req_id| match res {
-                Ok(val) => {
-                    let formatted = serde_json::to_string_pretty(&val).unwrap_or_default();
-                    json!({
+            if is_legacy_tool(tool_name) {
+                let res = call_tool(tool_name, arguments);
+                id.map(|req_id| match res {
+                    Ok(val) => {
+                        let formatted = serde_json::to_string_pretty(&val).unwrap_or_default();
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": req_id,
+                            "result": {
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": formatted
+                                    }
+                                ],
+                                "isError": false
+                            }
+                        })
+                    }
+                    Err(err_msg) => json!({
                         "jsonrpc": "2.0",
                         "id": req_id,
                         "result": {
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": formatted
+                                    "text": format!("Tool execution error: {}", err_msg)
                                 }
                             ],
-                            "isError": false
+                            "isError": true
                         }
-                    })
-                }
-                Err(err_msg) => json!({
-                    "jsonrpc": "2.0",
-                    "id": req_id,
-                    "result": {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": format!("Tool execution error: {}", err_msg)
-                            }
-                        ],
-                        "isError": true
-                    }
-                }),
-            })
+                    }),
+                })
+            } else {
+                let reg = build_outlook_registry(policy);
+                reg.handle_jsonrpc_request(req)
+            }
         }
 
         unknown_method => id.map(|req_id| {
@@ -721,8 +768,13 @@ pub fn handle_jsonrpc_request(req: &Value) -> Option<Value> {
     }
 }
 
-/// Runs the standard stdio JSON-RPC server loop
+/// Runs the standard stdio JSON-RPC server loop under `PolicyMode::ReadOnlyOnly` (safe default).
 pub fn run_stdio_server() -> Result<(), Box<dyn std::error::Error>> {
+    run_stdio_server_with_policy(PolicyMode::ReadOnlyOnly)
+}
+
+/// Runs the stdio JSON-RPC server loop with explicit `PolicyMode` (`ReadOnlyOnly` vs `AllowMutating`).
+pub fn run_stdio_server_with_policy(policy: PolicyMode) -> Result<(), Box<dyn std::error::Error>> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut reader = stdin.lock();
@@ -734,7 +786,7 @@ pub fn run_stdio_server() -> Result<(), Box<dyn std::error::Error>> {
         if !trimmed.is_empty() {
             match serde_json::from_str::<Value>(trimmed) {
                 Ok(req) => {
-                    if let Some(resp) = handle_jsonrpc_request(&req) {
+                    if let Some(resp) = handle_jsonrpc_request_with_policy(&req, policy) {
                         let out_str = serde_json::to_string(&resp)?;
                         writeln!(writer, "{}", out_str)?;
                         writer.flush()?;
@@ -769,19 +821,32 @@ mod tests {
     fn test_tools_manifest_structure() {
         let manifest = get_tools_manifest();
         let tools = manifest.as_array().expect("Tools must be an array");
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 15);
 
         let names: Vec<&str> = tools
             .iter()
             .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
             .collect();
 
-        assert!(names.contains(&"mail2rust_sniff"));
-        assert!(names.contains(&"mail2rust_validate_pst"));
-        assert!(names.contains(&"mail2rust_convert"));
-        assert!(names.contains(&"mail2rust_audit"));
-        assert!(names.contains(&"mail2rust_split"));
-        assert!(names.contains(&"mail2rust_merge"));
+        for expected in [
+            "mail2rust_sniff",
+            "mail2rust_validate_pst",
+            "mail2rust_convert",
+            "mail2rust_audit",
+            "mail2rust_split",
+            "mail2rust_merge",
+            "mail2rust_nk2_inspect",
+            "mail2rust_nk2_edit",
+            "mail2rust_outlook_attach",
+            "mail2rust_outlook_attach_extract",
+            "mail2rust_outlook_attach_strip",
+            "mail2rust_outlook_stats",
+            "mail2rust_outlook_contacts",
+            "mail2rust_office_addins",
+            "mail2rust_office_addins_toggle",
+        ] {
+            assert!(names.contains(&expected), "Missing MCP tool {expected}");
+        }
     }
 
     #[test]
@@ -812,7 +877,92 @@ mod tests {
         let resp = handle_jsonrpc_request(&req).expect("Response expected");
         assert_eq!(resp["id"], 2);
         let tools = resp["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 15);
+        for t in tools {
+            assert!(t.get("annotations").is_some(), "Missing annotations on {}", t["name"]);
+        }
+    }
+
+    #[test]
+    fn test_outlook_tools_and_policy_gate_32003() {
+        let temp = tempfile::tempdir().unwrap();
+        let fx = mail2rust_outlook::fixtures::generate_all_outlook_fixtures(temp.path()).unwrap();
+
+        // Read-only NK2 inspect succeeds under default ReadOnlyOnly
+        let inspect_req = json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "mail2rust_nk2_inspect",
+                "arguments": { "path": fx.nk2_path.to_string_lossy() }
+            }
+        });
+        let inspect_resp = handle_jsonrpc_request(&inspect_req).unwrap();
+        assert_eq!(inspect_resp["result"]["isError"], false);
+
+        // Mutating NK2 edit under default ReadOnlyOnly returns -32003
+        let edit_req = json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "mail2rust_nk2_edit",
+                "arguments": {
+                    "path": fx.nk2_path.to_string_lossy(),
+                    "dedup": true,
+                    "confirm_destructive": true
+                }
+            }
+        });
+        let denied_ro = handle_jsonrpc_request(&edit_req).unwrap();
+        assert_eq!(denied_ro["error"]["code"], -32003);
+
+        // Mutating Office toggle under ReadOnlyOnly returns -32003
+        let toggle_req = json!({
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {
+                "name": "mail2rust_office_addins_toggle",
+                "arguments": { "prog_id": "Titan.OutlookAddin", "enable": false, "confirm_destructive": true }
+            }
+        });
+        let denied_toggle = handle_jsonrpc_request(&toggle_req).unwrap();
+        assert_eq!(denied_toggle["error"]["code"], -32003);
+
+        // Mutating under AllowMutating without confirm_destructive=true still returns -32003
+        let no_confirm_req = json!({
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "tools/call",
+            "params": {
+                "name": "mail2rust_nk2_edit",
+                "arguments": { "path": fx.nk2_path.to_string_lossy(), "dedup": true }
+            }
+        });
+        let denied_no_confirm = handle_jsonrpc_request_with_policy(&no_confirm_req, PolicyMode::AllowMutating).unwrap();
+        assert_eq!(denied_no_confirm["error"]["code"], -32003);
+
+        // Mutating under AllowMutating with confirm_destructive=true succeeds
+        let ok_edit = handle_jsonrpc_request_with_policy(&edit_req, PolicyMode::AllowMutating).unwrap();
+        assert_eq!(ok_edit["result"]["isError"], false);
+
+        // Read-only Office addins offline regf scan works
+        let off_req = json!({
+            "jsonrpc": "2.0",
+            "id": 14,
+            "method": "tools/call",
+            "params": {
+                "name": "mail2rust_office_addins",
+                "arguments": {
+                    "hives": [fx.ntuser_dat_path.to_string_lossy(), fx.software_hive_path.to_string_lossy()],
+                    "appdata_microsoft": fx.appdata_microsoft_dir.to_string_lossy()
+                }
+            }
+        });
+        let off_resp = handle_jsonrpc_request(&off_req).unwrap();
+        assert_eq!(off_resp["result"]["isError"], false);
     }
 
     #[test]

@@ -12,6 +12,7 @@ members = [
     "crates/mail2rust-win32",
     "crates/mail2rust-iced",
     "crates/mail2rust-mcp",
+    "crates/mail2rust-outlook",
 ]
 resolver = "2"
 
@@ -61,6 +62,17 @@ mail2rust-forensics = { path = "crates/mail2rust-forensics" }
 mail2rust-sync = { path = "crates/mail2rust-sync" }
 mail2rust-imap = { path = "crates/mail2rust-imap" }
 mail2rust-mcp = { path = "crates/mail2rust-mcp" }
+mail2rust-outlook = { path = "crates/mail2rust-outlook" }
+
+guap-table = { path = "../guap-kit/crates/guap-table" }
+guap-export = { path = "../guap-kit/crates/guap-export" }
+guap-mcp = { path = "../guap-kit/crates/guap-mcp" }
+guap-gui-win32 = { path = "../guap-kit/crates/guap-gui-win32", default-features = false }
+guap-gui-iced = { path = "../guap-kit/crates/guap-gui-iced" }
+
+thiserror = "2.0"
+csv = "1.4"
+winreg = "0.56"
 
 [profile.dev.package.clap]
 opt-level = 2

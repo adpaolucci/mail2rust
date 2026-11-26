@@ -15,8 +15,9 @@
   "majorCapabilities": [
     "64-bit Unicode [MS-PST] binary container reader, writer & validator (zero Outlook COM)",
     "15+ mailbox formats, IMAP/TLS, IMAP-to-IMAP sync & JMAP RFC 8620/8621",
+    "Outlook & Office diagnostics (NK2Edit, OutlookAttachView, OutlookStatView, OutlookAddressBookView, OfficeIns)",
     "Forensic Bates stamping, SHA-256 Merkle roots & eDiscovery regex search",
     "Native Win32 (WinSafe) & Iced 0.14 dual GUIs",
-    "6-tool MCP JSON-RPC stdio server"
+    "15-tool MCP JSON-RPC stdio server with read-only/mutating policy gates"
   ]
 }

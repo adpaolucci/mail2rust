@@ -21,6 +21,7 @@ pub fn view_modal(state: &AppState) -> Element<'_, Message> {
         ActiveModal::Forensics => view_forensics(state),
         ActiveModal::DryRun => view_dry_run(state),
         ActiveModal::ValidatePst => view_validate_pst(state),
+        ActiveModal::ConfirmOutlookMutate => view_confirm_outlook_mutate(state),
         ActiveModal::About => view_about(),
     };
 
@@ -897,6 +898,43 @@ fn view_validate_pst(state: &AppState) -> Element<'_, Message> {
         ]
         .spacing(8),
     )
+    .into()
+}
+
+fn view_confirm_outlook_mutate(state: &AppState) -> Element<'_, Message> {
+    let summary = if state.outlook_tool_idx == 0 {
+        format!(
+            "Deduplicate and atomically save '{}' (creating a .bak backup)?",
+            state.outlook_source_path
+        )
+    } else if state.outlook_tool_idx == 4 {
+        let prog_id = state
+            .outlook_grid
+            .selected_row()
+            .and_then(|r| r.cells.get(2))
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "(none selected)".to_string());
+        format!("Toggle LoadBehavior for Office add-in '{prog_id}' in live Windows Registry?")
+    } else {
+        "Select NK2Edit (dedup & save) or OfficeIns (toggle selected add-in) to perform a mutating action.".to_string()
+    };
+
+    column![
+        text("Confirm Mutating Outlook / Office Action").size(17),
+        rule::horizontal(1),
+        text(summary).size(13),
+        row![
+            space().width(Length::Fill),
+            button(text("Confirm & Execute").size(12))
+                .on_press(Message::ConfirmOutlookMutate)
+                .style(button::danger),
+            button(text("Cancel").size(12))
+                .on_press(Message::CloseModal)
+                .style(button::secondary),
+        ]
+        .spacing(8),
+    ]
+    .spacing(10)
     .into()
 }
 

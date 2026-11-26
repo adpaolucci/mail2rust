@@ -131,4 +131,14 @@ pub enum Message {
     BrowseValidatePstFile,
     ValidatePstPasswordChanged(String),
     ExecuteValidatePst,
+
+    // Outlook & Office Diagnostics View (guap-gui-iced)
+    ToggleOutlookToolsView,
+    OutlookToolSelected(usize),
+    OutlookSourceChanged(String),
+    BrowseOutlookSource,
+    LoadOutlookProviders,
+    OutlookGrid(guap_gui_iced::DataGridMessage),
+    RequestOutlookMutate,
+    ConfirmOutlookMutate,
 }

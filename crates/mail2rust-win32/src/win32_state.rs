@@ -172,6 +172,11 @@ pub struct Win32State {
     pub validate_pst_path: String,
     pub validate_pst_password: String,
     pub validation_report: Option<String>,
+
+    // Outlook & Office Diagnostics (guap-gui-win32)
+    pub outlook_tool_idx: usize,
+    pub outlook_source_path: String,
+    pub outlook_grid: guap_gui_win32::Win32GridState,
 }
 
 impl Default for Win32State {
@@ -261,6 +266,17 @@ impl Default for Win32State {
             validate_pst_path: String::new(),
             validate_pst_password: String::new(),
             validation_report: None,
+
+            outlook_tool_idx: 0,
+            outlook_source_path: String::new(),
+            outlook_grid: guap_gui_win32::Win32GridState::new(
+                guap_gui_win32::Win32TableHostConfig {
+                    app_title: "Mail2Rust Outlook & Office".to_string(),
+                    ..Default::default()
+                },
+                Vec::new(),
+                Vec::new(),
+            ),
         }
     }
 }
@@ -912,6 +928,75 @@ impl Win32State {
 
         list
     }
+
+    pub fn load_outlook_tool(&mut self, tool_idx: usize, source_path: &str) -> Result<String, String> {
+        use std::sync::Arc;
+        self.outlook_tool_idx = tool_idx;
+        self.outlook_source_path = source_path.trim().to_string();
+
+        let provider: Arc<dyn guap_table::TableProvider> = match tool_idx {
+            0 => {
+                let p = Path::new(&self.outlook_source_path);
+                let prov = mail2rust_outlook::Nk2TableProvider::from_path(p).map_err(|e| e.to_string())?;
+                Arc::new(prov)
+            }
+            1 => {
+                let p = Path::new(&self.outlook_source_path);
+                let filter = mail2rust_outlook::AttachmentFilter {
+                    include_inline: true,
+                    ..Default::default()
+                };
+                let prov =
+                    mail2rust_outlook::AttachTableProvider::from_source(p, &filter).map_err(|e| e.to_string())?;
+                Arc::new(prov)
+            }
+            2 => {
+                let p = Path::new(&self.outlook_source_path);
+                let prov =
+                    mail2rust_outlook::StatsTableProvider::from_source(p, &mail2rust_outlook::StatsOptions::default())
+                        .map_err(|e| e.to_string())?;
+                Arc::new(prov)
+            }
+            3 => {
+                let p = Path::new(&self.outlook_source_path);
+                let prov = mail2rust_outlook::ContactsTableProvider::from_source(p).map_err(|e| e.to_string())?;
+                Arc::new(prov)
+            }
+            _ => {
+                let hives: Vec<std::path::PathBuf> = self
+                    .outlook_source_path
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .collect();
+                let prov = mail2rust_outlook::OfficeAddinsTableProvider::scan_from_hives(&hives, None)
+                    .map_err(|e| e.to_string())?;
+                Arc::new(prov)
+            }
+        };
+
+        self.outlook_grid = guap_gui_win32::Win32GridState::new(
+            guap_gui_win32::Win32TableHostConfig {
+                app_title: "Mail2Rust Outlook & Office".to_string(),
+                ..Default::default()
+            },
+            vec![provider],
+            Vec::new(),
+        );
+        self.status_message = self.outlook_grid.status_message.clone();
+        Ok(self.outlook_grid.status_message.clone())
+    }
+
+    pub fn export_outlook_grid(&self, dest: &Path, fmt: guap_export::ExportFormat) -> Result<String, String> {
+        let manifest = self.outlook_grid.export_to_path(dest, fmt).map_err(|e| e.to_string())?;
+        Ok(format!(
+            "Exported {} rows to '{}' (SHA-256 Merkle: {}).",
+            self.outlook_grid.row_count(),
+            dest.display(),
+            manifest.merkle_root_sha256
+        ))
+    }
 }
 
 fn parse_folder_patterns(raw: &str) -> Vec<String> {
@@ -1226,5 +1311,31 @@ mod tests {
         st.filter_exclude_folder.clear();
         st.filter_include_folder = "Projects/*".to_string();
         assert_eq!(st.filtered_messages().len(), 1);
+    }
+
+    #[test]
+    fn outlook_win32_grid_loads_nk2_and_exports_csv() {
+        let dir = tempfile::tempdir().unwrap();
+        let fx = mail2rust_outlook::fixtures::generate_all_outlook_fixtures(dir.path()).unwrap();
+
+        let mut st = Win32State::default();
+        let msg = st.load_outlook_tool(0, &fx.nk2_path.to_string_lossy()).unwrap();
+        assert!(msg.contains("3 rows"));
+        assert_eq!(st.outlook_grid.row_count(), 3);
+
+        st.outlook_grid.set_filter("titan".to_string());
+        assert_eq!(st.outlook_grid.row_count(), 2);
+
+        let csv_out = dir.path().join("win32_nk2.csv");
+        let exp_msg = st
+            .export_outlook_grid(&csv_out, guap_export::ExportFormat::Csv)
+            .unwrap();
+        assert!(exp_msg.contains("Exported 2 rows"));
+        assert!(csv_out.exists());
+
+        // Also test OfficeIns offline regf hives via `;`-separated path
+        let hives_str = format!("{};{}", fx.ntuser_dat_path.display(), fx.software_hive_path.display());
+        st.load_outlook_tool(4, &hives_str).unwrap();
+        assert!(st.outlook_grid.row_count() >= 2);
     }
 }

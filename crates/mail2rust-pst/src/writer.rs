@@ -1,13 +1,16 @@
 use crate::ltp::{
-    PR_BODY_HTML_W, PR_BODY_W, PR_CONTENT_COUNT, PR_CONTENT_UNREAD, PR_DISPLAY_NAME_W, PR_HASATTACH, PR_IMPORTANCE,
-    PR_INTERNET_MESSAGE_ID_W, PR_MESSAGE_CLASS_W, PR_MESSAGE_FLAGS, PR_PST_PASSWORD, PR_SENDER_EMAIL_ADDRESS_W,
-    PR_SENDER_NAME_W, PR_SUBFOLDERS, PR_SUBJECT_W, PropertyContext,
+    PR_ATTACH_CONTENT_ID_W, PR_ATTACH_DATA_BIN, PR_ATTACH_FILENAME_W, PR_ATTACH_FLAGS, PR_ATTACH_LONG_FILENAME_W,
+    PR_ATTACH_METHOD, PR_ATTACH_MIME_TAG_W, PR_ATTACH_NUM, PR_ATTACH_SIZE, PR_BODY_HTML_W, PR_BODY_W,
+    PR_CLIENT_SUBMIT_TIME, PR_CONTENT_COUNT, PR_CONTENT_UNREAD, PR_DISPLAY_NAME_W, PR_EMAIL_ADDRESS_W, PR_HASATTACH,
+    PR_IMPORTANCE, PR_INTERNET_MESSAGE_ID_W, PR_MESSAGE_CLASS_W, PR_MESSAGE_DELIVERY_TIME, PR_MESSAGE_FLAGS,
+    PR_PST_PASSWORD, PR_RECIPIENT_TYPE, PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_W, PR_SMTP_ADDRESS_W, PR_SUBFOLDERS,
+    PR_SUBJECT_W, PropertyContext, TableContext, TableContextRow,
 };
 use crate::ndb::{
-    AMAP_START_OFFSET, DATA_START_OFFSET, NID_MESSAGE_STORE, NID_ROOT_FOLDER, PMAP_START_OFFSET, PST_CLIENT_MAGIC,
-    PST_CLIENT_VER, PST_HEADER_SIZE, PST_PAGE_DATA_SIZE, PST_PAGE_SIZE, PST_UNICODE_VER, PTYPE_AMAP, PTYPE_BBT,
-    PTYPE_NBT, PTYPE_PMAP, PageTrailer, PstEncryption, calculate_partial_header_crc, compute_pst_password_crc,
-    cyclic_crypt, permute_bytes,
+    AMAP_START_OFFSET, DATA_START_OFFSET, NID_ATTACHMENT_TABLE, NID_MESSAGE_STORE, NID_RECIPIENT_TABLE,
+    NID_ROOT_FOLDER, NID_TYPE_ATTACHMENT, PMAP_START_OFFSET, PST_CLIENT_MAGIC, PST_CLIENT_VER, PST_HEADER_SIZE,
+    PST_PAGE_DATA_SIZE, PST_PAGE_SIZE, PST_UNICODE_VER, PTYPE_AMAP, PTYPE_BBT, PTYPE_NBT, PTYPE_PMAP, PageTrailer,
+    PstEncryption, calculate_partial_header_crc, compute_pst_password_crc, cyclic_crypt, permute_bytes,
 };
 use mail2rust_core::EmailMessage;
 use std::collections::HashMap;
@@ -27,8 +30,8 @@ pub struct PstWriter<W: Write + Seek> {
     alloc_nid_counter: u32,
     alloc_bid_counter: u64,
     alloc_page_bid_counter: u64,
-    nbt_entries: Vec<(u32, u64, u32)>, // (NID, BID, ParentNID)
-    bbt_entries: Vec<(u64, u64, u32)>, // (BID, FileOffset, ByteLength)
+    nbt_entries: Vec<(u32, u64, u64, u32)>, // (NID, BID, BidSub, ParentNID)
+    bbt_entries: Vec<(u64, u64, u32)>,      // (BID, FileOffset, ByteLength)
     folder_map: HashMap<String, u32>,
     folder_path_nids: HashMap<Vec<String>, u32>,
     encryption: PstEncryption,
@@ -106,6 +109,49 @@ impl<W: Write + Seek> PstWriter<W> {
         Ok(bid)
     }
 
+    fn write_internal_block(&mut self, data: Vec<u8>) -> io::Result<u64> {
+        // Internal NDB blocks (XBLOCK/XXBLOCK/SLBLOCK/SIBLOCK) set bit 1 (0x02) and are not encrypted
+        let bid = self.alloc_bid_counter | 0x02;
+        self.alloc_bid_counter += 4;
+
+        let offset = self.current_offset;
+        let len = data.len() as u32;
+
+        self.writer.seek(SeekFrom::Start(offset))?;
+        self.writer.write_all(&data)?;
+
+        let pad = (64 - (len % 64)) % 64;
+        if pad > 0 {
+            let pad_bytes = vec![0u8; pad as usize];
+            self.writer.write_all(&pad_bytes)?;
+        }
+        self.current_offset = offset + len as u64 + pad as u64;
+
+        self.bbt_entries.push((bid, offset, len));
+        Ok(bid)
+    }
+
+    /// Writes `data` as a single block if <= 8192 bytes, or as an MS-PST `XBLOCK` (`0x01/0x01`) tree if larger.
+    pub fn write_stream_or_block(&mut self, data: Vec<u8>) -> io::Result<u64> {
+        if data.len() <= 8192 {
+            return self.write_block(data);
+        }
+        let total_len = data.len() as u32;
+        let mut child_bids = Vec::new();
+        for chunk in data.chunks(8192) {
+            child_bids.push(self.write_block(chunk.to_vec())?);
+        }
+        let mut xblock = Vec::with_capacity(8 + child_bids.len() * 8);
+        xblock.push(0x01); // bType = XBLOCK
+        xblock.push(0x01); // cLevel = 1
+        xblock.extend_from_slice(&(child_bids.len() as u16).to_le_bytes());
+        xblock.extend_from_slice(&total_len.to_le_bytes());
+        for bid in child_bids {
+            xblock.extend_from_slice(&bid.to_le_bytes());
+        }
+        self.write_internal_block(xblock)
+    }
+
     fn add_folder_with_parent_nid(&mut self, name: &str, parent_nid: u32) -> io::Result<u32> {
         let nid = self.alloc_nid_counter;
         self.alloc_nid_counter += 1;
@@ -119,7 +165,7 @@ impl<W: Write + Seek> PstWriter<W> {
         let data = pc.serialize()?;
         let bid = self.write_block(data)?;
 
-        self.nbt_entries.push((nid, bid, parent_nid));
+        self.nbt_entries.push((nid, bid, 0, parent_nid));
         self.folder_map.entry(name.to_string()).or_insert(nid);
         debug!(nid = nid, name = name, parent_nid = parent_nid, "Added folder to PST");
         Ok(nid)
@@ -195,7 +241,21 @@ impl<W: Write + Seek> PstWriter<W> {
         if !msg.message_id.is_empty() {
             pc.add_string_w(PR_INTERNET_MESSAGE_ID_W, &msg.message_id);
         }
-        pc.add_u32(PR_MESSAGE_FLAGS, if msg.flags.read { 1 } else { 0 });
+        let mut flags_val = if msg.flags.read { 1u32 } else { 0u32 };
+        if msg.flags.replied {
+            flags_val |= 0x04;
+        }
+        if msg.flags.draft {
+            flags_val |= 0x08;
+        }
+        if let Some(flag_prop) = msg.mapi_properties.iter().find(|p| p.tag == PR_MESSAGE_FLAGS)
+            && let Ok(parsed_flags) = flag_prop.value.parse::<u32>()
+        {
+            flags_val |= parsed_flags;
+        }
+        pc.add_u32(PR_MESSAGE_FLAGS, flags_val);
+        pc.add_systime(PR_MESSAGE_DELIVERY_TIME, msg.date);
+        pc.add_systime(PR_CLIENT_SUBMIT_TIME, msg.date);
         if !msg.attachments.is_empty() {
             pc.add_bool(PR_HASATTACH, true);
         }
@@ -207,12 +267,135 @@ impl<W: Write + Seek> PstWriter<W> {
                 mail2rust_core::Importance::Normal => 1,
             },
         );
+        for prop in &msg.mapi_properties {
+            if matches!(prop.tag, PR_MESSAGE_CLASS_W | PR_MESSAGE_FLAGS) {
+                continue;
+            }
+            let ptype = (prop.tag & 0xFFFF) as u16;
+            match ptype {
+                0x001F => pc.add_string_w(prop.tag, &prop.value),
+                0x001E => pc.add_string_a(prop.tag, &prop.value),
+                0x0003 => {
+                    if let Ok(v) = prop.value.parse::<u32>() {
+                        pc.add_u32(prop.tag, v);
+                    }
+                }
+                0x000B => pc.add_bool(prop.tag, prop.value == "true" || prop.value == "1"),
+                _ => {}
+            }
+        }
 
         let data = pc.serialize()?;
-        let bid = self.write_block(data)?;
+        let bid = self.write_stream_or_block(data)?;
 
-        self.nbt_entries.push((nid, bid, folder_nid));
+        // Build optional subnodes (Recipient Table + Attachment Table + Attachment PCs)
+        let mut subnodes: Vec<(u32, u64, u64)> = Vec::new();
+        if !msg.to.is_empty() || !msg.cc.is_empty() || !msg.bcc.is_empty() {
+            let mut tc = TableContext::default();
+            let mut row_idx = 0u32;
+            for (rtype, list) in [(1u32, &msg.to), (2u32, &msg.cc), (3u32, &msg.bcc)] {
+                for addr in list {
+                    let mut props = HashMap::new();
+                    props.insert(PR_RECIPIENT_TYPE, rtype.to_le_bytes().to_vec());
+                    let name_w: Vec<u8> = addr
+                        .name
+                        .encode_utf16()
+                        .chain([0])
+                        .flat_map(|u| u.to_le_bytes())
+                        .collect();
+                    let email_w: Vec<u8> = addr
+                        .email
+                        .encode_utf16()
+                        .chain([0])
+                        .flat_map(|u| u.to_le_bytes())
+                        .collect();
+                    props.insert(PR_DISPLAY_NAME_W, name_w);
+                    props.insert(PR_EMAIL_ADDRESS_W, email_w.clone());
+                    props.insert(PR_SMTP_ADDRESS_W, email_w);
+                    tc.rows.push(TableContextRow {
+                        row_id: row_idx,
+                        properties: props,
+                    });
+                    row_idx += 1;
+                }
+            }
+            let tc_bytes = tc.serialize_compact()?;
+            let tc_bid = self.write_stream_or_block(tc_bytes)?;
+            subnodes.push((NID_RECIPIENT_TABLE, tc_bid, 0));
+        }
+
+        if !msg.attachments.is_empty() {
+            let mut att_tc = TableContext::default();
+            for (idx, att) in msg.attachments.iter().enumerate() {
+                let att_num = idx as u32;
+                let att_nid = ((att_num + 1) << 5) | (NID_TYPE_ATTACHMENT as u32);
+                let mut att_pc = PropertyContext::new();
+                att_pc.add_u32(PR_ATTACH_NUM, att_num);
+                att_pc.add_u32(PR_ATTACH_METHOD, 1); // ATTACH_BY_VALUE
+                att_pc.add_u32(PR_ATTACH_SIZE, att.data.len() as u32);
+                att_pc.add_string_w(PR_ATTACH_FILENAME_W, &att.filename);
+                att_pc.add_string_w(PR_ATTACH_LONG_FILENAME_W, &att.filename);
+                att_pc.add_string_w(PR_ATTACH_MIME_TAG_W, &att.mime_type);
+                if let Some(ref cid) = att.content_id {
+                    att_pc.add_string_w(PR_ATTACH_CONTENT_ID_W, cid);
+                    att_pc.add_u32(PR_ATTACH_FLAGS, 0x04);
+                } else {
+                    att_pc.add_u32(PR_ATTACH_FLAGS, 0);
+                }
+                att_pc.add_binary(PR_ATTACH_DATA_BIN, &att.data);
+                let att_bytes = att_pc.serialize()?;
+                let att_bid = self.write_stream_or_block(att_bytes)?;
+                subnodes.push((att_nid, att_bid, 0));
+
+                let mut row_props = HashMap::new();
+                row_props.insert(PR_ATTACH_NUM, att_num.to_le_bytes().to_vec());
+                row_props.insert(PR_ATTACH_SIZE, (att.data.len() as u32).to_le_bytes().to_vec());
+                let fname_w: Vec<u8> = att
+                    .filename
+                    .encode_utf16()
+                    .chain([0])
+                    .flat_map(|u| u.to_le_bytes())
+                    .collect();
+                row_props.insert(PR_ATTACH_LONG_FILENAME_W, fname_w);
+                att_tc.rows.push(TableContextRow {
+                    row_id: att_num,
+                    properties: row_props,
+                });
+            }
+            let att_tc_bytes = att_tc.serialize_compact()?;
+            let att_tc_bid = self.write_stream_or_block(att_tc_bytes)?;
+            subnodes.push((NID_ATTACHMENT_TABLE, att_tc_bid, 0));
+        }
+
+        let bid_sub = if subnodes.is_empty() {
+            0
+        } else {
+            subnodes.sort_by_key(|s| s.0);
+            let mut slblock = Vec::with_capacity(8 + subnodes.len() * 24);
+            slblock.push(0x02); // bType = SLBLOCK
+            slblock.push(0x00); // cLevel = 0
+            slblock.extend_from_slice(&(subnodes.len() as u16).to_le_bytes());
+            slblock.extend_from_slice(&0u32.to_le_bytes());
+            for (snid, sbid, ssub) in subnodes {
+                slblock.extend_from_slice(&(snid as u64).to_le_bytes());
+                slblock.extend_from_slice(&sbid.to_le_bytes());
+                slblock.extend_from_slice(&ssub.to_le_bytes());
+            }
+            self.write_internal_block(slblock)?
+        };
+
+        self.nbt_entries.push((nid, bid, bid_sub, folder_nid));
         debug!(nid = nid, subject = %msg.subject, "Injected message into PST");
+        Ok(nid)
+    }
+
+    /// Writes a custom `PropertyContext` node (such as `IPM.Contact` or `IPM.DistList`) into `folder_nid`.
+    pub fn add_property_node(&mut self, pc: &PropertyContext, folder_nid: u32) -> io::Result<u32> {
+        let nid = self.alloc_nid_counter;
+        self.alloc_nid_counter += 1;
+        let data = pc.serialize()?;
+        let bid = self.write_stream_or_block(data)?;
+        self.nbt_entries.push((nid, bid, 0, folder_nid));
         Ok(nid)
     }
 
@@ -228,10 +411,10 @@ impl<W: Write + Seek> PstWriter<W> {
         }
         let store_data = store_pc.serialize()?;
         let store_bid = self.write_block(store_data)?;
-        self.nbt_entries.push((NID_MESSAGE_STORE, store_bid, 0));
+        self.nbt_entries.push((NID_MESSAGE_STORE, store_bid, 0, 0));
 
         // 2. Ensure Root Folder (NID_ROOT_FOLDER = 0x122) exists
-        if !self.nbt_entries.iter().any(|(nid, _, _)| *nid == NID_ROOT_FOLDER) {
+        if !self.nbt_entries.iter().any(|(nid, _, _, _)| *nid == NID_ROOT_FOLDER) {
             let mut root_pc = PropertyContext::new();
             root_pc.add_string_w(PR_DISPLAY_NAME_W, "Top of Personal Folders");
             root_pc.add_bool(PR_SUBFOLDERS, true);
@@ -239,7 +422,7 @@ impl<W: Write + Seek> PstWriter<W> {
             root_pc.add_u32(PR_CONTENT_UNREAD, 0);
             let root_data = root_pc.serialize()?;
             let root_bid = self.write_block(root_data)?;
-            self.nbt_entries.push((NID_ROOT_FOLDER, root_bid, 0));
+            self.nbt_entries.push((NID_ROOT_FOLDER, root_bid, 0, 0));
         }
 
         // Align offset to 512-byte page boundary
@@ -260,11 +443,11 @@ impl<W: Write + Seek> PstWriter<W> {
             let page_offset = self.current_offset;
             let mut page = vec![0u8; PST_PAGE_SIZE];
 
-            for (idx, (nid, bid, parent_nid)) in chunk.iter().enumerate() {
+            for (idx, (nid, bid, bid_sub, parent_nid)) in chunk.iter().enumerate() {
                 let base = idx * 32;
                 page[base..base + 8].copy_from_slice(&(*nid as u64).to_le_bytes());
                 page[base + 8..base + 16].copy_from_slice(&bid.to_le_bytes());
-                page[base + 16..base + 24].copy_from_slice(&0u64.to_le_bytes()); // bidSub
+                page[base + 16..base + 24].copy_from_slice(&bid_sub.to_le_bytes());
                 page[base + 24..base + 28].copy_from_slice(&parent_nid.to_le_bytes());
                 page[base + 28..base + 32].copy_from_slice(&0u32.to_le_bytes());
                 // dwPadding

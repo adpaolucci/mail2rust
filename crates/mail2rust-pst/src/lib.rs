@@ -7,17 +7,27 @@ pub mod validator;
 pub mod writer;
 
 pub use ltp::{
-    PR_BODY_HTML_W, PR_BODY_W, PR_DISPLAY_NAME_W, PR_IMPORTANCE, PR_INTERNET_MESSAGE_ID_W, PR_MESSAGE_CLASS_W,
-    PR_MESSAGE_FLAGS, PR_PST_PASSWORD, PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_W, PR_SUBJECT_W,
-    ParsedPropertyContext, PropertyContext,
+    MSGFLAG_FROMME, MSGFLAG_READ, MSGFLAG_UNSENT, PR_ADDRTYPE_W, PR_ATTACH_CONTENT_ID_W, PR_ATTACH_DATA_BIN,
+    PR_ATTACH_FILENAME_W, PR_ATTACH_FLAGS, PR_ATTACH_LONG_FILENAME_W, PR_ATTACH_METHOD, PR_ATTACH_MIME_TAG_W,
+    PR_ATTACH_NUM, PR_ATTACH_SIZE, PR_BODY_HTML_W, PR_BODY_W, PR_BUSINESS_TELEPHONE_NUMBER_W, PR_CLIENT_SUBMIT_TIME,
+    PR_COMPANY_NAME_W, PR_CONTACT_EMAIL1_W, PR_CONTACT_EMAIL2_W, PR_CONTACT_EMAIL3_W, PR_CREATION_TIME,
+    PR_DEPARTMENT_NAME_W, PR_DISPLAY_NAME_W, PR_DISTLIST_MEMBERS, PR_DISTLIST_ONEOFF_MEMBERS, PR_EMAIL_ADDRESS_W,
+    PR_ENTRYID, PR_HASATTACH, PR_HOME_TELEPHONE_NUMBER_W, PR_IMPORTANCE, PR_INTERNET_MESSAGE_ID_W,
+    PR_LAST_MODIFICATION_TIME, PR_MESSAGE_CLASS_W, PR_MESSAGE_DELIVERY_TIME, PR_MESSAGE_FLAGS,
+    PR_MOBILE_TELEPHONE_NUMBER_W, PR_NICK_NAME_W, PR_OFFICE_LOCATION_W, PR_PST_PASSWORD, PR_RECIPIENT_TYPE,
+    PR_SEARCH_KEY, PR_SEND_RICH_INFO, PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_W, PR_SMTP_ADDRESS_W, PR_SUBJECT_W,
+    PR_TITLE_W, ParsedPropertyContext, PropertyContext, TableContext, TableContextRow, datetime_to_filetime,
+    filetime_to_datetime,
 };
 pub use ndb::{
     AMAP_START_OFFSET, Bref, DATA_START_OFFSET, DEPERMUTE_TABLE, MPBB, NDB_CRYPT_CYCLIC, NDB_CRYPT_NONE,
-    NDB_CRYPT_PERMUTE, PERMUTE_TABLE, PMAP_START_OFFSET, PST_HEADER_SIZE, PST_PAGE_SIZE, PST_TRAILER_SIG,
-    PST_UNICODE_MAGIC, PST_UNICODE_VER, PTYPE_AMAP, PTYPE_BBT, PTYPE_NBT, PTYPE_PMAP, PageTrailer, PstEncryption,
-    calculate_partial_header_crc, compute_pst_password_crc, cyclic_crypt, depermute_bytes, permute_bytes,
+    NDB_CRYPT_PERMUTE, NID_ATTACHMENT_TABLE, NID_MESSAGE_STORE, NID_NAME_TO_ID_MAP, NID_RECIPIENT_TABLE,
+    NID_ROOT_FOLDER, NID_TYPE_ATTACHMENT, NID_TYPE_ATTACHMENT_TABLE, NID_TYPE_RECIPIENT_TABLE, PERMUTE_TABLE,
+    PMAP_START_OFFSET, PST_HEADER_SIZE, PST_PAGE_SIZE, PST_TRAILER_SIG, PST_UNICODE_MAGIC, PST_UNICODE_VER, PTYPE_AMAP,
+    PTYPE_BBT, PTYPE_NBT, PTYPE_PMAP, PageTrailer, PstEncryption, calculate_partial_header_crc,
+    compute_pst_password_crc, cyclic_crypt, depermute_bytes, permute_bytes,
 };
-pub use reader::PstReader;
+pub use reader::{NameToIdMap, NbtNode, PstReader, SubnodeEntry};
 pub use validator::{PstValidationReport, PstValidator};
 pub use writer::PstWriter;
 
@@ -248,5 +258,86 @@ mod tests {
             "Confidential acquisition material encrypted with NDB_CRYPT_CYCLIC."
         );
         assert_eq!(messages[0].folder_path, vec!["Confidential".to_string()]);
+    }
+
+    #[test]
+    fn test_pst_attachments_recipients_dates_and_xblock_roundtrip() {
+        use chrono::TimeZone;
+        use mail2rust_core::Attachment;
+
+        let mut buffer = Cursor::new(Vec::new());
+        let sent_at = Utc.with_ymd_and_hms(2026, 9, 15, 11, 22, 33).unwrap();
+        let big_payload = vec![0x5Au8; 16_500]; // > 8192 bytes triggers XBLOCK
+
+        {
+            let mut writer = PstWriter::new(&mut buffer, true).expect("init writer");
+            let inbox_nid = writer.add_folder("Inbox", None).expect("inbox");
+            let sub_nid = writer.add_folder("Project Titan", Some("Inbox")).expect("sub");
+
+            let msg = EmailMessage {
+                id: "att_rt".to_string(),
+                message_id: "<att-rt@titan.corp>".to_string(),
+                conversation_id: "conv_att".to_string(),
+                folder_path: vec!["Inbox".to_string(), "Project Titan".to_string()],
+                subject: "Subnode Attachment & Recipient Test".to_string(),
+                from: EmailAddress::new("Evelyn Vance", "evelyn@titan.corp"),
+                to: vec![EmailAddress::new("Alex Wright", "alex@corp.local")],
+                cc: vec![EmailAddress::new("Audit", "audit@titan.corp")],
+                bcc: vec![],
+                date: sent_at,
+                size_bytes: 20_000,
+                body_text: "See attached PDF and CSV.".to_string(),
+                body_html: None,
+                raw_mime: vec![],
+                attachments: vec![
+                    Attachment::new(
+                        "report.pdf".to_string(),
+                        "application/pdf".to_string(),
+                        big_payload.clone(),
+                        None,
+                    ),
+                    Attachment::new(
+                        "logo.png".to_string(),
+                        "image/png".to_string(),
+                        b"\x89PNG\r\n\x1a\n".to_vec(),
+                        Some("cid:logo@titan.corp".to_string()),
+                    ),
+                ],
+                mapi_properties: vec![],
+                flags: MessageFlags {
+                    read: true,
+                    ..Default::default()
+                },
+                importance: Importance::High,
+                sha256: "s".to_string(),
+                md5: "m".to_string(),
+                bates_number: None,
+                legal_hold: false,
+                source_format: "Test".to_string(),
+            };
+            writer.add_message(&msg, sub_nid).expect("add msg");
+            let _ = inbox_nid;
+            writer.finalize().expect("finalize");
+        }
+
+        let report = PstValidator::validate(&mut buffer).expect("validate");
+        assert!(report.is_valid, "PST errors: {:?}", report.errors);
+
+        let mut reader = PstReader::open(&mut buffer).expect("open reader");
+        let msgs = reader.read_all_messages().expect("read_all_messages");
+        assert_eq!(msgs.len(), 1);
+        let m = &msgs[0];
+        assert_eq!(m.folder_path, vec!["Inbox".to_string(), "Project Titan".to_string()]);
+        assert_eq!(m.date.timestamp(), sent_at.timestamp());
+        assert_eq!(m.to.len(), 1);
+        assert_eq!(m.to[0].email, "alex@corp.local");
+        assert_eq!(m.cc.len(), 1);
+        assert_eq!(m.cc[0].email, "audit@titan.corp");
+        assert_eq!(m.attachments.len(), 2);
+        let pdf = m.attachments.iter().find(|a| a.filename == "report.pdf").unwrap();
+        assert_eq!(pdf.mime_type, "application/pdf");
+        assert_eq!(pdf.data, big_payload);
+        let png = m.attachments.iter().find(|a| a.filename == "logo.png").unwrap();
+        assert_eq!(png.content_id.as_deref(), Some("cid:logo@titan.corp"));
     }
 }
