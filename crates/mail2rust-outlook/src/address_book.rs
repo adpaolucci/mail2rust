@@ -231,7 +231,7 @@ pub fn export_contacts_vcf(contacts: &[ContactRecord]) -> String {
     out
 }
 
-/// `guap-table::TableProvider` for `OutlookAddressBookView` (`mail2rust_outlook_contacts`).
+/// `guap-table::TableProvider` for Outlook contacts & address book (`mail2rust_outlook_contacts`).
 pub struct ContactsTableProvider {
     schema: TableSchema,
     rows: Vec<Row>,

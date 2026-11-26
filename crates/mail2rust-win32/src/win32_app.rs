@@ -949,11 +949,11 @@ impl OutlookPage {
             9,
             230,
             &[
-                "NK2Edit (.nk2 / Stream_Autocomplete)",
-                "OutlookAttachView (PST/OST/MSG/EML)",
-                "OutlookStatView (Correspondent Stats)",
-                "OutlookAddressBookView (Contacts/OAB)",
-                "OfficeIns (Office/Outlook Add-ins)",
+                "AutoComplete (.nk2 / Stream_Autocomplete)",
+                "Attachments (PST/OST/MSG/EML)",
+                "Correspondent Stats (PST/OST/MSG)",
+                "Address Book & Contacts (OAB/VCF)",
+                "Office/Outlook Add-ins (Registry/regf)",
             ],
         );
 

@@ -713,7 +713,7 @@ fn read_ascii_z(bytes: &[u8], pos: &mut usize) -> String {
     s
 }
 
-/// `guap-table::TableProvider` for `NK2Edit` (`mail2rust_nk2_inspect`).
+/// `guap-table::TableProvider` for Outlook AutoComplete (.NK2) (`mail2rust_nk2_inspect`).
 pub struct Nk2TableProvider {
     schema: TableSchema,
     rows: Vec<Row>,
@@ -824,7 +824,7 @@ impl ActionCommand for Nk2InspectCommand {
             "type": "object",
             "properties": {
                 "path": { "type": "string", "description": "Path to .nk2 or Stream_Autocomplete_*.dat file" },
-                "filter": { "type": "string", "description": "Optional GetNir filter expression" },
+                "filter": { "type": "string", "description": "Optional Tabular filter expression" },
                 "limit": { "type": "integer", "minimum": 1 },
                 "offset": { "type": "integer", "minimum": 0 }
             },
@@ -952,7 +952,7 @@ impl ActionCommand for Nk2EditCommand {
 
 pub(crate) fn query_provider_to_json(provider: &dyn TableProvider, args: &Value) -> Result<Value, McpToolError> {
     let filter = match args.get("filter").and_then(Value::as_str) {
-        Some(f) if !f.trim().is_empty() => Some(guap_table::GetNirQuery::parse_filter(f)?),
+        Some(f) if !f.trim().is_empty() => Some(guap_table::GuapQuery::parse_filter(f)?),
         _ => None,
     };
     let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;

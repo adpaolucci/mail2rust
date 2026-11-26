@@ -6,7 +6,7 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Pure-Rust Outlook & Office forensic/admin suite: NK2Edit, OutlookAttachView, OutlookStatView, OutlookAddressBookView, and OfficeIns"
+description = "Pure-Rust Outlook & Office forensic/admin suite: AutoComplete (.NK2), attachment inventory, communication stats, contacts/OAB, and Office add-ins"
 
 [dependencies]
 mail2rust-core.workspace = true

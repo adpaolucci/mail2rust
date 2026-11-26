@@ -278,7 +278,7 @@ fn extract_domain(email: &str) -> String {
         .unwrap_or_default()
 }
 
-/// `guap-table::TableProvider` for `OutlookStatView` (`mail2rust_outlook_stats`).
+/// `guap-table::TableProvider` for Outlook communication stats (`mail2rust_outlook_stats`).
 pub struct StatsTableProvider {
     schema: TableSchema,
     rows: Vec<Row>,

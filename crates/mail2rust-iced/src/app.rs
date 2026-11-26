@@ -443,11 +443,11 @@ impl Mail2RustApp {
             };
             let source_bar = container(
                 row![
-                    tool_btn("NK2Edit", 0),
-                    tool_btn("AttachView", 1),
-                    tool_btn("StatView", 2),
-                    tool_btn("AddressBook", 3),
-                    tool_btn("OfficeIns", 4),
+                    tool_btn("AutoComplete", 0),
+                    tool_btn("Attachments", 1),
+                    tool_btn("Comms Stats", 2),
+                    tool_btn("Contacts", 3),
+                    tool_btn("Office Add-ins", 4),
                     text_input(
                         "Source (.nk2/.pst/.msg/.oab/.vcf or NTUSER.DAT;SOFTWARE)...",
                         &self.state.outlook_source_path

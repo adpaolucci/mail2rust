@@ -87,7 +87,7 @@ mail2rust/
 │   ├── mail2rust-forensics/       # Bates stamping, SHA-256/MD5 hashing, legal hold, and audit manifests
 │   ├── mail2rust-sync/            # Incremental delta sync engine & checkpoint persistence
 │   ├── mail2rust-imap/            # Pure-Rust direct IMAP/TLS client, live mailbox streaming, folder discovery
-│   ├── mail2rust-outlook/         # Pure-Rust NK2Edit, OutlookAttachView, OutlookStatView, OutlookAddressBookView & OfficeIns (with regf + OLE2)
+│   ├── mail2rust-outlook/         # Pure-Rust Outlook AutoComplete (.NK2), attachment/stats/contacts & Office add-in tools (with regf + OLE2)
 │   ├── mail2rust-mcp/             # Model Context Protocol (MCP) server (15 tools, PolicyMode gates via guap-mcp)
 │   ├── mail2rust-cli/             # Unified command-line interface binary (`mail2rust`)
 │   ├── mail2rust-win32/           # Zero-GPU native Win32 studio built on WinSafe (`winsafe 0.0.29`) + guap-gui-win32
@@ -486,16 +486,16 @@ Because Proton Mail enforces client-side zero-access encryption (OpenPGP), direc
 ### 16. Outlook AutoComplete (`.NK2`), Attachments, Comms Stats, Contacts & Office Add-Ins (`mail2rust-outlook`)
 Powered by `guap-kit` (`guap-table`, `guap-export`, `guap-mcp`), `mail2rust` provides 5 Outlook & Office forensic/diagnostic tools:
 ```bash
-# NK2Edit: inspect or policy-gated edit Outlook .NK2 / Stream_Autocomplete_*.dat files
+# Outlook AutoComplete: inspect or policy-gated edit Outlook .NK2 / Stream_Autocomplete_*.dat files
 mail2rust nk2 inspect outlook.NK2 --format json --export nk2.csv
 mail2rust nk2 edit outlook.NK2 --dedup --dry-run
 
-# OutlookAttachView, OutlookStatView & OutlookAddressBookView
+# Outlook Attachments, Communication Stats & Address Book / Contacts
 mail2rust outlook attach sample.msg --format json
 mail2rust outlook stats archive.pst --format csv --export stats.csv
 mail2rust outlook contacts outlook.NK2 --format markdown
 
-# OfficeIns: inspect live Registry or offline NTUSER.DAT/SOFTWARE regf hives
+# Office Add-ins: inspect live Registry or offline NTUSER.DAT/SOFTWARE regf hives
 mail2rust office addins list --hive NTUSER.DAT --format json
 ```
 

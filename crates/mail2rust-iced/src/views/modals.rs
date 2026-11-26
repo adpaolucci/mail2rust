@@ -916,7 +916,7 @@ fn view_confirm_outlook_mutate(state: &AppState) -> Element<'_, Message> {
             .unwrap_or_else(|| "(none selected)".to_string());
         format!("Toggle LoadBehavior for Office add-in '{prog_id}' in live Windows Registry?")
     } else {
-        "Select NK2Edit (dedup & save) or OfficeIns (toggle selected add-in) to perform a mutating action.".to_string()
+        "Select AutoComplete (.NK2 dedup & save) or Office Add-ins (toggle selected add-in) to perform a mutating action.".to_string()
     };
 
     column![

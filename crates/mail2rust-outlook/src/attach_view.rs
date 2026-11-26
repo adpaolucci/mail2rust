@@ -300,7 +300,7 @@ pub fn strip_attachments_from_source(
     }
 }
 
-/// `guap-table::TableProvider` for `OutlookAttachView` (`mail2rust_outlook_attach`).
+/// `guap-table::TableProvider` for Outlook attachment inventory (`mail2rust_outlook_attach`).
 pub struct AttachTableProvider {
     schema: TableSchema,
     rows: Vec<Row>,

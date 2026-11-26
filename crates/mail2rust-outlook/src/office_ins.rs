@@ -741,7 +741,7 @@ pub fn default_appdata_microsoft_dir() -> Option<PathBuf> {
     std::env::var_os("APPDATA").map(|p| PathBuf::from(p).join("Microsoft"))
 }
 
-/// `guap-table::TableProvider` for `OfficeIns` (`mail2rust_office_addins`).
+/// `guap-table::TableProvider` for Office & Outlook add-ins (`mail2rust_office_addins`).
 pub struct OfficeAddinsTableProvider {
     schema: TableSchema,
     rows: Vec<Row>,
@@ -752,7 +752,7 @@ impl OfficeAddinsTableProvider {
     pub fn from_report(report: OfficeScanReport) -> Self {
         let schema = TableSchema::new(
             "mail2rust_office_addins",
-            "Microsoft Office & Outlook Add-ins (OfficeIns)",
+            "Microsoft Office & Outlook Add-ins",
             vec![
                 ColumnDef::new("office_app", "Office App", ColumnType::Text).with_width_hint(95),
                 ColumnDef::new("addin_name", "Add-in Name", ColumnType::Text).with_width_hint(190),

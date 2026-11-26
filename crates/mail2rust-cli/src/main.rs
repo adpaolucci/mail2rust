@@ -2410,7 +2410,7 @@ fn render_and_export_table(
     format_str: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let filter = match filter_expr {
-        Some(f) if !f.trim().is_empty() => Some(guap_table::GetNirQuery::parse_filter(f)?),
+        Some(f) if !f.trim().is_empty() => Some(guap_table::GuapQuery::parse_filter(f)?),
         _ => None,
     };
     let data = provider.query(&guap_table::TableQuery {

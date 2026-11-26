@@ -1333,7 +1333,7 @@ mod tests {
         assert!(exp_msg.contains("Exported 2 rows"));
         assert!(csv_out.exists());
 
-        // Also test OfficeIns offline regf hives via `;`-separated path
+        // Also test Office Add-ins offline regf hives via `;`-separated path
         let hives_str = format!("{};{}", fx.ntuser_dat_path.display(), fx.software_hive_path.display());
         st.load_outlook_tool(4, &hives_str).unwrap();
         assert!(st.outlook_grid.row_count() >= 2);
