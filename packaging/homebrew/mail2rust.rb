@@ -1,6 +1,6 @@
 class Mail2rust < Formula
   desc "Pure-Rust Iced GUI, CLI, [MS-PST] container engine, and MCP server for mailbox migration and eDiscovery"
-  homepage "https://mail2rust.guap.ca"
+  homepage "https://guap.ca/mail2rust/"
   version "3.5.0"
   license "Apache-2.0"
 

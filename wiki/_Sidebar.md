@@ -35,6 +35,6 @@
 
 ### Project Links
 - [Main Repository](https://github.com/adpaolucci/mail2rust)
-- [Project Hub (`guap.ca`)](https://mail2rust.guap.ca)
+- [Project Hub (`guap.ca`)](https://guap.ca/mail2rust/)
 - [Releases & Checksums](https://github.com/adpaolucci/mail2rust/releases)
 - [Security Advisories](https://github.com/adpaolucci/mail2rust/security)

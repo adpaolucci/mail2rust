@@ -3,7 +3,7 @@
 Welcome to the official documentation hub for **`mail2rust` (`v3.5.0`)** — a **100% pure-Rust `[MS-PST]` container engine, universal mailbox migration suite, forensic eDiscovery toolkit, dual desktop studio (`WinSafe Win32` + `Iced 0.14`), CLI orchestrator, and Model Context Protocol (MCP) server**.
 
 - **Repository:** <https://github.com/adpaolucci/mail2rust>
-- **Ecosystem Hub:** <https://mail2rust.guap.ca> (part of the GUAP ecosystem)
+- **Ecosystem Hub:** <https://guap.ca/mail2rust/> (part of the GUAP ecosystem)
 - **Current Version:** `3.5.0` (`Rust 2024 Edition`, requires Rust `1.88+`)
 - **License:** Apache-2.0
 

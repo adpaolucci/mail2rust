@@ -1,6 +1,6 @@
 # `mail2rust` — Universal High-Fidelity Email & Mailbox Migration Suite in Pure Rust
 
-Part of the **GUAP** Ecosystem (`guap.ca`) • [**Project Hub & Web Documentation: https://mail2rust.guap.ca**](https://mail2rust.guap.ca) • [**Project Wiki**](https://github.com/adpaolucci/mail2rust/wiki)
+Part of the **GUAP** Ecosystem (`guap.ca`) • [**Project Hub & Web Documentation: https://guap.ca/mail2rust/**](https://guap.ca/mail2rust/) • [**Project Wiki**](https://github.com/adpaolucci/mail2rust/wiki)
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/adpaolucci/mail2rust/actions/workflows/ci.yml/badge.svg)](https://github.com/adpaolucci/mail2rust/actions/workflows/ci.yml)

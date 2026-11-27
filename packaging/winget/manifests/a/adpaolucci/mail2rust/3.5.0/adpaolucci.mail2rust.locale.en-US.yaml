@@ -7,7 +7,7 @@ Publisher: adpaolucci
 PublisherUrl: https://github.com/adpaolucci
 PublisherSupportUrl: https://github.com/adpaolucci/mail2rust/issues
 PackageName: Mail2Rust
-PackageUrl: https://mail2rust.guap.ca
+PackageUrl: https://guap.ca/mail2rust/
 License: Apache-2.0
 LicenseUrl: https://github.com/adpaolucci/mail2rust/blob/main/LICENSE
 Copyright: Copyright (c) 2026 adpaolucci
@@ -32,6 +32,6 @@ Tags:
 ReleaseNotesUrl: https://github.com/adpaolucci/mail2rust/releases/tag/v3.5.0
 Documentations:
   - DocumentLabel: Project Hub & Documentation
-    DocumentUrl: https://mail2rust.guap.ca
+    DocumentUrl: https://guap.ca/mail2rust/
 ManifestType: defaultLocale
 ManifestVersion: 1.9.0
