@@ -3,7 +3,7 @@
   "version": "3.5.0",
   "description": "Universal offline email and mailbox migration suite in pure Rust with zero-Outlook PST generation, forensic eDiscovery, dual Win32/Iced desktop GUIs, and stdio MCP server.",
   "repository": "https://github.com/adpaolucci/mail2rust",
-  "homepage": "https://mail2rust.guap.ca",
+  "homepage": "https://guap.ca/mail2rust/",
   "license": "Apache-2.0",
   "binaries": [
     "mail2rust",
@@ -19,5 +19,83 @@
     "Forensic Bates stamping, SHA-256 Merkle roots & eDiscovery regex search",
     "Native Win32 (WinSafe) & Iced 0.14 dual GUIs",
     "15-tool MCP JSON-RPC stdio server with read-only/mutating policy gates"
+  ],
+  "mcp_tools_count": 15,
+  "tools": [
+    {
+      "id": "mail2rust_sniff",
+      "readOnly": true,
+      "summary": "Inspect magic bytes and identify mailbox format (PST, OST, MBOX, EML, EMLX, MSG, OLM, Maildir)."
+    },
+    {
+      "id": "mail2rust_validate_pst",
+      "readOnly": true,
+      "summary": "Validate 64-bit Unicode MS-PST binary integrity, CRC-32 header, and B-Trees without Outlook."
+    },
+    {
+      "id": "mail2rust_convert",
+      "readOnly": false,
+      "summary": "Convert mailbox between formats (e.g. MBOX to PST, PST to EML tree, EML to PST, Maildir to PST)."
+    },
+    {
+      "id": "mail2rust_audit",
+      "readOnly": true,
+      "summary": "Perform forensic audit on mailbox: compute SHA-256 hashes, Bates stamping, and chain of custody."
+    },
+    {
+      "id": "mail2rust_split",
+      "readOnly": false,
+      "summary": "Split oversized mailbox (e.g. >20GB or >50GB) into chunked volume archives preserving folder hierarchies."
+    },
+    {
+      "id": "mail2rust_merge",
+      "readOnly": false,
+      "summary": "Merge multiple disparate mailbox archives into a unified container with cross-archive deduplication."
+    },
+    {
+      "id": "mail2rust_nk2_edit",
+      "readOnly": false,
+      "summary": "Edit an Outlook .NK2 / Stream_Autocomplete_*.dat file (add/remove/update weight/dedup/merge) with atomic save."
+    },
+    {
+      "id": "mail2rust_nk2_inspect",
+      "readOnly": true,
+      "summary": "Parse and inspect an Outlook .NK2 or Stream_Autocomplete_*.dat file (read-only)."
+    },
+    {
+      "id": "mail2rust_office_addins",
+      "readOnly": true,
+      "summary": "List Microsoft Office & Outlook add-ins from live Windows Registry or offline NTUSER.DAT/SOFTWARE regf hives (read-only)."
+    },
+    {
+      "id": "mail2rust_office_addins_toggle",
+      "readOnly": false,
+      "summary": "Enable or disable an Office/Outlook add-in LoadBehavior in live Windows Registry (mutating; requires AllowMutating + confirm_destructive=true)."
+    },
+    {
+      "id": "mail2rust_outlook_attach",
+      "readOnly": true,
+      "summary": "List attachments in a PST, OST, MSG, MBOX, or EML source (read-only)."
+    },
+    {
+      "id": "mail2rust_outlook_attach_extract",
+      "readOnly": true,
+      "summary": "Bulk extract filtered attachments from PST/OST/MSG/MBOX/EML into a destination directory with SHA-256 custody manifest (read-only on source)."
+    },
+    {
+      "id": "mail2rust_outlook_attach_strip",
+      "readOnly": false,
+      "summary": "Strip matching attachments from a PST/OST/MSG container (mutating; requires AllowMutating + confirm_destructive=true)."
+    },
+    {
+      "id": "mail2rust_outlook_contacts",
+      "readOnly": true,
+      "summary": "Read and decode Outlook contacts and distribution lists from PST/OST, OAB, NK2, or vCard (read-only)."
+    },
+    {
+      "id": "mail2rust_outlook_stats",
+      "readOnly": true,
+      "summary": "Aggregate PST/OST/MSG/MBOX/EML communication statistics by correspondent, domain, folder, or month (read-only)."
+    }
   ]
 }
