@@ -29,6 +29,9 @@ jobs:
     steps:
     - uses: actions/checkout@v7
 
+    - name: Checkout shared guap-kit workspace
+      run: git clone --depth 1 https://github.com/adpaolucci/guap-kit.git ../guap-kit
+
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
       with:
@@ -61,7 +64,7 @@ jobs:
 
     - name: Check Formatting
       if: runner.os == 'Linux'
-      run: cargo fmt --all -- --check
+      run: cargo fmt --check
 
     - name: Clippy Linter
       run: cargo clippy --workspace --all-targets -- -D warnings
@@ -78,6 +81,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
-    - uses: EmbarkStudios/cargo-deny-action@v2
-      with:
-        command: check advisories licenses sources
+
+    - name: Checkout shared guap-kit workspace
+      run: git clone --depth 1 https://github.com/adpaolucci/guap-kit.git ../guap-kit
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-deny
+      uses: taiki-e/install-action@cargo-deny
+
+    - name: Audit advisories, licenses, and sources
+      run: cargo deny check advisories licenses sources
