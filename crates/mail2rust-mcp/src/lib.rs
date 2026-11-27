@@ -712,11 +712,41 @@ pub fn handle_jsonrpc_request_with_policy(req: &Value, policy: PolicyMode) -> Op
         }),
 
         "tools/call" => {
-            let params = req.get("params").unwrap_or(&Value::Null);
-            let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
-            let arguments = params.get("arguments").unwrap_or(&Value::Null);
+            let Some(params) = req.get("params").and_then(Value::as_object) else {
+                return id.map(|req_id| {
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": { "code": -32602, "message": "Invalid params: params must be a JSON object" }
+                    })
+                });
+            };
+            let Some(tool_name) = params.get("name").and_then(Value::as_str).filter(|s| !s.is_empty()) else {
+                return id.map(|req_id| {
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": { "code": -32602, "message": "Invalid params: missing tool 'name'" }
+                    })
+                });
+            };
 
             if is_legacy_tool(tool_name) {
+                let raw_args = params.get("arguments");
+                if let Some(a) = raw_args
+                    && !a.is_object()
+                    && !a.is_null()
+                {
+                    return id.map(|req_id| {
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": req_id,
+                            "error": { "code": -32602, "message": "Invalid params: arguments must be a JSON object" }
+                        })
+                    });
+                }
+                let default_args = json!({});
+                let arguments = raw_args.unwrap_or(&default_args);
                 let res = call_tool(tool_name, arguments);
                 id.map(|req_id| match res {
                     Ok(val) => {
@@ -1084,5 +1114,29 @@ mod tests {
         let rpc_resp = handle_jsonrpc_request(&jsonrpc_req).expect("Response expected");
         assert_eq!(rpc_resp["id"], 100);
         assert_eq!(rpc_resp["result"]["isError"], false);
+
+        let bad_args = handle_jsonrpc_request(&json!({
+            "jsonrpc": "2.0",
+            "id": 101,
+            "method": "tools/call",
+            "params": {
+                "name": "mail2rust_sniff",
+                "arguments": "not_object"
+            }
+        }))
+        .expect("Response expected");
+        assert_eq!(bad_args["error"]["code"], -32602);
+
+        let unknown_tool = handle_jsonrpc_request(&json!({
+            "jsonrpc": "2.0",
+            "id": 102,
+            "method": "tools/call",
+            "params": {
+                "name": "__nonexistent_mail2rust_tool",
+                "arguments": {}
+            }
+        }))
+        .expect("Response expected");
+        assert_eq!(unknown_tool["error"]["code"], -32601);
     }
 }
