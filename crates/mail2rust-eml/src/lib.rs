@@ -252,9 +252,24 @@ impl EmlExporter {
         writeln!(writer, "Date: {}", msg.date.to_rfc2822())?;
         writeln!(writer, "Message-ID: {}", msg.message_id)?;
         writeln!(writer, "MIME-Version: 1.0")?;
-        writeln!(writer, "Content-Type: text/plain; charset=utf-8")?;
-        writeln!(writer)?;
-        write!(writer, "{}", msg.body_text)?;
+        if let Some(ref html) = msg.body_html {
+            const BOUNDARY: &str = "mail2rust-alternative";
+            writeln!(writer, "Content-Type: multipart/alternative; boundary=\"{}\"", BOUNDARY)?;
+            writeln!(writer)?;
+            writeln!(writer, "--{}", BOUNDARY)?;
+            writeln!(writer, "Content-Type: text/plain; charset=utf-8")?;
+            writeln!(writer)?;
+            writeln!(writer, "{}", msg.body_text)?;
+            writeln!(writer, "--{}", BOUNDARY)?;
+            writeln!(writer, "Content-Type: text/html; charset=utf-8")?;
+            writeln!(writer)?;
+            writeln!(writer, "{}", html)?;
+            writeln!(writer, "--{}--", BOUNDARY)?;
+        } else {
+            writeln!(writer, "Content-Type: text/plain; charset=utf-8")?;
+            writeln!(writer)?;
+            write!(writer, "{}", msg.body_text)?;
+        }
         Ok(())
     }
 }

@@ -6,7 +6,7 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Pure Rust MS-PST generator and validator conforming to MS-PST specifications without Outlook"
+description = "Pure Rust PST generator, reader and structural validator with partial MS-PST layout conformance (interoperability in progress)"
 
 [dependencies]
 mail2rust-core.workspace = true

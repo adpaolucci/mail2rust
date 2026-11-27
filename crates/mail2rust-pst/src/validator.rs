@@ -1,6 +1,6 @@
 use crate::ndb::{
-    AMAP_START_OFFSET, PST_CLIENT_MAGIC, PST_HEADER_SIZE, PST_PAGE_SIZE, PST_TRAILER_SIG, PST_UNICODE_MAGIC,
-    PST_UNICODE_VER, PTYPE_AMAP, PTYPE_BBT, PTYPE_NBT, PageTrailer, calculate_partial_header_crc,
+    AMAP_START_OFFSET, PST_CLIENT_MAGIC, PST_HEADER_SIZE, PST_PAGE_SIZE, PST_UNICODE_VER, PTYPE_AMAP, PTYPE_BBT,
+    PTYPE_NBT, PageTrailer, calculate_partial_header_crc,
 };
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,6 @@ impl PstValidator {
         let magic_val = (&header[0x00..0x04]).read_u32::<BigEndian>()?;
         let magic_str = match magic_val {
             0x2142444E => "0x2142444E (!BDN Standard/Unicode)".to_string(),
-            PST_UNICODE_MAGIC => "0x4E44424E (!BDN Legacy Variant)".to_string(),
             0x2142444F => "0x2142444F (!BDO Offline OST)".to_string(),
             other => {
                 errors.push(format!("Invalid PST magic signature: 0x{:08X}", other));
@@ -52,7 +51,7 @@ impl PstValidator {
         let client_magic = (&header[0x08..0x0A]).read_u16::<LittleEndian>()?;
         if client_magic != PST_CLIENT_MAGIC {
             errors.push(format!(
-                "Invalid Client Magic: 0x{:04X} (expected 0x534D 'SM')",
+                "Invalid Client Magic: 0x{:04X} (expected 0x4D53 'SM')",
                 client_magic
             ));
         }
@@ -62,6 +61,8 @@ impl PstValidator {
         if version != PST_UNICODE_VER && version != 14 && version != 15 {
             errors.push(format!("Unsupported PST format version: {}", version));
         }
+
+        let is_ansi = version <= 15 && magic_val == 0x2142444E;
 
         // 4. CRC32 Partial Checksum Verification
         let declared_crc = (&header[0x04..0x08]).read_u32::<LittleEndian>()?;
@@ -74,8 +75,17 @@ impl PstValidator {
             ));
         }
 
-        // 5. Encryption Method
-        let crypt_method = header[0x1CD];
+        // 5. Encryption Method (spec position 0x201, legacy 0x1CD)
+        let crypt_method = if is_ansi {
+            header[0x1CD]
+        } else {
+            let c = header[0x201];
+            if c == 0x00 || c == 0x01 || c == 0x02 {
+                c
+            } else {
+                header[0x1CD]
+            }
+        };
         let encryption_method = match crypt_method {
             0x00 => "None (NDB_CRYPT_NONE)".to_string(),
             0x01 => "Compressible (NDB_CRYPT_PERMUTE)".to_string(),
@@ -83,71 +93,83 @@ impl PstValidator {
             other => format!("Unknown (0x{:02X})", other),
         };
 
-        // 6. Root BREF pointers
-        let nbt_bid_u = (&header[0xDC..0xE4]).read_u64::<LittleEndian>()?;
-        let nbt_off_u = (&header[0xE4..0xEC]).read_u64::<LittleEndian>()?;
-        let (nbt_root_bid, nbt_root_offset) = if nbt_bid_u > 0 && nbt_off_u > 0 && nbt_off_u < file_len {
-            (nbt_bid_u, nbt_off_u)
+        // 6. Root BREF pointers. ANSI uses 32-bit fields at 0xB8/0xBC and 0xC0/0xC4.
+        let (nbt_root_bid, nbt_root_offset, bbt_root_bid, bbt_root_offset) = if is_ansi {
+            let read32 = |off: usize| -> u64 { u32::from_le_bytes(header[off..off + 4].try_into().unwrap()) as u64 };
+            (read32(0xB8), read32(0xBC), read32(0xC0), read32(0xC4))
         } else {
-            let b = (&header[0xB4..0xBC]).read_u64::<LittleEndian>()?;
-            let o = (&header[0xBC..0xC4]).read_u64::<LittleEndian>()?;
-            (b, o)
-        };
+            let nbt_bid_u = (&header[0xD8..0xE0]).read_u64::<LittleEndian>()?;
+            let nbt_off_u = (&header[0xE0..0xE8]).read_u64::<LittleEndian>()?;
+            let (nbt_root_bid, nbt_root_offset) = if nbt_bid_u > 0 && nbt_off_u > 0 && nbt_off_u < file_len {
+                (nbt_bid_u, nbt_off_u)
+            } else {
+                let nbt_bid_u2 = (&header[0xDC..0xE4]).read_u64::<LittleEndian>()?;
+                let nbt_off_u2 = (&header[0xE4..0xEC]).read_u64::<LittleEndian>()?;
+                if nbt_bid_u2 > 0 && nbt_off_u2 > 0 && nbt_off_u2 < file_len {
+                    (nbt_bid_u2, nbt_off_u2)
+                } else {
+                    let b = (&header[0xB4..0xBC]).read_u64::<LittleEndian>()?;
+                    let o = (&header[0xBC..0xC4]).read_u64::<LittleEndian>()?;
+                    (b, o)
+                }
+            };
 
-        let bbt_bid_u = (&header[0xEC..0xF4]).read_u64::<LittleEndian>()?;
-        let bbt_off_u = (&header[0xF4..0xFC]).read_u64::<LittleEndian>()?;
-        let (bbt_root_bid, bbt_root_offset) = if bbt_bid_u > 0 && bbt_off_u > 0 && bbt_off_u < file_len {
-            (bbt_bid_u, bbt_off_u)
-        } else {
-            let b = (&header[0xC4..0xCC]).read_u64::<LittleEndian>()?;
-            let o = (&header[0xCC..0xD4]).read_u64::<LittleEndian>()?;
-            (b, o)
+            let bbt_bid_u = (&header[0xE8..0xF0]).read_u64::<LittleEndian>()?;
+            let bbt_off_u = (&header[0xF0..0xF8]).read_u64::<LittleEndian>()?;
+            let (bbt_root_bid, bbt_root_offset) = if bbt_bid_u > 0 && bbt_off_u > 0 && bbt_off_u < file_len {
+                (bbt_bid_u, bbt_off_u)
+            } else {
+                let bbt_bid_u2 = (&header[0xEC..0xF4]).read_u64::<LittleEndian>()?;
+                let bbt_off_u2 = (&header[0xF4..0xFC]).read_u64::<LittleEndian>()?;
+                if bbt_bid_u2 > 0 && bbt_off_u2 > 0 && bbt_off_u2 < file_len {
+                    (bbt_bid_u2, bbt_off_u2)
+                } else {
+                    let b = (&header[0xC4..0xCC]).read_u64::<LittleEndian>()?;
+                    let o = (&header[0xCC..0xD4]).read_u64::<LittleEndian>()?;
+                    (b, o)
+                }
+            };
+            (nbt_root_bid, nbt_root_offset, bbt_root_bid, bbt_root_offset)
         };
 
         // 7. Structural B-Tree Page Verification (MS-PST BTPAGE + PAGETRAILER)
-        if bbt_root_offset > 0
+        if !is_ansi
+            && bbt_root_offset > 0
             && bbt_root_offset + PST_PAGE_SIZE as u64 <= file_len
             && reader.seek(SeekFrom::Start(bbt_root_offset)).is_ok()
         {
             let mut page = [0u8; PST_PAGE_SIZE];
-            if reader.read_exact(&mut page).is_ok() {
-                let w_sig = u16::from_le_bytes([page[498], page[499]]);
-                if w_sig == PST_TRAILER_SIG && !PageTrailer::verify(&page, PTYPE_BBT) {
-                    errors.push("Root BBT page CRC32 or PAGETRAILER verification failed".to_string());
-                }
+            if reader.read_exact(&mut page).is_ok() && !PageTrailer::verify(&page, PTYPE_BBT) {
+                errors.push("Root BBT page CRC32 or PAGETRAILER verification failed".to_string());
             }
         }
 
-        if nbt_root_offset > 0
+        if !is_ansi
+            && nbt_root_offset > 0
             && nbt_root_offset + PST_PAGE_SIZE as u64 <= file_len
             && reader.seek(SeekFrom::Start(nbt_root_offset)).is_ok()
         {
             let mut page = [0u8; PST_PAGE_SIZE];
-            if reader.read_exact(&mut page).is_ok() {
-                let w_sig = u16::from_le_bytes([page[498], page[499]]);
-                if w_sig == PST_TRAILER_SIG && !PageTrailer::verify(&page, PTYPE_NBT) {
-                    errors.push("Root NBT page CRC32 or PAGETRAILER verification failed".to_string());
-                }
+            if reader.read_exact(&mut page).is_ok() && !PageTrailer::verify(&page, PTYPE_NBT) {
+                errors.push("Root NBT page CRC32 or PAGETRAILER verification failed".to_string());
             }
         }
 
         // 8. Allocation Map (AMap) Verification at 0x4400
-        if file_len >= AMAP_START_OFFSET + PST_PAGE_SIZE as u64
+        if !is_ansi
+            && file_len >= AMAP_START_OFFSET + PST_PAGE_SIZE as u64
             && reader.seek(SeekFrom::Start(AMAP_START_OFFSET)).is_ok()
         {
             let mut page = [0u8; PST_PAGE_SIZE];
-            if reader.read_exact(&mut page).is_ok() {
-                let w_sig = u16::from_le_bytes([page[498], page[499]]);
-                if w_sig == PST_TRAILER_SIG && !PageTrailer::verify(&page, PTYPE_AMAP) {
-                    errors.push("Initial AMap page (0x4400) CRC32 verification failed".to_string());
-                }
+            if reader.read_exact(&mut page).is_ok() && !PageTrailer::verify(&page, PTYPE_AMAP) {
+                errors.push("Initial AMap page (0x4400) CRC32 verification failed".to_string());
             }
         }
 
         let is_valid = errors.is_empty();
 
         if is_valid {
-            info!("MS-PST validation succeeded with 100% specification compliance");
+            info!("MS-PST validation: no specification violations detected in the checks performed");
         } else {
             error!(errors = ?errors, "MS-PST validation encountered errors");
         }

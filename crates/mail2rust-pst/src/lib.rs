@@ -2,6 +2,7 @@
 
 pub mod ltp;
 pub mod ndb;
+pub mod preserve;
 pub mod reader;
 pub mod validator;
 pub mod writer;
@@ -25,7 +26,7 @@ pub use ndb::{
     NID_ROOT_FOLDER, NID_TYPE_ATTACHMENT, NID_TYPE_ATTACHMENT_TABLE, NID_TYPE_RECIPIENT_TABLE, PERMUTE_TABLE,
     PMAP_START_OFFSET, PST_HEADER_SIZE, PST_PAGE_SIZE, PST_TRAILER_SIG, PST_UNICODE_MAGIC, PST_UNICODE_VER, PTYPE_AMAP,
     PTYPE_BBT, PTYPE_NBT, PTYPE_PMAP, PageTrailer, PstEncryption, calculate_partial_header_crc,
-    compute_pst_password_crc, cyclic_crypt, depermute_bytes, permute_bytes,
+    compute_pst_password_crc, cyclic_crypt, depermute_bytes, permute_bytes, weak_crc32,
 };
 pub use reader::{NameToIdMap, NbtNode, PstReader, SubnodeEntry};
 pub use validator::{PstValidationReport, PstValidator};
@@ -34,9 +35,15 @@ pub use writer::PstWriter;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-    use mail2rust_core::{EmailAddress, EmailMessage, Importance, MessageFlags};
+    use chrono::{TimeZone, Utc};
+    use mail2rust_core::{Attachment, EmailAddress, EmailMessage, Importance, MessageFlags};
     use std::io::Cursor;
+
+    #[test]
+    fn test_weak_crc32_vector() {
+        assert_eq!(weak_crc32(b""), 0);
+        assert_eq!(weak_crc32(b"abc"), 0xca6598d0);
+    }
 
     #[test]
     fn test_permute_depermute_roundtrip() {
@@ -339,5 +346,115 @@ mod tests {
         assert_eq!(pdf.data, big_payload);
         let png = m.attachments.iter().find(|a| a.filename == "logo.png").unwrap();
         assert_eq!(png.content_id.as_deref(), Some("cid:logo@titan.corp"));
+    }
+
+    #[test]
+    fn test_pst_roundtrip_preserves_large_attachment() {
+        let payload: Vec<u8> = (0..10_000).map(|i| (i % 251) as u8).collect();
+        let msg = EmailMessage {
+            id: "large".to_string(),
+            message_id: "<large@example.com>".to_string(),
+            conversation_id: "large".to_string(),
+            folder_path: vec!["Inbox".to_string()],
+            subject: "Large attachment".to_string(),
+            from: EmailAddress::new("Alice", "alice@example.com"),
+            to: vec![EmailAddress::new("Bob", "bob@example.com")],
+            cc: Vec::new(),
+            bcc: Vec::new(),
+            date: Utc::now(),
+            size_bytes: payload.len(),
+            body_text: "body".to_string(),
+            body_html: None,
+            raw_mime: Vec::new(),
+            attachments: vec![Attachment::new(
+                "big.bin".to_string(),
+                "application/octet-stream".to_string(),
+                payload.clone(),
+                None,
+            )],
+            mapi_properties: Vec::new(),
+            flags: MessageFlags::default(),
+            importance: Importance::Normal,
+            sha256: String::new(),
+            md5: String::new(),
+            bates_number: None,
+            legal_hold: false,
+            source_format: "EML".to_string(),
+        };
+
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut writer = PstWriter::new(&mut buffer, true).unwrap();
+            let inbox = writer.add_folder("Inbox", None).unwrap();
+            writer.add_message(&msg, inbox).unwrap();
+            writer.finalize().unwrap();
+        }
+        let mut reader = PstReader::open(&mut buffer).unwrap();
+        let messages = reader.read_all_messages().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].attachments[0].data, payload);
+    }
+
+    #[test]
+    fn test_pst_roundtrip_preserves_recipients_date_and_attachments() {
+        let original_date = Utc.timestamp_opt(1_577_836_496, 0).single().unwrap();
+        let att = Attachment::new(
+            "payload.bin".to_string(),
+            "application/octet-stream".to_string(),
+            b"ABCDEFGH".to_vec(),
+            None,
+        );
+        let msg = EmailMessage {
+            id: "rt_full".to_string(),
+            message_id: "<rt-full@example.com>".to_string(),
+            conversation_id: "conv_full".to_string(),
+            folder_path: vec!["Inbox".to_string()],
+            subject: "Attachment and date test".to_string(),
+            from: EmailAddress::new("Alice", "alice@example.com"),
+            to: vec![
+                EmailAddress::new("Bob", "bob@example.com"),
+                EmailAddress::new("Carol", "carol@example.com"),
+            ],
+            cc: vec![EmailAddress::new("Dave", "dave@example.com")],
+            bcc: vec![EmailAddress::new("Eve", "eve@example.com")],
+            date: original_date,
+            size_bytes: 8,
+            body_text: "Hello body.".to_string(),
+            body_html: None,
+            raw_mime: b"From: alice@example.com\r\n\r\nHello body.".to_vec(),
+            attachments: vec![att],
+            mapi_properties: Vec::new(),
+            flags: MessageFlags::default(),
+            importance: Importance::Normal,
+            sha256: "sha".to_string(),
+            md5: "md5".to_string(),
+            bates_number: Some("B-0001".to_string()),
+            legal_hold: true,
+            source_format: "EML".to_string(),
+        };
+
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut writer = PstWriter::new(&mut buffer, true).unwrap();
+            let inbox = writer.add_folder("Inbox", None).unwrap();
+            writer.add_message(&msg, inbox).unwrap();
+            writer.finalize().unwrap();
+        }
+
+        let mut reader = PstReader::open(&mut buffer).unwrap();
+        let messages = reader.read_all_messages().unwrap();
+        assert_eq!(messages.len(), 1);
+        let out = &messages[0];
+        assert_eq!(out.subject, msg.subject);
+        assert_eq!(out.to, msg.to);
+        assert_eq!(out.cc, msg.cc);
+        assert_eq!(out.bcc, msg.bcc);
+        assert_eq!(out.date, original_date);
+        assert_eq!(out.raw_mime, msg.raw_mime);
+        assert_eq!(out.attachments.len(), 1);
+        assert_eq!(out.attachments[0].filename, "payload.bin");
+        assert_eq!(out.attachments[0].data, b"ABCDEFGH");
+        assert_eq!(out.bates_number, Some("B-0001".to_string()));
+        assert!(out.legal_hold);
     }
 }

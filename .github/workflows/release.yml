@@ -175,6 +175,13 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      - name: Fill Packaging Manifest Hashes
+        run: |
+          TAG="${{ steps.get_tag.outputs.tag }}"
+          VERSION="${TAG#v}"
+          python3 scripts/packaging_hashes.py --repo mail2rust --version "$VERSION" --assets-dir dist
+          zip -r dist/packaging-manifests-ready.zip packaging
+
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v3
         with:

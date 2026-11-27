@@ -1,5 +1,7 @@
 # Packaging Manifests (`WinGet` & `Homebrew`)
 
+> **Templates, not published packages.** The `sha256` / `InstallerSha256` fields are zeroed placeholders because the release artifacts do not exist at commit time. Run `python scripts/packaging_hashes.py --repo mail2rust --version <ver> --assets-dir <dir>` at release time to fill in the real hashes.
+
 This directory stores ready-to-submit package manager manifests matching published GitHub Releases for **`mail2rust`**.
 
 ## 1. Windows Package Manager (`winget`)

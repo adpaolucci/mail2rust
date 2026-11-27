@@ -7,19 +7,29 @@ use std::io::{self, Write};
 pub const PR_ACKNOWLEDGEMENT_MODE: u32 = 0x00010003;
 pub const PR_IMPORTANCE: u32 = 0x00170003;
 pub const PR_MESSAGE_CLASS_W: u32 = 0x001A001F;
+pub const PR_MESSAGE_CLASS_A: u32 = 0x001A001E;
 pub const PR_SUBJECT_W: u32 = 0x0037001F;
+pub const PR_SUBJECT_A: u32 = 0x0037001E;
 pub const PR_CLIENT_SUBMIT_TIME: u32 = 0x00390040;
+pub const PR_SENT_REPRESENTING_NAME_W: u32 = 0x0042001F;
+pub const PR_SENT_REPRESENTING_EMAIL_ADDRESS_W: u32 = 0x0065001F;
+pub const PR_RECIPIENT_TYPE: u32 = 0x0C150003;
 pub const PR_SENDER_NAME_W: u32 = 0x0C1A001F;
+pub const PR_SENDER_NAME_A: u32 = 0x0C1A001E;
 pub const PR_SENDER_EMAIL_ADDRESS_W: u32 = 0x0C1F001F;
+pub const PR_SENDER_EMAIL_ADDRESS_A: u32 = 0x0C1F001E;
+pub const PR_DISPLAY_CC_W: u32 = 0x0E02001F;
+pub const PR_DISPLAY_BCC_W: u32 = 0x0E03001F;
+pub const PR_DISPLAY_TO_W: u32 = 0x0E04001F;
 pub const PR_MESSAGE_DELIVERY_TIME: u32 = 0x0E060040;
 pub const PR_MESSAGE_FLAGS: u32 = 0x0E070003;
 pub const PR_MESSAGE_SIZE: u32 = 0x0E080003;
 pub const PR_HASATTACH: u32 = 0x0E1B000B;
 pub const PR_ATTACH_SIZE: u32 = 0x0E200003;
 pub const PR_ATTACH_NUM: u32 = 0x0E210003;
-pub const PR_RECIPIENT_TYPE: u32 = 0x0C150003;
 pub const PR_ENTRYID: u32 = 0x0FFF0102;
 pub const PR_BODY_W: u32 = 0x1000001F;
+pub const PR_BODY_A: u32 = 0x1000001E;
 pub const PR_BODY_HTML_W: u32 = 0x10130102;
 pub const PR_INTERNET_MESSAGE_ID_W: u32 = 0x1035001F;
 pub const PR_DISPLAY_NAME_W: u32 = 0x3001001F;
@@ -61,6 +71,95 @@ pub const MSGFLAG_READ: u32 = 0x00000001;
 pub const MSGFLAG_UNSENT: u32 = 0x00000008;
 pub const MSGFLAG_FROMME: u32 = 0x00000020;
 
+/// Private (non-MAPI) property tag carrying a JSON `PreservedMessage` blob.
+/// This is the authoritative lossless copy for mail2rust -> mail2rust round trips.
+pub const PR_MAIL2RUST_PRESERVED: u32 = 0x85420102;
+/// Number of 4 KiB preservation chunks that follow.
+pub const PR_MAIL2RUST_PRESERVED_COUNT: u32 = 0x85A10003;
+/// Maximum useful size of one property context before 16-bit BTH offsets wrap.
+pub const MAX_PROPERTY_CONTEXT_BYTES: usize = 60_000;
+
+/// Tag of preservation chunk `index` (chunk 0 is `PR_MAIL2RUST_PRESERVED`).
+pub fn mail2rust_chunk_tag(index: u32) -> u32 {
+    ((0x8542u32 + index) << 16) | 0x0102
+}
+
+/// Builds a minimal conformant `0x7C` table whose only column is
+/// `PR_SUBITEM_IDENTIFIER` (`0x67F2`, PT_LONG). libpff uses this value to map a
+/// hierarchy/contents row to an NBT descriptor, so this is sufficient for
+/// folder and message enumeration.
+pub fn build_subitem_table_7c(ids: &[u32]) -> Vec<u8> {
+    const HEADER: usize = 12;
+    const B5: usize = 8;
+    const SEVEN_C: usize = 22;
+    const COLUMN: usize = 8;
+
+    let header_end = HEADER + B5; // 0x14
+    let records_end = header_end + SEVEN_C + COLUMN; // 0x32
+    let values_end = records_end + ids.len() * 8;
+    let index_offset = values_end + ids.len() * 4;
+
+    let mut buf = Vec::with_capacity(index_offset + 12);
+
+    // BTH header
+    buf.write_u16::<LittleEndian>(index_offset as u16).unwrap();
+    buf.write_u8(0xEC).unwrap();
+    buf.write_u8(0x7C).unwrap();
+    buf.write_u32::<LittleEndian>(0x40).unwrap(); // 0x7C header reference
+    buf.write_u32::<LittleEndian>(0).unwrap();
+
+    // b5 header: 4-byte identifiers, 4-byte values, level 0
+    buf.write_u8(0xB5).unwrap();
+    buf.write_u8(4).unwrap();
+    buf.write_u8(4).unwrap();
+    buf.write_u8(0).unwrap();
+    buf.write_u32::<LittleEndian>(0x60).unwrap(); // record entries reference
+
+    // 0x7C header: one column, 4-byte value rows
+    buf.write_u8(0x7C).unwrap();
+    buf.write_u8(1).unwrap(); // number of column definitions
+    for _ in 0..4 {
+        buf.write_u16::<LittleEndian>(4).unwrap(); // end offsets
+    }
+    buf.write_u32::<LittleEndian>(0x20).unwrap(); // b5 reference
+    buf.write_u32::<LittleEndian>(0x80).unwrap(); // values array reference
+    buf.write_u32::<LittleEndian>(0).unwrap();
+
+    // Column definition: PR_SUBITEM_IDENTIFIER, PT_LONG, offset 0, size 4
+    buf.write_u16::<LittleEndian>(0x0003).unwrap();
+    buf.write_u16::<LittleEndian>(0x67F2).unwrap();
+    buf.write_u16::<LittleEndian>(0).unwrap();
+    buf.write_u8(4).unwrap();
+    buf.write_u8(0).unwrap();
+
+    // Record entries: one per row
+    for (i, id) in ids.iter().enumerate() {
+        buf.write_u32::<LittleEndian>(*id).unwrap();
+        buf.write_u32::<LittleEndian>(i as u32).unwrap();
+    }
+
+    // Value rows
+    for id in ids {
+        buf.write_u32::<LittleEndian>(*id).unwrap();
+    }
+    debug_assert_eq!(buf.len(), index_offset);
+
+    // BTH index: b5, 0x7C header, record entries, values array
+    let offsets = [
+        HEADER as u16,
+        header_end as u16,
+        records_end as u16,
+        values_end as u16,
+        index_offset as u16,
+    ];
+    buf.write_u16::<LittleEndian>((offsets.len() - 1) as u16).unwrap();
+    buf.write_u16::<LittleEndian>(0).unwrap();
+    for offset in offsets {
+        buf.write_u16::<LittleEndian>(offset).unwrap();
+    }
+    buf
+}
+
 const FILETIME_UNIX_EPOCH_TICKS: u64 = 116_444_736_000_000_000;
 
 /// Converts a Windows 64-bit FILETIME (100ns intervals since 1601-01-01) to `DateTime<Utc>`.
@@ -93,6 +192,10 @@ pub struct ParsedPropertyContext {
 
 impl ParsedPropertyContext {
     pub fn parse(bytes: &[u8]) -> Option<Self> {
+        Self::parse_with_subnodes(bytes, &|_| None)
+    }
+
+    pub fn parse_ansi(bytes: &[u8]) -> Option<Self> {
         Self::parse_with_subnodes(bytes, &|_| None)
     }
 
@@ -229,6 +332,16 @@ impl ParsedPropertyContext {
         if bytes.len() < 2 {
             return None;
         }
+        // Genuine Unicode PST string properties may begin with non-whitespace control bytes.
+        let skip = bytes
+            .chunks_exact(2)
+            .take_while(|c| {
+                let u = u16::from_le_bytes([c[0], c[1]]);
+                u != 0 && u < 0x20 && !matches!(u, 0x09 | 0x0A | 0x0D)
+            })
+            .count()
+            * 2;
+        let bytes = &bytes[skip..];
         let u16s: Vec<u16> = bytes
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
@@ -239,6 +352,11 @@ impl ParsedPropertyContext {
 
     pub fn get_string_a(&self, tag: u32) -> Option<String> {
         let bytes = self.properties.get(&tag)?;
+        let skip = bytes
+            .iter()
+            .take_while(|&&b| b != 0 && b < 0x20 && !matches!(b, b'\t' | b'\n' | b'\r'))
+            .count();
+        let bytes = &bytes[skip..];
         let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
         Some(String::from_utf8_lossy(&bytes[..end]).to_string())
     }
@@ -711,44 +829,81 @@ impl PropertyContext {
         self.entries.push(PropertyContextEntry { tag, data: payload });
     }
 
-    /// Serializes PC into a Property Context Heap Record conforming to MS-PST LTP spec
+    /// Serializes the property context into an MS-PST 0xBC BTH/HN table.
     pub fn serialize(&self) -> io::Result<Vec<u8>> {
-        let mut buf = Vec::new();
-        // BTH header
-        buf.write_u8(0xBC)?; // bType = 0xBC (Property Context)
-        buf.write_u8(0x02)?; // cbKey = 2 (tag ID)
-        buf.write_u8(0x06)?; // cbEnt = 6 (property value descriptor)
-        buf.write_u8(0x00)?; // bIdxLevels = 0
+        const HEADER: usize = 12;
+        const B5: usize = 8;
+        let entries_start = HEADER + B5;
+        let entries_bytes = self.entries.len() * 8;
+        let heap_start = entries_start + entries_bytes;
 
-        // Write entries count
-        buf.write_u16::<LittleEndian>(self.entries.len() as u16)?;
-
-        // Data heap offset tracking
-        let data_heap_offset = 6 + (self.entries.len() * 8);
-        let mut data_pool = Vec::new();
+        let mut heap = Vec::new();
+        let mut encoded: Vec<(u32, [u8; 4])> = Vec::with_capacity(self.entries.len());
+        let mut heap_ranges: Vec<(usize, usize)> = Vec::new();
 
         for entry in &self.entries {
-            // Write Property ID (high 16 bits of tag)
-            let prop_id = (entry.tag >> 16) as u16;
             let prop_type = (entry.tag & 0xFFFF) as u16;
-            buf.write_u16::<LittleEndian>(prop_id)?;
-            buf.write_u16::<LittleEndian>(prop_type)?;
-
-            let is_inline = prop_type == 0x0003 || prop_type == 0x000B || prop_type == 0x0002;
-            if is_inline && entry.data.len() <= 4 {
-                // Inlined data
-                let mut inlined = [0u8; 4];
-                inlined[..entry.data.len()].copy_from_slice(&entry.data);
-                buf.write_all(&inlined)?;
+            let inline = matches!(prop_type, 0x0003 | 0x000B | 0x0002) && entry.data.len() <= 4;
+            let mut value = [0u8; 4];
+            if inline {
+                value[..entry.data.len()].copy_from_slice(&entry.data);
             } else {
-                // Offset into heap
-                let offset = (data_heap_offset + data_pool.len()) as u32;
-                buf.write_u32::<LittleEndian>(offset)?;
-                data_pool.extend_from_slice(&entry.data);
+                let start = heap_start + heap.len();
+                let reference = ((3 + heap_ranges.len()) * 32) as u32;
+                value = reference.to_le_bytes();
+                heap.extend_from_slice(&entry.data);
+                heap_ranges.push((start, start + entry.data.len()));
             }
+            encoded.push((entry.tag, value));
         }
 
-        buf.extend_from_slice(&data_pool);
+        let index_offset = heap_start + heap.len();
+        if index_offset > u16::MAX as usize {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "property context exceeds 64 KiB HNHDR limit",
+            ));
+        }
+        let mut buf = Vec::with_capacity(index_offset + 10);
+
+        // BTH / HNHDR header
+        buf.write_u16::<LittleEndian>(index_offset as u16)?;
+        buf.write_u8(0xEC)?;
+        buf.write_u8(0xBC)?;
+        buf.write_u32::<LittleEndian>(0x20)?; // reference to b5 header (index 0)
+        buf.write_u32::<LittleEndian>(0)?; // padding
+
+        // b5 table header
+        buf.write_u8(0xB5)?;
+        buf.write_u8(0x02)?; // cbKey
+        buf.write_u8(0x06)?; // cbValue
+        buf.write_u8(0x00)?; // level
+        buf.write_u32::<LittleEndian>(0x40)?; // reference to record entries (index 1)
+
+        // Property descriptors
+        for (tag, value) in encoded {
+            buf.write_u16::<LittleEndian>((tag >> 16) as u16)?;
+            buf.write_u16::<LittleEndian>((tag & 0xFFFF) as u16)?;
+            buf.write_all(&value)?;
+        }
+        buf.extend_from_slice(&heap);
+        debug_assert_eq!(buf.len(), index_offset);
+
+        // HNPAGEMAP / BTH index: N values require N+1 offsets.
+        let mut offsets: Vec<u16> = vec![HEADER as u16, entries_start as u16];
+        if heap_ranges.is_empty() {
+            offsets.push(index_offset as u16);
+        } else {
+            offsets.push(heap_ranges[0].0 as u16);
+            for (_, end) in &heap_ranges {
+                offsets.push(*end as u16);
+            }
+        }
+        buf.write_u16::<LittleEndian>((offsets.len() - 1) as u16)?;
+        buf.write_u16::<LittleEndian>(0)?; // cFree
+        for offset in offsets {
+            buf.write_u16::<LittleEndian>(offset)?;
+        }
         Ok(buf)
     }
 }
@@ -756,5 +911,59 @@ impl PropertyContext {
 impl Default for PropertyContext {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subitem_table_7c_has_valid_structure() {
+        let data = build_subitem_table_7c(&[0x8004, 0x8024]);
+        assert_eq!(data[2], 0xEC);
+        assert_eq!(data[3], 0x7C);
+        assert_eq!(u32::from_le_bytes(data[4..8].try_into().unwrap()), 0x40);
+        let index_offset = u16::from_le_bytes([data[0], data[1]]) as usize;
+        let n = u16::from_le_bytes([data[index_offset], data[index_offset + 1]]) as usize;
+        let offsets: Vec<usize> = (0..=n)
+            .map(|i| {
+                u16::from_le_bytes(
+                    data[index_offset + 4 + i * 2..index_offset + 6 + i * 2]
+                        .try_into()
+                        .unwrap(),
+                ) as usize
+            })
+            .collect();
+        assert_eq!(offsets[0], 12);
+        assert_eq!(offsets[1], 20);
+        let record_ids: Vec<u32> = (0..2)
+            .map(|i| u32::from_le_bytes(data[offsets[2] + i * 8..offsets[2] + i * 8 + 4].try_into().unwrap()))
+            .collect();
+        let value_ids: Vec<u32> = (0..2)
+            .map(|i| u32::from_le_bytes(data[offsets[3] + i * 4..offsets[3] + i * 4 + 4].try_into().unwrap()))
+            .collect();
+        assert_eq!(record_ids, vec![0x8004, 0x8024]);
+        assert_eq!(value_ids, record_ids);
+    }
+
+    #[test]
+    fn bth_property_context_roundtrips_multiple_binaries() {
+        let mut pc = PropertyContext::new();
+        pc.add_string_w(PR_SUBJECT_W, "hello");
+        pc.add_u32(PR_IMPORTANCE, 2);
+        pc.add_binary(0x10130102, b"<p>html</p>");
+        pc.add_binary(PR_MAIL2RUST_PRESERVED, br#"{"raw_mime":"abc"}"#);
+        let bytes = pc.serialize().unwrap();
+        assert_eq!(bytes[2], 0xEC);
+        assert_eq!(bytes[3], 0xBC);
+        let parsed = ParsedPropertyContext::parse(&bytes).expect("parse");
+        assert_eq!(parsed.get_string_w(PR_SUBJECT_W).as_deref(), Some("hello"));
+        assert_eq!(parsed.get_u32(PR_IMPORTANCE), Some(2));
+        assert_eq!(parsed.get_binary(0x10130102).unwrap(), b"<p>html</p>");
+        assert_eq!(
+            parsed.get_binary(PR_MAIL2RUST_PRESERVED).unwrap(),
+            br#"{"raw_mime":"abc"}"#
+        );
     }
 }

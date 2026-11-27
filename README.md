@@ -4,7 +4,7 @@ Part of the **GUAP** Ecosystem (`guap.ca`) • [**Project Hub & Web Documentatio
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/adpaolucci/mail2rust/actions/workflows/ci.yml/badge.svg)](https://github.com/adpaolucci/mail2rust/actions/workflows/ci.yml)
-[![Rust: 1.88+](https://img.shields.io/badge/Rust-1.88%2B-orange.svg)](Cargo.toml)
+[![Rust: 1.89+](https://img.shields.io/badge/Rust-1.89%2B-orange.svg)](Cargo.toml)
 [![PST: Zero Outlook](https://img.shields.io/badge/MS--PST-Zero%20Outlook%20Dependency-success.svg)](crates/mail2rust-pst)
 [![RFC Compliant](https://img.shields.io/badge/RFC-5322%20%7C%204155%20%7C%202047%20%7C%206234-emerald.svg)](crates/mail2rust-core)
 [![Architecture: 13 Crates](https://img.shields.io/badge/Workspace-13%20Crates-emerald.svg)](Cargo.toml)
@@ -75,7 +75,7 @@ Self-contained native executables with **zero external runtime dependencies** (n
 
 ```text
 mail2rust/
-├── Cargo.toml                     # Workspace root manifest (Edition 2024, MSRV 1.88, Apache-2.0)
+├── Cargo.toml                     # Workspace root manifest (Edition 2024, MSRV 1.89, Apache-2.0)
 ├── LICENSE / NOTICE / deny.toml   # Apache-2.0 license, attribution notice & cargo-deny audit policy
 ├── packaging/                     # WinGet & Homebrew distribution manifests
 ├── crates/

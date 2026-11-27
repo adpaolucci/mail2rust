@@ -1,6 +1,10 @@
 # Rust build artifacts
 target/
 
+# Python test caches
+__pycache__/
+*.pyc
+
 # OS / Editor artifacts
 .DS_Store
 *.log

@@ -1,16 +1,20 @@
 use crate::ltp::{
-    PR_ATTACH_DATA_BIN, PR_ATTACH_NUM, PR_BODY_HTML_W, PR_BODY_W, PR_CLIENT_SUBMIT_TIME, PR_CREATION_TIME,
-    PR_DISPLAY_NAME_W, PR_IMPORTANCE, PR_INTERNET_MESSAGE_ID_W, PR_MESSAGE_CLASS_W, PR_MESSAGE_DELIVERY_TIME,
-    PR_MESSAGE_FLAGS, PR_PST_PASSWORD, PR_RECIPIENT_TYPE, PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_W, PR_SUBJECT_W,
-    ParsedPropertyContext, TableContext,
+    PR_ATTACH_DATA_BIN, PR_ATTACH_NUM, PR_BODY_A, PR_BODY_HTML_W, PR_BODY_W, PR_CLIENT_SUBMIT_TIME, PR_CREATION_TIME,
+    PR_DISPLAY_BCC_W, PR_DISPLAY_CC_W, PR_DISPLAY_NAME_W, PR_DISPLAY_TO_W, PR_IMPORTANCE, PR_INTERNET_MESSAGE_ID_W,
+    PR_LAST_MODIFICATION_TIME, PR_MAIL2RUST_PRESERVED, PR_MAIL2RUST_PRESERVED_COUNT, PR_MESSAGE_CLASS_A,
+    PR_MESSAGE_CLASS_W, PR_MESSAGE_DELIVERY_TIME, PR_MESSAGE_FLAGS, PR_PST_PASSWORD, PR_RECIPIENT_TYPE,
+    PR_SENDER_EMAIL_ADDRESS_A, PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_A, PR_SENDER_NAME_W,
+    PR_SENT_REPRESENTING_EMAIL_ADDRESS_W, PR_SENT_REPRESENTING_NAME_W, PR_SUBJECT_A, PR_SUBJECT_W,
+    ParsedPropertyContext, TableContext, filetime_to_datetime, mail2rust_chunk_tag,
 };
 use crate::ndb::{
-    NID_ATTACHMENT_TABLE, NID_MESSAGE_STORE, NID_NAME_TO_ID_MAP, NID_RECIPIENT_TABLE, NID_ROOT_FOLDER,
-    NID_TYPE_ATTACHMENT, PST_HEADER_SIZE, PST_PAGE_DATA_SIZE, PST_PAGE_SIZE, PST_TRAILER_SIG, PTYPE_BBT, PTYPE_NBT,
-    PstEncryption, compute_pst_password_crc, cyclic_crypt, depermute_bytes,
+    NDB_CRYPT_CYCLIC, NDB_CRYPT_NONE, NDB_CRYPT_PERMUTE, NID_ATTACHMENT_TABLE, NID_MESSAGE_STORE, NID_NAME_TO_ID_MAP,
+    NID_RECIPIENT_TABLE, NID_ROOT_FOLDER, NID_TYPE_ATTACHMENT, PST_HEADER_SIZE, PST_PAGE_DATA_SIZE, PST_PAGE_SIZE,
+    PTYPE_BBT, PTYPE_NBT, PstEncryption, compute_pst_password_crc, cyclic_crypt, depermute_bytes,
 };
+use crate::preserve::PreservedMessage;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use mail2rust_core::{Attachment, EmailAddress, EmailMessage, Importance, MapiProperty, MessageFlags};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -49,6 +53,7 @@ pub struct PstReader<R: Read + Seek> {
     reader: R,
     format_name: String,
     crypt_method: u8,
+    is_ansi: bool,
     bbt_map: HashMap<u64, (u64, u32)>, // BID -> (Offset, Length)
     nbt_nodes: Vec<NbtNode>,
 }
@@ -62,7 +67,10 @@ impl<R: Read + Seek> PstReader<R> {
         // Magic check
         let magic_val = (&header[0x00..0x04]).read_u32::<BigEndian>()?;
         let version = (&header[0x0A..0x0C]).read_u16::<LittleEndian>()?;
-        let format_name = if version >= 23 {
+        let is_ansi = version <= 0x000F && magic_val == 0x2142444E;
+        let format_name = if is_ansi {
+            "Microsoft Outlook PST (ANSI)".to_string()
+        } else if version >= 23 {
             "Microsoft Outlook PST (Unicode)".to_string()
         } else if magic_val == 0x2142444F {
             "Offline Exchange OST (!BDO)".to_string()
@@ -70,30 +78,58 @@ impl<R: Read + Seek> PstReader<R> {
             "Legacy ANSI PST".to_string()
         };
 
-        let crypt_method = header[0x1CD];
+        let crypt_method = if is_ansi {
+            header[0x1CD]
+        } else {
+            let c = header[0x201];
+            if c == NDB_CRYPT_NONE || c == NDB_CRYPT_PERMUTE || c == NDB_CRYPT_CYCLIC {
+                c
+            } else {
+                header[0x1CD]
+            }
+        };
         info!(format = %format_name, crypt = crypt_method, "Opened PST/OST container for reading");
 
         let file_len = reader.seek(SeekFrom::End(0))?;
 
-        // Root BREF pointers (Unicode ROOT at 0xB8 or legacy fallback at 0xB4/0xC4)
-        let nbt_bid_u = (&header[0xDC..0xE4]).read_u64::<LittleEndian>()?;
-        let nbt_off_u = (&header[0xE4..0xEC]).read_u64::<LittleEndian>()?;
-        let (nbt_bid, nbt_offset) = if nbt_bid_u > 0 && nbt_off_u > 0 && nbt_off_u < file_len {
-            (nbt_bid_u, nbt_off_u)
+        // ANSI (32-bit) files keep 32-bit root fields at 0xB8/0xBC (NBT) and 0xC0/0xC4 (BBT);
+        // Unicode files use spec 0xD8/0xE0 and 0xE8/0xF0 with +4 and 0xB4/0xC4 fallbacks.
+        let (nbt_bid, nbt_offset, bbt_bid, bbt_offset) = if is_ansi {
+            let read32 = |off: usize| -> u64 { u32::from_le_bytes(header[off..off + 4].try_into().unwrap()) as u64 };
+            (read32(0xB8), read32(0xBC), read32(0xC0), read32(0xC4))
         } else {
-            let b = (&header[0xB4..0xBC]).read_u64::<LittleEndian>()?;
-            let o = (&header[0xBC..0xC4]).read_u64::<LittleEndian>()?;
-            (b, o)
-        };
+            let nbt_bid_u = (&header[0xD8..0xE0]).read_u64::<LittleEndian>()?;
+            let nbt_off_u = (&header[0xE0..0xE8]).read_u64::<LittleEndian>()?;
+            let (nbt_bid, nbt_offset) = if nbt_bid_u > 0 && nbt_off_u > 0 && nbt_off_u < file_len {
+                (nbt_bid_u, nbt_off_u)
+            } else {
+                let nbt_bid_u2 = (&header[0xDC..0xE4]).read_u64::<LittleEndian>()?;
+                let nbt_off_u2 = (&header[0xE4..0xEC]).read_u64::<LittleEndian>()?;
+                if nbt_bid_u2 > 0 && nbt_off_u2 > 0 && nbt_off_u2 < file_len {
+                    (nbt_bid_u2, nbt_off_u2)
+                } else {
+                    let b = (&header[0xB4..0xBC]).read_u64::<LittleEndian>()?;
+                    let o = (&header[0xBC..0xC4]).read_u64::<LittleEndian>()?;
+                    (b, o)
+                }
+            };
 
-        let bbt_bid_u = (&header[0xEC..0xF4]).read_u64::<LittleEndian>()?;
-        let bbt_off_u = (&header[0xF4..0xFC]).read_u64::<LittleEndian>()?;
-        let (bbt_bid, bbt_offset) = if bbt_bid_u > 0 && bbt_off_u > 0 && bbt_off_u < file_len {
-            (bbt_bid_u, bbt_off_u)
-        } else {
-            let b = (&header[0xC4..0xCC]).read_u64::<LittleEndian>()?;
-            let o = (&header[0xCC..0xD4]).read_u64::<LittleEndian>()?;
-            (b, o)
+            let bbt_bid_u = (&header[0xE8..0xF0]).read_u64::<LittleEndian>()?;
+            let bbt_off_u = (&header[0xF0..0xF8]).read_u64::<LittleEndian>()?;
+            let (bbt_bid, bbt_offset) = if bbt_bid_u > 0 && bbt_off_u > 0 && bbt_off_u < file_len {
+                (bbt_bid_u, bbt_off_u)
+            } else {
+                let bbt_bid_u2 = (&header[0xEC..0xF4]).read_u64::<LittleEndian>()?;
+                let bbt_off_u2 = (&header[0xF4..0xFC]).read_u64::<LittleEndian>()?;
+                if bbt_bid_u2 > 0 && bbt_off_u2 > 0 && bbt_off_u2 < file_len {
+                    (bbt_bid_u2, bbt_off_u2)
+                } else {
+                    let b = (&header[0xC4..0xCC]).read_u64::<LittleEndian>()?;
+                    let o = (&header[0xCC..0xD4]).read_u64::<LittleEndian>()?;
+                    (b, o)
+                }
+            };
+            (nbt_bid, nbt_offset, bbt_bid, bbt_offset)
         };
 
         let mut bbt_map = HashMap::new();
@@ -106,16 +142,13 @@ impl<R: Read + Seek> PstReader<R> {
             && reader.seek(SeekFrom::Start(bbt_offset)).is_ok()
         {
             let mut page = [0u8; PST_PAGE_SIZE];
-            if reader.read_exact(&mut page).is_ok() {
-                let w_sig = u16::from_le_bytes([page[498], page[499]]);
-                if page[496] == PTYPE_BBT && w_sig == PST_TRAILER_SIG {
-                    bbt_is_btpage = true;
-                }
+            if reader.read_exact(&mut page).is_ok() && page[if is_ansi { 500 } else { 496 }] == PTYPE_BBT {
+                bbt_is_btpage = true;
             }
         }
 
         if bbt_is_btpage {
-            let _ = traverse_bbt(&mut reader, bbt_offset, &mut bbt_map);
+            let _ = traverse_bbt(&mut reader, bbt_offset, &mut bbt_map, is_ansi);
         } else if bbt_offset > 0
             && bbt_bid > 0
             && bbt_offset < file_len
@@ -155,16 +188,13 @@ impl<R: Read + Seek> PstReader<R> {
             && reader.seek(SeekFrom::Start(nbt_offset)).is_ok()
         {
             let mut page = [0u8; PST_PAGE_SIZE];
-            if reader.read_exact(&mut page).is_ok() {
-                let w_sig = u16::from_le_bytes([page[498], page[499]]);
-                if page[496] == PTYPE_NBT && w_sig == PST_TRAILER_SIG {
-                    nbt_is_btpage = true;
-                }
+            if reader.read_exact(&mut page).is_ok() && page[if is_ansi { 500 } else { 496 }] == PTYPE_NBT {
+                nbt_is_btpage = true;
             }
         }
 
         if nbt_is_btpage {
-            let _ = traverse_nbt(&mut reader, nbt_offset, &mut nbt_nodes);
+            let _ = traverse_nbt(&mut reader, nbt_offset, &mut nbt_nodes, is_ansi);
         } else if nbt_offset > 0
             && nbt_bid > 0
             && nbt_offset < file_len
@@ -215,6 +245,7 @@ impl<R: Read + Seek> PstReader<R> {
             reader,
             format_name,
             crypt_method,
+            is_ansi,
             bbt_map,
             nbt_nodes,
         })
@@ -291,13 +322,30 @@ impl<R: Read + Seek> PstReader<R> {
         let c_level = block[1];
         let c_ent = u16::from_le_bytes([block[2], block[3]]) as usize;
         if c_level == 0 {
-            // SLBLOCK: 8-byte header (bType, cLevel, cEnt, dwPadding), then 24-byte SLENTRY (nid: u64, bidData: u64, bidSub: u64)
-            let max_ent = ((block.len() - 8) / 24).min(c_ent);
+            let (entry_size, data_offset) = if self.is_ansi {
+                (12usize, 4usize)
+            } else {
+                (24usize, 8usize)
+            };
+            if block.len() < data_offset {
+                return;
+            }
+            let max_ent = ((block.len() - data_offset) / entry_size).min(c_ent);
             for i in 0..max_ent {
-                let base = 8 + i * 24;
-                let nid = u64::from_le_bytes(block[base..base + 8].try_into().unwrap_or([0; 8])) as u32;
-                let bid_data = u64::from_le_bytes(block[base + 8..base + 16].try_into().unwrap_or([0; 8]));
-                let sub = u64::from_le_bytes(block[base + 16..base + 24].try_into().unwrap_or([0; 8]));
+                let base = data_offset + i * entry_size;
+                let (nid, bid_data, sub) = if self.is_ansi {
+                    (
+                        u32::from_le_bytes(block[base..base + 4].try_into().unwrap_or([0; 4])),
+                        u32::from_le_bytes(block[base + 4..base + 8].try_into().unwrap_or([0; 4])) as u64,
+                        u32::from_le_bytes(block[base + 8..base + 12].try_into().unwrap_or([0; 4])) as u64,
+                    )
+                } else {
+                    (
+                        u64::from_le_bytes(block[base..base + 8].try_into().unwrap_or([0; 8])) as u32,
+                        u64::from_le_bytes(block[base + 8..base + 16].try_into().unwrap_or([0; 8])),
+                        u64::from_le_bytes(block[base + 16..base + 24].try_into().unwrap_or([0; 8])),
+                    )
+                };
                 if nid > 0 {
                     out.push(SubnodeEntry {
                         nid,
@@ -307,11 +355,22 @@ impl<R: Read + Seek> PstReader<R> {
                 }
             }
         } else {
-            // SIBLOCK: 8-byte header, then 16-byte SIENTRY (nid: u64, bid: u64)
-            let max_ent = ((block.len() - 8) / 16).min(c_ent);
+            let (entry_size, data_offset) = if self.is_ansi {
+                (8usize, 4usize)
+            } else {
+                (16usize, 8usize)
+            };
+            if block.len() < data_offset {
+                return;
+            }
+            let max_ent = ((block.len() - data_offset) / entry_size).min(c_ent);
             for i in 0..max_ent {
-                let base = 8 + i * 16;
-                let child_bid = u64::from_le_bytes(block[base + 8..base + 16].try_into().unwrap_or([0; 8]));
+                let base = data_offset + i * entry_size;
+                let child_bid = if self.is_ansi {
+                    u32::from_le_bytes(block[base + 4..base + 8].try_into().unwrap_or([0; 4])) as u64
+                } else {
+                    u64::from_le_bytes(block[base + 8..base + 16].try_into().unwrap_or([0; 8]))
+                };
                 self.read_subnodes_inner(child_bid, out, visited, depth + 1);
             }
         }
@@ -428,22 +487,55 @@ impl<R: Read + Seek> PstReader<R> {
         paths
     }
 
+    /// Reads a message property context, following the BID-list indirection used
+    /// by genuine Unicode PSTs when the NBT data block is a short list of BIDs.
+    fn resolve_message_pc(&mut self, bid: u64, bid_sub: u64) -> Option<ParsedPropertyContext> {
+        let direct = self.read_property_context(bid, bid_sub);
+        let has_content = |pc: &ParsedPropertyContext| {
+            pc.get_string_w(PR_SUBJECT_W).is_some()
+                || pc.get_string_a(PR_SUBJECT_A).is_some()
+                || pc.get_string_w(PR_BODY_W).is_some()
+                || pc.get_string_a(PR_BODY_A).is_some()
+        };
+        if direct.as_ref().is_some_and(has_content) {
+            return direct;
+        }
+
+        if let Some(raw) = self.read_block_by_bid_raw(bid) {
+            let mut candidates = Vec::new();
+            for offset in (0..raw.len().saturating_sub(7)).step_by(8) {
+                let candidate = u64::from_le_bytes(raw[offset..offset + 8].try_into().ok()?);
+                if candidate != bid && self.bbt_map.get(&candidate).is_some_and(|(_, size)| *size >= 16) {
+                    candidates.push(candidate);
+                }
+            }
+            for candidate in candidates {
+                if let Some(pc) = self.read_property_context(candidate, bid_sub)
+                    && has_content(&pc)
+                {
+                    return Some(pc);
+                }
+            }
+        }
+        direct
+    }
+
     pub fn read_all_messages(&mut self) -> io::Result<Vec<EmailMessage>> {
         let mut messages = Vec::new();
         let folder_paths = self.read_folder_paths();
         let nodes = self.nbt_nodes.clone();
 
-        // Read messages from NBT nodes (with full subnode attachments, recipients, and timestamps)
+        // Read messages from NBT nodes (with full subnode attachments, recipients, timestamps, and BID-list indirection)
         for node in &nodes {
             if node.nid == NID_MESSAGE_STORE || node.nid == NID_NAME_TO_ID_MAP || node.nid == NID_ROOT_FOLDER {
                 continue;
             }
-            if let Some(pc) = self.read_property_context(node.bid_data, node.bid_sub) {
-                let subject = pc.get_string_w(PR_SUBJECT_W).or_else(|| pc.get_string_a(PR_SUBJECT_W));
-                let body = pc.get_string_w(PR_BODY_W).or_else(|| pc.get_string_a(PR_BODY_W));
+            if let Some(pc) = self.resolve_message_pc(node.bid_data, node.bid_sub) {
+                let subject = pc.get_string_w(PR_SUBJECT_W).or_else(|| pc.get_string_a(PR_SUBJECT_A));
+                let body = pc.get_string_w(PR_BODY_W).or_else(|| pc.get_string_a(PR_BODY_A));
                 let msg_class = pc
                     .get_string_w(PR_MESSAGE_CLASS_W)
-                    .or_else(|| pc.get_string_a(PR_MESSAGE_CLASS_W));
+                    .or_else(|| pc.get_string_a(PR_MESSAGE_CLASS_A));
 
                 if subject.is_some() || body.is_some() || msg_class.is_some() {
                     let folder = folder_paths
@@ -451,11 +543,19 @@ impl<R: Read + Seek> PstReader<R> {
                         .cloned()
                         .unwrap_or_else(|| vec!["Inbox".to_string()]);
                     let (to, cc, bcc, attachments) = self.read_message_subnodes(node.bid_sub);
-                    let mut msg = self.build_email_message(node.nid, &pc, folder);
-                    msg.to = to;
-                    msg.cc = cc;
-                    msg.bcc = bcc;
-                    msg.attachments = attachments;
+                    let mut msg = self.build_email_message(node.nid, node.bid_sub, &pc, folder, &attachments);
+                    if msg.to.is_empty() && !to.is_empty() {
+                        msg.to = to;
+                    }
+                    if msg.cc.is_empty() && !cc.is_empty() {
+                        msg.cc = cc;
+                    }
+                    if msg.bcc.is_empty() && !bcc.is_empty() {
+                        msg.bcc = bcc;
+                    }
+                    if msg.attachments.is_empty() && !attachments.is_empty() {
+                        msg.attachments = attachments;
+                    }
                     messages.push(msg);
                 }
             }
@@ -467,6 +567,16 @@ impl<R: Read + Seek> PstReader<R> {
             let carved = self.carve_messages_from_stream()?;
             info!(carved = carved.len(), "Forensic carving completed");
             messages = carved;
+        }
+
+        if messages.is_empty() && self.nbt_nodes.len() > 2 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "PST header and B-trees parsed, but 0 messages were extracted. \
+                 This PST's property layout is not supported by this reader \
+                 (the file may be a genuine Outlook PST; use mail2mail with Outlook \
+                 installed, or a conformant PST tool, to read it).",
+            ));
         }
 
         info!(
@@ -602,6 +712,49 @@ impl<R: Read + Seek> PstReader<R> {
         Some(buf)
     }
 
+    /// Reads a data block without applying the NDB cipher. Local descriptor
+    /// trees are stored unencrypted even in compressed-encryption PSTs.
+    fn read_block_by_bid_raw(&mut self, bid: u64) -> Option<Vec<u8>> {
+        let (offset, len) = self
+            .bbt_map
+            .get(&bid)
+            .or_else(|| self.bbt_map.get(&(bid & !0x01)))
+            .copied()?;
+        self.reader.seek(SeekFrom::Start(offset)).ok()?;
+        let mut buf = vec![0u8; len as usize];
+        self.reader.read_exact(&mut buf).ok()?;
+        Some(buf)
+    }
+
+    /// Recovers an HTML stream from a subnode data block, following the BID-list
+    /// indirection used for large streams in Unicode PSTs.
+    fn sniff_html_stream(&mut self, bid: u64) -> Option<String> {
+        let looks_like_html = |bytes: &[u8]| -> Option<String> {
+            let text = String::from_utf8_lossy(bytes).to_string();
+            if text.contains("<!DOCTYPE") || text.contains("<html") || text.contains("<HTML") {
+                Some(text)
+            } else {
+                None
+            }
+        };
+
+        if let Some(stream) = self.read_block_by_bid(bid)
+            && let Some(text) = looks_like_html(&stream)
+        {
+            return Some(text);
+        }
+
+        let raw = self.read_block_by_bid_raw(bid)?;
+        let mut assembled = Vec::new();
+        for offset in (8..raw.len().saturating_sub(7)).step_by(8) {
+            let part_bid = u64::from_le_bytes(raw[offset..offset + 8].try_into().ok()?);
+            if let Some(part) = self.read_block_by_bid(part_bid) {
+                assembled.extend_from_slice(&part);
+            }
+        }
+        looks_like_html(&assembled)
+    }
+
     fn carve_messages_from_stream(&mut self) -> io::Result<Vec<EmailMessage>> {
         let stream_len = self.reader.seek(SeekFrom::End(0))?;
         self.reader.seek(SeekFrom::Start(0))?;
@@ -635,7 +788,7 @@ impl<R: Read + Seek> PstReader<R> {
             if let Some(pc) = ParsedPropertyContext::parse(&chunk)
                 && (pc.get_string_w(PR_SUBJECT_W).is_some() || pc.get_string_w(PR_BODY_W).is_some())
             {
-                let msg = self.build_email_message(offset as u32, &pc, vec!["Recovered Items".to_string()]);
+                let msg = self.build_email_message(offset as u32, 0, &pc, vec!["Recovered Items".to_string()], &[]);
                 recovered.push(msg);
                 offset += 64;
                 continue;
@@ -648,7 +801,7 @@ impl<R: Read + Seek> PstReader<R> {
                 if let Some(pc) = ParsedPropertyContext::parse(&dep)
                     && (pc.get_string_w(PR_SUBJECT_W).is_some() || pc.get_string_w(PR_BODY_W).is_some())
                 {
-                    let msg = self.build_email_message(offset as u32, &pc, vec!["Recovered Items".to_string()]);
+                    let msg = self.build_email_message(offset as u32, 0, &pc, vec!["Recovered Items".to_string()], &[]);
                     recovered.push(msg);
                     offset += 64;
                     continue;
@@ -661,27 +814,108 @@ impl<R: Read + Seek> PstReader<R> {
         Ok(recovered)
     }
 
-    fn build_email_message(&self, nid: u32, pc: &ParsedPropertyContext, folder: Vec<String>) -> EmailMessage {
+    fn build_email_message(
+        &mut self,
+        nid: u32,
+        bid_sub: u64,
+        pc: &ParsedPropertyContext,
+        folder: Vec<String>,
+        sub_attachments: &[Attachment],
+    ) -> EmailMessage {
+        // Restore mail2rust's lossless preservation blob when present.
+        let mut chunked = None;
+        if let Some(count) = pc.get_u32(PR_MAIL2RUST_PRESERVED_COUNT) {
+            let mut blob = Vec::new();
+            let mut complete = true;
+            for i in 0..count {
+                if let Some(chunk) = pc.get_binary(mail2rust_chunk_tag(i)) {
+                    blob.extend_from_slice(&chunk);
+                } else {
+                    complete = false;
+                    break;
+                }
+            }
+            if complete {
+                chunked = Some(blob);
+            }
+        }
+        let preserved_blob = chunked.or_else(|| pc.get_binary(PR_MAIL2RUST_PRESERVED));
+        if let Some(blob) = preserved_blob
+            && let Ok(preserved) = serde_json::from_slice::<PreservedMessage>(&blob)
+        {
+            let mut msg = preserved.into_message(folder, self.format_name.clone());
+            msg.id = format!("pst_{:x}", nid);
+            for (idx, att) in msg.attachments.iter_mut().enumerate() {
+                if att.data.is_empty()
+                    && let Some(sub_att) = sub_attachments.get(idx)
+                {
+                    att.data = sub_att.data.clone();
+                }
+            }
+            return msg;
+        }
+
+        let parse_addresses = |raw: Option<String>| -> Vec<EmailAddress> {
+            raw.map(|s| {
+                s.split([';', ','])
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(EmailAddress::parse)
+                    .collect()
+            })
+            .unwrap_or_default()
+        };
+        let to = parse_addresses(
+            pc.get_string_w(PR_DISPLAY_TO_W)
+                .or_else(|| pc.get_string_a(PR_DISPLAY_TO_W)),
+        );
+        let cc = parse_addresses(
+            pc.get_string_w(PR_DISPLAY_CC_W)
+                .or_else(|| pc.get_string_a(PR_DISPLAY_CC_W)),
+        );
+        let bcc = parse_addresses(
+            pc.get_string_w(PR_DISPLAY_BCC_W)
+                .or_else(|| pc.get_string_a(PR_DISPLAY_BCC_W)),
+        );
+
         let subject = pc
             .get_string_w(PR_SUBJECT_W)
-            .or_else(|| pc.get_string_a(PR_SUBJECT_W))
+            .or_else(|| pc.get_string_a(PR_SUBJECT_A))
             .unwrap_or_else(|| "(No Subject)".to_string());
 
         let body_text = pc
             .get_string_w(PR_BODY_W)
-            .or_else(|| pc.get_string_a(PR_BODY_W))
+            .or_else(|| pc.get_string_a(PR_BODY_A))
             .unwrap_or_default();
 
-        let body_html = pc.get_binary(PR_BODY_HTML_W).and_then(|b| String::from_utf8(b).ok());
+        let mut body_html = pc.get_binary(PR_BODY_HTML_W).and_then(|b| String::from_utf8(b).ok());
+
+        // Genuine Outlook PST messages may store their HTML body in a subnode stream.
+        if body_html.is_none() && bid_sub != 0 {
+            for sn in self.read_subnodes(bid_sub) {
+                if sn.nid == NID_RECIPIENT_TABLE
+                    || sn.nid == NID_ATTACHMENT_TABLE
+                    || (sn.nid & 0x1F) == NID_TYPE_ATTACHMENT as u32
+                {
+                    continue;
+                }
+                if let Some(text) = self.sniff_html_stream(sn.bid_data) {
+                    body_html = Some(text);
+                    break;
+                }
+            }
+        }
 
         let sender_name = pc
             .get_string_w(PR_SENDER_NAME_W)
-            .or_else(|| pc.get_string_a(PR_SENDER_NAME_W))
+            .or_else(|| pc.get_string_a(PR_SENDER_NAME_A))
+            .or_else(|| pc.get_string_w(PR_SENT_REPRESENTING_NAME_W))
             .unwrap_or_else(|| "Unknown Sender".to_string());
 
         let sender_email = pc
             .get_string_w(PR_SENDER_EMAIL_ADDRESS_W)
-            .or_else(|| pc.get_string_a(PR_SENDER_EMAIL_ADDRESS_W))
+            .or_else(|| pc.get_string_a(PR_SENDER_EMAIL_ADDRESS_A))
+            .or_else(|| pc.get_string_w(PR_SENT_REPRESENTING_EMAIL_ADDRESS_W))
             .unwrap_or_else(|| "unknown@pst.local".to_string());
 
         let message_id = pc
@@ -701,16 +935,25 @@ impl<R: Read + Seek> PstReader<R> {
             _ => Importance::Normal,
         };
 
-        let date = pc
-            .get_systime(PR_MESSAGE_DELIVERY_TIME)
-            .or_else(|| pc.get_systime(PR_CLIENT_SUBMIT_TIME))
-            .or_else(|| pc.get_systime(PR_CREATION_TIME))
+        let systime_prop = |tag: u32| -> Option<DateTime<Utc>> {
+            pc.get_systime(tag).or_else(|| {
+                let b = pc.get_binary(tag)?;
+                if b.len() < 8 {
+                    return None;
+                }
+                filetime_to_datetime(u64::from_le_bytes(b[..8].try_into().ok()?))
+            })
+        };
+        let date = systime_prop(PR_CLIENT_SUBMIT_TIME)
+            .or_else(|| systime_prop(PR_MESSAGE_DELIVERY_TIME))
+            .or_else(|| systime_prop(PR_CREATION_TIME))
+            .or_else(|| systime_prop(PR_LAST_MODIFICATION_TIME))
             .unwrap_or_else(Utc::now);
 
         let mut mapi_properties = Vec::new();
         if let Some(mc) = pc
             .get_string_w(PR_MESSAGE_CLASS_W)
-            .or_else(|| pc.get_string_a(PR_MESSAGE_CLASS_W))
+            .or_else(|| pc.get_string_a(PR_MESSAGE_CLASS_A))
         {
             mapi_properties.push(MapiProperty {
                 tag: PR_MESSAGE_CLASS_W,
@@ -739,9 +982,9 @@ impl<R: Read + Seek> PstReader<R> {
             folder_path: folder,
             subject,
             from: EmailAddress::new(sender_name, sender_email),
-            to: vec![],
-            cc: vec![],
-            bcc: vec![],
+            to,
+            cc,
+            bcc,
             date,
             size_bytes: raw_bytes.len(),
             body_text,
@@ -777,25 +1020,37 @@ fn traverse_bbt<R: Read + Seek>(
     reader: &mut R,
     page_offset: u64,
     bbt_map: &mut HashMap<u64, (u64, u32)>,
+    is_ansi: bool,
 ) -> io::Result<()> {
     reader.seek(SeekFrom::Start(page_offset))?;
     let mut page = [0u8; PST_PAGE_SIZE];
     reader.read_exact(&mut page)?;
 
-    let ptype = page[496];
-    let w_sig = u16::from_le_bytes([page[498], page[499]]);
-    if ptype != PTYPE_BBT || w_sig != PST_TRAILER_SIG {
+    let ptype = page[if is_ansi { 500 } else { 496 }];
+    if ptype != PTYPE_BBT {
         return Ok(());
     }
 
-    let c_ent = page[488] as usize;
-    let c_level = page[491];
+    let c_ent = page[if is_ansi { 496 } else { 488 }] as usize;
+    let raw_cb_ent = page[if is_ansi { 498 } else { 490 }] as usize;
+    let cb_ent = if raw_cb_ent == 0 {
+        if is_ansi { 12 } else { 24 }
+    } else {
+        raw_cb_ent
+    };
+    let c_level = page[if is_ansi { 499 } else { 491 }];
 
     if c_level == 0 {
-        // Leaf page: 24-byte BBTENTRY
         for i in 0..c_ent {
-            let base = i * 24;
-            if base + 24 <= PST_PAGE_DATA_SIZE {
+            let base = i * cb_ent;
+            if is_ansi && base + 12 <= PST_PAGE_DATA_SIZE {
+                let bid = u32::from_le_bytes(page[base..base + 4].try_into().unwrap()) as u64;
+                let ib = u32::from_le_bytes(page[base + 4..base + 8].try_into().unwrap()) as u64;
+                let cb = u16::from_le_bytes(page[base + 8..base + 10].try_into().unwrap()) as u32;
+                if bid > 0 && ib > 0 && cb > 0 {
+                    bbt_map.insert(bid, (ib, cb));
+                }
+            } else if !is_ansi && base + 24 <= PST_PAGE_DATA_SIZE {
                 let bid = u64::from_le_bytes(page[base..base + 8].try_into().unwrap());
                 let ib = u64::from_le_bytes(page[base + 8..base + 16].try_into().unwrap());
                 let cb = u16::from_le_bytes(page[base + 16..base + 18].try_into().unwrap()) as u32;
@@ -805,11 +1060,16 @@ fn traverse_bbt<R: Read + Seek>(
             }
         }
     } else {
-        // Intermediate branch page: 24-byte BTENTRY
+        let stride = if is_ansi { 12 } else { 24 };
         let mut child_offsets = Vec::with_capacity(c_ent);
         for i in 0..c_ent {
-            let base = i * 24;
-            if base + 24 <= PST_PAGE_DATA_SIZE {
+            let base = i * stride;
+            if is_ansi && base + 12 <= PST_PAGE_DATA_SIZE {
+                let child_ib = u32::from_le_bytes(page[base + 8..base + 12].try_into().unwrap()) as u64;
+                if child_ib > 0 {
+                    child_offsets.push(child_ib);
+                }
+            } else if !is_ansi && base + 24 <= PST_PAGE_DATA_SIZE {
                 let child_ib = u64::from_le_bytes(page[base + 16..base + 24].try_into().unwrap());
                 if child_ib > 0 {
                     child_offsets.push(child_ib);
@@ -817,35 +1077,61 @@ fn traverse_bbt<R: Read + Seek>(
             }
         }
         for child_ib in child_offsets {
-            traverse_bbt(reader, child_ib, bbt_map)?;
+            traverse_bbt(reader, child_ib, bbt_map, is_ansi)?;
         }
     }
     Ok(())
 }
 
-fn traverse_nbt<R: Read + Seek>(reader: &mut R, page_offset: u64, nbt_nodes: &mut Vec<NbtNode>) -> io::Result<()> {
+fn traverse_nbt<R: Read + Seek>(
+    reader: &mut R,
+    page_offset: u64,
+    nbt_nodes: &mut Vec<NbtNode>,
+    is_ansi: bool,
+) -> io::Result<()> {
     reader.seek(SeekFrom::Start(page_offset))?;
     let mut page = [0u8; PST_PAGE_SIZE];
     reader.read_exact(&mut page)?;
 
-    let ptype = page[496];
-    let w_sig = u16::from_le_bytes([page[498], page[499]]);
-    if ptype != PTYPE_NBT || w_sig != PST_TRAILER_SIG {
+    let ptype = page[if is_ansi { 500 } else { 496 }];
+    if ptype != PTYPE_NBT {
         return Ok(());
     }
 
-    let c_ent = page[488] as usize;
-    let c_level = page[491];
+    let c_ent = page[if is_ansi { 496 } else { 488 }] as usize;
+    let raw_cb_ent = page[if is_ansi { 498 } else { 490 }] as usize;
+    let cb_ent = if raw_cb_ent == 0 {
+        if is_ansi { 16 } else { 32 }
+    } else {
+        raw_cb_ent
+    };
+    let c_level = page[if is_ansi { 499 } else { 491 }];
 
     if c_level == 0 {
-        // Leaf page: 32-byte NBTENTRY
         for i in 0..c_ent {
-            let base = i * 32;
-            if base + 32 <= PST_PAGE_DATA_SIZE {
+            let base = i * cb_ent;
+            if is_ansi && base + 16 <= PST_PAGE_DATA_SIZE {
+                let nid = u32::from_le_bytes(page[base..base + 4].try_into().unwrap());
+                let bid_data = u32::from_le_bytes(page[base + 4..base + 8].try_into().unwrap()) as u64;
+                let bid_sub = u32::from_le_bytes(page[base + 8..base + 12].try_into().unwrap()) as u64;
+                let nid_parent = u32::from_le_bytes(page[base + 12..base + 16].try_into().unwrap());
+                if nid > 0 && bid_data > 0 && nid != 0x47474747 {
+                    nbt_nodes.push(NbtNode {
+                        nid,
+                        bid_data,
+                        bid_sub,
+                        nid_parent,
+                    });
+                }
+            } else if !is_ansi && base + cb_ent <= PST_PAGE_DATA_SIZE {
                 let nid = u64::from_le_bytes(page[base..base + 8].try_into().unwrap()) as u32;
                 let bid_data = u64::from_le_bytes(page[base + 8..base + 16].try_into().unwrap());
                 let bid_sub = u64::from_le_bytes(page[base + 16..base + 24].try_into().unwrap());
-                let nid_parent = u32::from_le_bytes(page[base + 24..base + 28].try_into().unwrap());
+                let nid_parent = if cb_ent >= 28 {
+                    u32::from_le_bytes(page[base + 24..base + 28].try_into().unwrap())
+                } else {
+                    bid_sub as u32
+                };
                 if nid > 0 && bid_data > 0 && nid != 0x47474747 {
                     nbt_nodes.push(NbtNode {
                         nid,
@@ -857,11 +1143,16 @@ fn traverse_nbt<R: Read + Seek>(reader: &mut R, page_offset: u64, nbt_nodes: &mu
             }
         }
     } else {
-        // Intermediate branch page: 24-byte BTENTRY
+        let stride = if is_ansi { 12 } else { 24 };
         let mut child_offsets = Vec::with_capacity(c_ent);
         for i in 0..c_ent {
-            let base = i * 24;
-            if base + 24 <= PST_PAGE_DATA_SIZE {
+            let base = i * stride;
+            if is_ansi && base + 12 <= PST_PAGE_DATA_SIZE {
+                let child_ib = u32::from_le_bytes(page[base + 8..base + 12].try_into().unwrap()) as u64;
+                if child_ib > 0 {
+                    child_offsets.push(child_ib);
+                }
+            } else if !is_ansi && base + 24 <= PST_PAGE_DATA_SIZE {
                 let child_ib = u64::from_le_bytes(page[base + 16..base + 24].try_into().unwrap());
                 if child_ib > 0 {
                     child_offsets.push(child_ib);
@@ -869,7 +1160,7 @@ fn traverse_nbt<R: Read + Seek>(reader: &mut R, page_offset: u64, nbt_nodes: &mu
             }
         }
         for child_ib in child_offsets {
-            traverse_nbt(reader, child_ib, nbt_nodes)?;
+            traverse_nbt(reader, child_ib, nbt_nodes, is_ansi)?;
         }
     }
     Ok(())

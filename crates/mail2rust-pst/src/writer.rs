@@ -1,17 +1,19 @@
 use crate::ltp::{
-    PR_ATTACH_CONTENT_ID_W, PR_ATTACH_DATA_BIN, PR_ATTACH_FILENAME_W, PR_ATTACH_FLAGS, PR_ATTACH_LONG_FILENAME_W,
-    PR_ATTACH_METHOD, PR_ATTACH_MIME_TAG_W, PR_ATTACH_NUM, PR_ATTACH_SIZE, PR_BODY_HTML_W, PR_BODY_W,
-    PR_CLIENT_SUBMIT_TIME, PR_CONTENT_COUNT, PR_CONTENT_UNREAD, PR_DISPLAY_NAME_W, PR_EMAIL_ADDRESS_W, PR_HASATTACH,
-    PR_IMPORTANCE, PR_INTERNET_MESSAGE_ID_W, PR_MESSAGE_CLASS_W, PR_MESSAGE_DELIVERY_TIME, PR_MESSAGE_FLAGS,
-    PR_PST_PASSWORD, PR_RECIPIENT_TYPE, PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_W, PR_SMTP_ADDRESS_W, PR_SUBFOLDERS,
-    PR_SUBJECT_W, PropertyContext, TableContext, TableContextRow,
+    MAX_PROPERTY_CONTEXT_BYTES, PR_ATTACH_CONTENT_ID_W, PR_ATTACH_DATA_BIN, PR_ATTACH_FILENAME_W, PR_ATTACH_FLAGS,
+    PR_ATTACH_LONG_FILENAME_W, PR_ATTACH_METHOD, PR_ATTACH_MIME_TAG_W, PR_ATTACH_NUM, PR_ATTACH_SIZE, PR_BODY_HTML_W,
+    PR_BODY_W, PR_CLIENT_SUBMIT_TIME, PR_CONTENT_COUNT, PR_CONTENT_UNREAD, PR_DISPLAY_BCC_W, PR_DISPLAY_CC_W,
+    PR_DISPLAY_NAME_W, PR_DISPLAY_TO_W, PR_EMAIL_ADDRESS_W, PR_HASATTACH, PR_IMPORTANCE, PR_INTERNET_MESSAGE_ID_W,
+    PR_MAIL2RUST_PRESERVED_COUNT, PR_MESSAGE_CLASS_W, PR_MESSAGE_DELIVERY_TIME, PR_MESSAGE_FLAGS, PR_PST_PASSWORD,
+    PR_RECIPIENT_TYPE, PR_SENDER_EMAIL_ADDRESS_W, PR_SENDER_NAME_W, PR_SMTP_ADDRESS_W, PR_SUBFOLDERS, PR_SUBJECT_W,
+    PropertyContext, TableContext, TableContextRow, build_subitem_table_7c, mail2rust_chunk_tag,
 };
 use crate::ndb::{
     AMAP_START_OFFSET, DATA_START_OFFSET, NID_ATTACHMENT_TABLE, NID_MESSAGE_STORE, NID_RECIPIENT_TABLE,
     NID_ROOT_FOLDER, NID_TYPE_ATTACHMENT, PMAP_START_OFFSET, PST_CLIENT_MAGIC, PST_CLIENT_VER, PST_HEADER_SIZE,
     PST_PAGE_DATA_SIZE, PST_PAGE_SIZE, PST_UNICODE_VER, PTYPE_AMAP, PTYPE_BBT, PTYPE_NBT, PTYPE_PMAP, PageTrailer,
-    PstEncryption, calculate_partial_header_crc, compute_pst_password_crc, cyclic_crypt, permute_bytes,
+    PstEncryption, calculate_partial_header_crc, compute_pst_password_crc, cyclic_crypt, permute_bytes, weak_crc32,
 };
+use crate::preserve::PreservedMessage;
 use mail2rust_core::EmailMessage;
 use std::collections::HashMap;
 use std::io::{self, Seek, SeekFrom, Write};
@@ -34,6 +36,8 @@ pub struct PstWriter<W: Write + Seek> {
     bbt_entries: Vec<(u64, u64, u32)>,      // (BID, FileOffset, ByteLength)
     folder_map: HashMap<String, u32>,
     folder_path_nids: HashMap<Vec<String>, u32>,
+    folder_children: HashMap<u32, Vec<u32>>,
+    folder_messages: HashMap<u32, Vec<u32>>,
     encryption: PstEncryption,
     password: Option<String>,
 }
@@ -55,7 +59,7 @@ impl<W: Write + Seek> PstWriter<W> {
             "Initializing MS-PST 64-bit Unicode Personal Folders container"
         );
         // Reserve initial space up to DATA_START_OFFSET (0x4800 = 18,432 bytes)
-        // for HEADER (0x0000..0x0200), AMap (0x4400..0x4600), and PMap (0x4600..0x4800)
+        // for HEADER, AMap (0x4400..0x4600), and PMap (0x4600..0x4800)
         let init_buf = vec![0u8; DATA_START_OFFSET as usize];
         writer.seek(SeekFrom::Start(0))?;
         writer.write_all(&init_buf)?;
@@ -63,13 +67,15 @@ impl<W: Write + Seek> PstWriter<W> {
         Ok(Self {
             writer,
             current_offset: DATA_START_OFFSET,
-            alloc_nid_counter: 0x8000,
+            alloc_nid_counter: 0x8004, // type bits 0x04 (normal node), matching genuine PSTs
             alloc_bid_counter: 0x0080,
             alloc_page_bid_counter: 0x0042,
             nbt_entries: Vec::new(),
             bbt_entries: Vec::new(),
             folder_map: HashMap::new(),
             folder_path_nids: HashMap::new(),
+            folder_children: HashMap::new(),
+            folder_messages: HashMap::new(),
             encryption,
             password,
         })
@@ -79,6 +85,31 @@ impl<W: Write + Seek> PstWriter<W> {
         let bid = self.alloc_page_bid_counter;
         self.alloc_page_bid_counter += 4;
         bid
+    }
+
+    fn write_padded_ndb_block(&mut self, bid: u64, payload: &[u8]) -> io::Result<u64> {
+        let offset = self.current_offset;
+        let len = payload.len() as u32;
+
+        // A Unicode NDB block is padded to a 64-byte boundary and carries a
+        // 16-byte footer (data size u16, sig u16, checksum u32, back pointer u64)
+        // at its end, which conforming readers like libpff validate against BBT.
+        const FOOTER_SIZE: usize = 16;
+        let mut block_size = (len as usize).div_ceil(64) * 64;
+        if block_size - (len as usize) < FOOTER_SIZE {
+            block_size += 64;
+        }
+        let mut block = vec![0u8; block_size];
+        block[..len as usize].copy_from_slice(payload);
+        let footer = block_size - FOOTER_SIZE;
+        block[footer..footer + 2].copy_from_slice(&(len as u16).to_le_bytes());
+
+        self.writer.seek(SeekFrom::Start(offset))?;
+        self.writer.write_all(&block)?;
+        self.current_offset = offset + block_size as u64;
+
+        self.bbt_entries.push((bid, offset, len));
+        Ok(bid)
     }
 
     pub fn write_block(&mut self, mut data: Vec<u8>) -> io::Result<u64> {
@@ -91,44 +122,14 @@ impl<W: Write + Seek> PstWriter<W> {
             PstEncryption::Cyclic => cyclic_crypt(&mut data, bid),
         }
 
-        let offset = self.current_offset;
-        let len = data.len() as u32;
-
-        self.writer.seek(SeekFrom::Start(offset))?;
-        self.writer.write_all(&data)?;
-
-        // Padding to 64-byte boundary
-        let pad = (64 - (len % 64)) % 64;
-        if pad > 0 {
-            let pad_bytes = vec![0u8; pad as usize];
-            self.writer.write_all(&pad_bytes)?;
-        }
-        self.current_offset = offset + len as u64 + pad as u64;
-
-        self.bbt_entries.push((bid, offset, len));
-        Ok(bid)
+        self.write_padded_ndb_block(bid, &data)
     }
 
     fn write_internal_block(&mut self, data: Vec<u8>) -> io::Result<u64> {
         // Internal NDB blocks (XBLOCK/XXBLOCK/SLBLOCK/SIBLOCK) set bit 1 (0x02) and are not encrypted
         let bid = self.alloc_bid_counter | 0x02;
         self.alloc_bid_counter += 4;
-
-        let offset = self.current_offset;
-        let len = data.len() as u32;
-
-        self.writer.seek(SeekFrom::Start(offset))?;
-        self.writer.write_all(&data)?;
-
-        let pad = (64 - (len % 64)) % 64;
-        if pad > 0 {
-            let pad_bytes = vec![0u8; pad as usize];
-            self.writer.write_all(&pad_bytes)?;
-        }
-        self.current_offset = offset + len as u64 + pad as u64;
-
-        self.bbt_entries.push((bid, offset, len));
-        Ok(bid)
+        self.write_padded_ndb_block(bid, &data)
     }
 
     /// Writes `data` as a single block if <= 8192 bytes, or as an MS-PST `XBLOCK` (`0x01/0x01`) tree if larger.
@@ -154,7 +155,7 @@ impl<W: Write + Seek> PstWriter<W> {
 
     fn add_folder_with_parent_nid(&mut self, name: &str, parent_nid: u32) -> io::Result<u32> {
         let nid = self.alloc_nid_counter;
-        self.alloc_nid_counter += 1;
+        self.alloc_nid_counter += 0x20;
 
         let mut pc = PropertyContext::new();
         pc.add_string_w(PR_DISPLAY_NAME_W, name);
@@ -166,6 +167,7 @@ impl<W: Write + Seek> PstWriter<W> {
         let bid = self.write_block(data)?;
 
         self.nbt_entries.push((nid, bid, 0, parent_nid));
+        self.folder_children.entry(parent_nid).or_default().push(nid);
         self.folder_map.entry(name.to_string()).or_insert(nid);
         debug!(nid = nid, name = name, parent_nid = parent_nid, "Added folder to PST");
         Ok(nid)
@@ -221,7 +223,7 @@ impl<W: Write + Seek> PstWriter<W> {
 
     pub fn add_message(&mut self, msg: &EmailMessage, folder_nid: u32) -> io::Result<u32> {
         let nid = self.alloc_nid_counter;
-        self.alloc_nid_counter += 1;
+        self.alloc_nid_counter += 0x20;
 
         let mut pc = PropertyContext::new();
         let msg_class = msg
@@ -283,6 +285,47 @@ impl<W: Write + Seek> PstWriter<W> {
                 0x000B => pc.add_bool(prop.tag, prop.value == "true" || prop.value == "1"),
                 _ => {}
             }
+        }
+
+        let join_addresses = |addrs: &[mail2rust_core::EmailAddress]| {
+            addrs.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")
+        };
+        if !msg.to.is_empty() {
+            pc.add_string_w(PR_DISPLAY_TO_W, &join_addresses(&msg.to));
+        }
+        if !msg.cc.is_empty() {
+            pc.add_string_w(PR_DISPLAY_CC_W, &join_addresses(&msg.cc));
+        }
+        if !msg.bcc.is_empty() {
+            pc.add_string_w(PR_DISPLAY_BCC_W, &join_addresses(&msg.bcc));
+        }
+
+        // Lossless preservation blob split into 4 KiB chunks. If large attachment
+        // payloads push the JSON blob past the single-PC limit, defer their raw
+        // bytes to the SLBLOCK + XBLOCK attachment subnodes written below.
+        let mut preserved = PreservedMessage::from_message(msg);
+        let mut blob = serde_json::to_vec(&preserved).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        const CHUNK: usize = 4096;
+        let exceeds_pc_budget = |len: usize| {
+            let count = len.div_ceil(CHUNK);
+            len + count * 12 > MAX_PROPERTY_CONTEXT_BYTES
+        };
+        if exceeds_pc_budget(blob.len()) && !preserved.attachments.is_empty() {
+            for att in &mut preserved.attachments {
+                att.data.clear();
+            }
+            blob = serde_json::to_vec(&preserved).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        }
+        if exceeds_pc_budget(blob.len()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "message metadata exceeds single PST property context limit",
+            ));
+        }
+        let chunks: Vec<&[u8]> = blob.chunks(CHUNK).collect();
+        pc.add_u32(PR_MAIL2RUST_PRESERVED_COUNT, chunks.len() as u32);
+        for (i, chunk) in chunks.iter().enumerate() {
+            pc.add_binary(mail2rust_chunk_tag(i as u32), chunk);
         }
 
         let data = pc.serialize()?;
@@ -385,6 +428,7 @@ impl<W: Write + Seek> PstWriter<W> {
         };
 
         self.nbt_entries.push((nid, bid, bid_sub, folder_nid));
+        self.folder_messages.entry(folder_nid).or_default().push(nid);
         debug!(nid = nid, subject = %msg.subject, "Injected message into PST");
         Ok(nid)
     }
@@ -392,7 +436,7 @@ impl<W: Write + Seek> PstWriter<W> {
     /// Writes a custom `PropertyContext` node (such as `IPM.Contact` or `IPM.DistList`) into `folder_nid`.
     pub fn add_property_node(&mut self, pc: &PropertyContext, folder_nid: u32) -> io::Result<u32> {
         let nid = self.alloc_nid_counter;
-        self.alloc_nid_counter += 1;
+        self.alloc_nid_counter += 0x20;
         let data = pc.serialize()?;
         let bid = self.write_stream_or_block(data)?;
         self.nbt_entries.push((nid, bid, 0, folder_nid));
@@ -422,7 +466,22 @@ impl<W: Write + Seek> PstWriter<W> {
             root_pc.add_u32(PR_CONTENT_UNREAD, 0);
             let root_data = root_pc.serialize()?;
             let root_bid = self.write_block(root_data)?;
-            self.nbt_entries.push((NID_ROOT_FOLDER, root_bid, 0, 0));
+            // libpff identifies the root folder by an NBT parent identifier that points to itself.
+            self.nbt_entries.push((NID_ROOT_FOLDER, root_bid, 0, NID_ROOT_FOLDER));
+        }
+
+        // 2b. Emit 0x7C hierarchy and contents tables (NID + 11 / NID + 12) for conforming readers
+        let children = self.folder_children.clone();
+        let messages = self.folder_messages.clone();
+        for (folder_nid, child_ids) in children {
+            let data = build_subitem_table_7c(&child_ids);
+            let bid = self.write_block(data)?;
+            self.nbt_entries.push((folder_nid + 11, bid, 0, folder_nid));
+        }
+        for (folder_nid, msg_ids) in messages {
+            let data = build_subitem_table_7c(&msg_ids);
+            let bid = self.write_block(data)?;
+            self.nbt_entries.push((folder_nid + 12, bid, 0, folder_nid));
         }
 
         // Align offset to 512-byte page boundary
@@ -658,35 +717,35 @@ impl<W: Write + Seek> PstWriter<W> {
         // rgnid[0]: allocation NID high-water mark
         header[0x2C..0x30].copy_from_slice(&self.alloc_nid_counter.to_le_bytes());
 
-        // Legacy compatibility BREF pointers at 0xB4 & 0xC4
-        header[0xB4..0xBC].copy_from_slice(&nbt_root_bid.to_le_bytes());
-        header[0xBC..0xC4].copy_from_slice(&nbt_root_offset.to_le_bytes());
-        header[0xC4..0xCC].copy_from_slice(&bbt_root_bid.to_le_bytes());
-        header[0xCC..0xD4].copy_from_slice(&bbt_root_offset.to_le_bytes());
+        // MS-PST 64-bit Unicode ROOT structure at 0xB4.
+        header[0xB4..0xB8].copy_from_slice(&0u32.to_le_bytes()); // cOrphans
+        header[0xB8..0xC0].copy_from_slice(&file_len.to_le_bytes()); // ibFileEof
+        header[0xC0..0xC8].copy_from_slice(&AMAP_START_OFFSET.to_le_bytes()); // ibAMapLast
+        // cbAMapFree / cbPMapFree (claim 0 free bytes; all allocated pages are tracked)
+        header[0xC8..0xD0].copy_from_slice(&0u64.to_le_bytes());
+        header[0xD0..0xD8].copy_from_slice(&0u64.to_le_bytes());
+        header[0xD8..0xE0].copy_from_slice(&nbt_root_bid.to_le_bytes()); // bRefNBT
+        header[0xE0..0xE8].copy_from_slice(&nbt_root_offset.to_le_bytes()); // ibNBT
+        header[0xE8..0xF0].copy_from_slice(&bbt_root_bid.to_le_bytes()); // bRefBBT
+        header[0xF0..0xF8].copy_from_slice(&bbt_root_offset.to_le_bytes()); // ibBBT
+        header[0xF8] = 0x02; // fAMapValid = VALID_AMAP2
+        header[0xF9] = 0x00; // bARVec
+        header[0xFA..0xFC].copy_from_slice(&0u16.to_le_bytes()); // cARVec
+        header[0xFC..0x100].copy_from_slice(&0u32.to_le_bytes()); // dwAlign
 
-        // Standard MS-PST Unicode ROOT structure at offset 0xB8:
-        // - 0xBC..0xC4: ibFileEof (file length)
-        // - 0xC4..0xCC: ibAMapLast (0x4400)
-        // - 0xDC..0xE4: BREFNBT.bid
-        // - 0xE4..0xEC: BREFNBT.ib
-        // - 0xEC..0xF4: BREFBBT.bid
-        // - 0xF4..0xFC: BREFBBT.ib
-        // - 0xFC: fAMapValid (0x01)
-        header[0xBC..0xC4].copy_from_slice(&file_len.to_le_bytes());
-        header[0xC4..0xCC].copy_from_slice(&AMAP_START_OFFSET.to_le_bytes());
-        header[0xDC..0xE4].copy_from_slice(&nbt_root_bid.to_le_bytes());
-        header[0xE4..0xEC].copy_from_slice(&nbt_root_offset.to_le_bytes());
-        header[0xEC..0xF4].copy_from_slice(&bbt_root_bid.to_le_bytes());
-        header[0xF4..0xFC].copy_from_slice(&bbt_root_offset.to_le_bytes());
-        header[0xFC] = 0x01; // fAMapValid = 1 (valid)
+        // bSentinel & bCryptMethod at the Unicode positions.
+        header[0x200] = 0x80;
+        header[0x201] = self.encryption.as_u8();
+        // bidNextB at 0x204
+        header[0x204..0x20C].copy_from_slice(&self.alloc_bid_counter.to_le_bytes());
 
-        // bSentinel & bCryptMethod (both ANSI 0x1CD and Unicode 0x201 locations)
-        header[0x1CC] = 0x80;
-        header[0x1CD] = self.encryption.as_u8();
-
-        // Calculate dwCRCPartial (over bytes 0x08..0x1DF) and write at 0x04
+        // dwCRCPartial (weak CRC over bytes 0x08..0x1DF) written at 0x04
         let crc = calculate_partial_header_crc(&header);
         header[0x04..0x08].copy_from_slice(&crc.to_le_bytes());
+
+        // dwCRCFull at 0x20C: weak CRC over bytes 0x08..0x20C (516 bytes).
+        let full_crc = weak_crc32(&header[0x08..0x20C]);
+        header[0x20C..0x210].copy_from_slice(&full_crc.to_le_bytes());
 
         // Write header to start of file
         self.writer.seek(SeekFrom::Start(0))?;

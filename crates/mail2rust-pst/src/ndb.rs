@@ -3,14 +3,16 @@ use crc32fast::Hasher;
 use std::io::{self, Write};
 
 pub const PST_UNICODE_MAGIC: u32 = 0x4E44424E; // "!BDN"
-pub const PST_CLIENT_MAGIC: u16 = 0x534D; // "SM"
+pub const PST_CLIENT_MAGIC: u16 = 0x4D53; // "SM" (bytes 53 4D when written little-endian)
 pub const PST_UNICODE_VER: u16 = 23; // Outlook 2003 - 2024 / M365
 pub const PST_CLIENT_VER: u16 = 19;
-pub const PST_HEADER_SIZE: usize = 512;
+pub const PST_HEADER_SIZE: usize = 564; // MS-PST file header is 564 bytes
 
 pub const PST_PAGE_SIZE: usize = 512;
 pub const PST_PAGE_DATA_SIZE: usize = 496;
-pub const PST_TRAILER_SIG: u16 = 0x4943; // "CI" signature for Unicode PST BTPAGE
+// NOTE: MS-PST page trailers do not use a fixed wSig. Genuine files carry
+// varying values here (and 0x0000 on AMap/PMap pages). Do not gate on it.
+pub const PST_TRAILER_SIG: u16 = 0x0000;
 
 pub const PTYPE_BBT: u8 = 0x80;
 pub const PTYPE_NBT: u8 = 0x81;
@@ -172,11 +174,23 @@ impl Bref {
     }
 }
 
+/// Microsoft Outlook "weak" CRC-32: reflected polynomial 0xEDB88320, initial
+/// value 0, NO final inversion. This is NOT the standard zlib/crc32fast CRC.
+pub fn weak_crc32(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0;
+    for &byte in data {
+        let mut c = crc ^ (byte as u32);
+        for _ in 0..8 {
+            c = if c & 1 == 1 { (c >> 1) ^ 0xEDB88320 } else { c >> 1 };
+        }
+        crc = c;
+    }
+    crc
+}
+
 pub fn calculate_partial_header_crc(header: &[u8; PST_HEADER_SIZE]) -> u32 {
-    let mut hasher = Hasher::new();
-    // In MS-PST, dwCRCPartial is the CRC32 of 471 bytes starting from offset 0x08 to 0x1DF
-    hasher.update(&header[0x08..0x1DF]);
-    hasher.finalize()
+    // In MS-PST, dwCRCPartial is the weak CRC-32 of 471 bytes from 0x08 to 0x1DF.
+    weak_crc32(&header[0x08..0x1DF])
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,9 +204,7 @@ pub struct PageTrailer {
 
 impl PageTrailer {
     pub fn new(ptype: u8, bid: u64, page_data_496: &[u8]) -> Self {
-        let mut hasher = Hasher::new();
-        hasher.update(&page_data_496[0..PST_PAGE_DATA_SIZE]);
-        let dw_crc = hasher.finalize();
+        let dw_crc = weak_crc32(&page_data_496[0..PST_PAGE_DATA_SIZE]);
         Self {
             ptype,
             ptype_repeat: ptype,
@@ -218,16 +230,13 @@ impl PageTrailer {
         }
         let ptype = page_512[496];
         let ptype_repeat = page_512[497];
-        let w_sig = u16::from_le_bytes([page_512[498], page_512[499]]);
         let declared_crc = u32::from_le_bytes([page_512[500], page_512[501], page_512[502], page_512[503]]);
 
-        if ptype != expected_ptype || ptype_repeat != expected_ptype || w_sig != PST_TRAILER_SIG {
+        if ptype != expected_ptype || ptype_repeat != expected_ptype {
             return false;
         }
 
-        let mut hasher = Hasher::new();
-        hasher.update(&page_512[0..PST_PAGE_DATA_SIZE]);
-        let calc_crc = hasher.finalize();
+        let calc_crc = weak_crc32(&page_512[0..PST_PAGE_DATA_SIZE]);
         calc_crc == declared_crc
     }
 }

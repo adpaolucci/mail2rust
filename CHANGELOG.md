@@ -5,6 +5,16 @@ All notable changes to `mail2rust` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **MS-PST Header, Weak CRC-32, `0x7C` Tables & ANSI/Unicode Reader (`mail2rust-pst`)**:
+  - Updated `PST_HEADER_SIZE` to 564 bytes, `PST_CLIENT_MAGIC` (`0x4D53`, `'SM'`), Unicode ROOT field offsets (`0xB8`, `0xC0`, `0xD8..0xFC`), `dwCRCFull` (`0x20C`), `alloc_nid_counter` stepping (`0x20`), 64-byte padded NDB block footers, and MS-PST weak CRC-32 checksums (`weak_crc32`).
+  - Upgraded `PropertyContext::serialize()` to emit conformant MS-PST `0xEC/0xBC` HNHDR/B5/BTH tables alongside `0x7C` folder hierarchy (`nid + 11`) and contents (`nid + 12`) subitem tables.
+  - Extended `PstReader` and `PstValidator` for genuine 32-bit ANSI and 64-bit Unicode PSTs (BID-list indirection, HTML subnode stream recovery, MAPI date/sender fallbacks, and lossless chunked `PreservedMessage` round-trip metadata while preserving `SLBLOCK` + `XBLOCK` attachments and recipients).
+- **EML HTML Export (`mail2rust-eml`)**: Emits `multipart/alternative` when both `body_text` and `body_html` are present.
+- **Packaging**: Marked WinGet/Homebrew manifests as templates and added `scripts/packaging_hashes.py` to fill release digests in `.github/workflows/release.yml`.
+
 ## [3.5.0] - 2026-11-19
 
 ### Changed
