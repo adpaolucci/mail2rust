@@ -3,6 +3,15 @@ use md5::Md5;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub(crate) fn hex_lower(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(&mut out, "{b:02x}");
+    }
+    out
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmailAddress {
     pub name: String,
@@ -85,7 +94,7 @@ impl Attachment {
     pub fn new(filename: String, mime_type: String, data: Vec<u8>, content_id: Option<String>) -> Self {
         let mut hasher = Sha256::new();
         hasher.update(&data);
-        let sha256 = format!("{:x}", hasher.finalize());
+        let sha256 = hex_lower(&hasher.finalize());
         let size_bytes = data.len();
         let id = format!("att_{}_{}", size_bytes, &sha256[..8]);
 
@@ -170,11 +179,11 @@ impl EmailMessage {
     pub fn compute_hashes(raw_data: &[u8]) -> (String, String) {
         let mut sha = Sha256::new();
         sha.update(raw_data);
-        let sha256 = format!("{:x}", sha.finalize());
+        let sha256 = hex_lower(&sha.finalize());
 
         let mut md = Md5::new();
         md.update(raw_data);
-        let md5 = format!("{:x}", md.finalize());
+        let md5 = hex_lower(&md.finalize());
 
         (sha256, md5)
     }
@@ -198,7 +207,7 @@ impl EmailMessage {
         if !clean_subj.is_empty() {
             let mut hasher = Sha256::new();
             hasher.update(clean_subj.as_bytes());
-            format!("thread_{}", &format!("{:x}", hasher.finalize())[..16])
+            format!("thread_{}", &hex_lower(&hasher.finalize())[..16])
         } else {
             format!("msg_{}", message_id.trim_matches(|c| c == '<' || c == '>'))
         }

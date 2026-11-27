@@ -74,7 +74,13 @@ impl ForensicEngine {
         for h in hashes {
             root.update(h.as_bytes());
         }
-        format!("{:x}", root.finalize())
+        let digest = root.finalize();
+        let mut out = String::with_capacity(digest.len() * 2);
+        for b in digest {
+            use std::fmt::Write;
+            let _ = write!(&mut out, "{b:02x}");
+        }
+        out
     }
 
     pub fn generate_manifest(

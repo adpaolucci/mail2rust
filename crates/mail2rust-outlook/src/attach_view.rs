@@ -3,7 +3,7 @@ use crate::error::{OutlookError, OutlookResult};
 use crate::nk2::query_provider_to_json;
 use crate::pst_ext::{load_messages_from_source, strip_pst_to_file};
 use chrono::{DateTime, Utc};
-use guap_export::{CustodyLeaf, CustodyManifest, build_custody_manifest, write_custody_manifest_json};
+use guap_export::{CustodyLeaf, CustodyManifest, build_custody_manifest, sha256_hex, write_custody_manifest_json};
 use guap_mcp::{ActionCommand, ActionRiskLevel, McpToolError};
 use guap_table::{
     CellValue, ColumnDef, ColumnType, Row, TableData, TableError, TableProvider, TableQuery, TableSchema, apply_query,
@@ -12,7 +12,6 @@ use mail2rust_core::{FormatSniffer, MailboxFormat, sanitize_filename};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -150,7 +149,7 @@ pub fn collect_attachments(source: &Path, filter: &AttachmentFilter) -> OutlookR
             let sha256 = if !att.sha256.is_empty() {
                 att.sha256.clone()
             } else {
-                format!("{:x}", Sha256::digest(&att.data))
+                sha256_hex(&att.data)
             };
             let is_inline = att.content_id.is_some();
 

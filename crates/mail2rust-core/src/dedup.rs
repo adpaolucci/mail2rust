@@ -1,4 +1,4 @@
-use crate::models::EmailMessage;
+use crate::models::{EmailMessage, hex_lower};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -39,7 +39,7 @@ impl DedupEngine {
                     } else {
                         let mut h = Sha256::new();
                         h.update(msg.raw_mime.as_slice());
-                        format!("{:x}", h.finalize())
+                        hex_lower(&h.finalize())
                     }
                 }
                 DedupStrategy::MessageId => {
@@ -52,7 +52,7 @@ impl DedupEngine {
                     } else {
                         let mut h = Sha256::new();
                         h.update(msg.raw_mime.as_slice());
-                        format!("{:x}", h.finalize())
+                        hex_lower(&h.finalize())
                     }
                 }
                 DedupStrategy::NormalizedContent => {
@@ -60,7 +60,7 @@ impl DedupEngine {
                     h.update(msg.from.email.to_lowercase().as_bytes());
                     h.update(msg.subject.trim().to_lowercase().as_bytes());
                     h.update(msg.body_text.trim().as_bytes());
-                    format!("{:x}", h.finalize())
+                    hex_lower(&h.finalize())
                 }
                 DedupStrategy::None => String::new(),
             };
