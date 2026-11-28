@@ -16,7 +16,7 @@ struct Args {
     #[arg(long)]
     tools: bool,
 
-    /// Permit mutating Outlook/Office tools (nk2 edit, office addins toggle, attach strip) when confirm_destructive=true
+    /// Permit mutating and disk-writing MCP tools (convert, split, merge, audit CSV, nk2 edit, office addins toggle, attach extract/strip) when confirm_destructive=true
     #[arg(long)]
     allow_mutating: bool,
 

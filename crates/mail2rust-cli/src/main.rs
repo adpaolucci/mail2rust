@@ -546,7 +546,7 @@ enum Commands {
         /// Print tools manifest in JSON schema format and exit
         #[arg(long)]
         tools: bool,
-        /// Allow mutating Outlook/Office MCP actions when confirm_destructive=true
+        /// Allow mutating and disk-writing MCP actions (convert, split, merge, audit CSV, nk2 edit, office addins toggle, attach extract/strip) when confirm_destructive=true
         #[arg(long)]
         allow_mutating: bool,
     },

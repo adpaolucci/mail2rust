@@ -424,6 +424,89 @@ mod tests {
             )
             .unwrap();
         assert_eq!(ok_edit["status"], "dry_run");
+
+        // mail2rust_outlook_attach_extract is ActionRiskLevel::Mutating (writes files to disk)
+        let blocked_extract_dir = dir.path().join("blocked_extract");
+        let err_extract_ro = ro_reg
+            .dispatch(
+                "mail2rust_outlook_attach_extract",
+                &json!({
+                    "source": fx.pst_path.to_string_lossy(),
+                    "extract_dir": blocked_extract_dir.to_string_lossy(),
+                    "confirm_destructive": true
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err_extract_ro.code, -32003);
+        assert!(!blocked_extract_dir.exists());
+
+        let err_extract_nc = rw_reg
+            .dispatch(
+                "mail2rust_outlook_attach_extract",
+                &json!({
+                    "source": fx.pst_path.to_string_lossy(),
+                    "extract_dir": blocked_extract_dir.to_string_lossy()
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err_extract_nc.code, -32003);
+        assert!(!blocked_extract_dir.exists());
+
+        // Dry-run preview under AllowMutating succeeds without confirm_destructive and writes nothing
+        let dry_extract = rw_reg
+            .dispatch(
+                "mail2rust_outlook_attach_extract",
+                &json!({
+                    "source": fx.pst_path.to_string_lossy(),
+                    "extract_dir": blocked_extract_dir.to_string_lossy(),
+                    "dry_run": true
+                }),
+            )
+            .unwrap();
+        assert_eq!(dry_extract["status"], "dry_run");
+        assert!(!blocked_extract_dir.exists());
+
+        // DryRunOnly rejects non-dry-run (-32003) and permits dry_run=true preview
+        let mut dry_reg = McpServerRegistry::new(PolicyMode::DryRunOnly);
+        register_outlook_mcp_commands(&mut dry_reg);
+        let err_dry_policy = dry_reg
+            .dispatch(
+                "mail2rust_outlook_attach_extract",
+                &json!({
+                    "source": fx.pst_path.to_string_lossy(),
+                    "extract_dir": blocked_extract_dir.to_string_lossy(),
+                    "confirm_destructive": true
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err_dry_policy.code, -32003);
+        let ok_dry_policy = dry_reg
+            .dispatch(
+                "mail2rust_outlook_attach_extract",
+                &json!({
+                    "source": fx.pst_path.to_string_lossy(),
+                    "extract_dir": blocked_extract_dir.to_string_lossy(),
+                    "dry_run": true
+                }),
+            )
+            .unwrap();
+        assert_eq!(ok_dry_policy["status"], "dry_run");
+        assert!(!blocked_extract_dir.exists());
+
+        // Confirmed AllowMutating extracts attachments + custody_manifest.json
+        let ok_extract_dir = dir.path().join("allowed_extract");
+        let ok_extract = rw_reg
+            .dispatch(
+                "mail2rust_outlook_attach_extract",
+                &json!({
+                    "source": fx.pst_path.to_string_lossy(),
+                    "extract_dir": ok_extract_dir.to_string_lossy(),
+                    "confirm_destructive": true
+                }),
+            )
+            .unwrap();
+        assert_eq!(ok_extract["status"], "extracted");
+        assert!(ok_extract_dir.join("custody_manifest.json").is_file());
     }
 
     #[test]

@@ -140,6 +140,14 @@ pub fn get_tools_manifest() -> Value {
                     "resume": {
                         "type": "boolean",
                         "description": "Resume from checkpoint_file, skipping already migrated messages (default: false)"
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "Preview conversion plan without writing files"
+                    },
+                    "confirm_destructive": {
+                        "type": "boolean",
+                        "description": "Must be true to write converted archives under AllowMutating policy"
                     }
                 },
                 "required": ["source", "destination"]
@@ -170,7 +178,15 @@ pub fn get_tools_manifest() -> Value {
                     },
                     "output_csv": {
                         "type": "string",
-                        "description": "Optional CSV output file path for forensic manifest"
+                        "description": "Optional CSV output file path for forensic manifest (writing to disk requires AllowMutating + confirm_destructive=true)"
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "Preview CSV export without writing files"
+                    },
+                    "confirm_destructive": {
+                        "type": "boolean",
+                        "description": "Must be true when output_csv is specified under AllowMutating policy"
                     }
                 },
                 "required": ["path"]
@@ -204,6 +220,14 @@ pub fn get_tools_manifest() -> Value {
                         "type": "string",
                         "enum": ["pst", "mbox", "eml"],
                         "description": "Output format for split volumes (default: pst)"
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "Preview split plan without writing volumes"
+                    },
+                    "confirm_destructive": {
+                        "type": "boolean",
+                        "description": "Must be true to write split volumes under AllowMutating policy"
                     }
                 },
                 "required": ["source", "destination_dir"]
@@ -228,6 +252,14 @@ pub fn get_tools_manifest() -> Value {
                     "dedup": {
                         "type": "boolean",
                         "description": "Deduplicate identical messages across archives (default: true)"
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "Preview merge plan without writing destination archive"
+                    },
+                    "confirm_destructive": {
+                        "type": "boolean",
+                        "description": "Must be true to write merged archive under AllowMutating policy"
                     }
                 },
                 "required": ["sources", "destination"]
@@ -430,7 +462,11 @@ pub fn call_tool(name: &str, arguments: &Value) -> Result<Value, String> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("Autonomous Agent");
             let bates_prefix = arguments.get("bates_prefix").and_then(|v| v.as_str());
-            let output_csv = arguments.get("output_csv").and_then(|v| v.as_str());
+            let output_csv = arguments
+                .get("output_csv")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
 
             let path = Path::new(path_str);
             if !path.exists() {
@@ -646,6 +682,58 @@ fn is_legacy_tool(name: &str) -> bool {
     )
 }
 
+fn is_legacy_mutating_call(tool_name: &str, arguments: &Value) -> bool {
+    match tool_name {
+        "mail2rust_convert" | "mail2rust_split" | "mail2rust_merge" => true,
+        "mail2rust_audit" => arguments
+            .get("output_csv")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty()),
+        _ => false,
+    }
+}
+
+fn enforce_legacy_policy(tool_name: &str, arguments: &Value, policy: PolicyMode) -> Result<(), Value> {
+    if !is_legacy_mutating_call(tool_name, arguments) {
+        return Ok(());
+    }
+    let dry_run = arguments.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+    match policy {
+        PolicyMode::ReadOnlyOnly => Err(json!({
+            "code": -32003,
+            "message": format!("SAFETY REFUSAL: tool '{tool_name}' writes files to disk and is blocked under ReadOnlyOnly policy")
+        })),
+        PolicyMode::DryRunOnly => {
+            if dry_run {
+                Ok(())
+            } else {
+                Err(json!({
+                    "code": -32003,
+                    "message": format!("SAFETY REFUSAL: tool '{tool_name}' requires dry_run=true under DryRunOnly policy")
+                }))
+            }
+        }
+        PolicyMode::AllowMutating => {
+            if dry_run {
+                return Ok(());
+            }
+            if arguments
+                .get("confirm_destructive")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                Ok(())
+            } else {
+                Err(json!({
+                    "code": -32003,
+                    "message": format!("SAFETY REFUSAL: tool '{tool_name}' requires confirm_destructive=true under AllowMutating policy")
+                }))
+            }
+        }
+    }
+}
+
 /// Handles a single incoming JSON-RPC request under the default `PolicyMode::ReadOnlyOnly` policy.
 pub fn handle_jsonrpc_request(req: &Value) -> Option<Value> {
     handle_jsonrpc_request_with_policy(req, PolicyMode::ReadOnlyOnly)
@@ -746,8 +834,31 @@ pub fn handle_jsonrpc_request_with_policy(req: &Value, policy: PolicyMode) -> Op
                     });
                 }
                 let default_args = json!({});
-                let arguments = raw_args.unwrap_or(&default_args);
-                let res = call_tool(tool_name, arguments);
+                let arguments = raw_args.filter(|a| a.is_object()).unwrap_or(&default_args);
+                if let Err(err_obj) = enforce_legacy_policy(tool_name, arguments, policy) {
+                    return id.map(|req_id| {
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": req_id,
+                            "error": err_obj
+                        })
+                    });
+                }
+                let dry_run = arguments.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+                let res = if dry_run && is_legacy_mutating_call(tool_name, arguments) {
+                    let mut preview_args = arguments.clone();
+                    if let Some(obj) = preview_args.as_object_mut() {
+                        obj.remove("confirm_destructive");
+                    }
+                    Ok(json!({
+                        "dry_run": true,
+                        "tool": tool_name,
+                        "applied": false,
+                        "arguments": preview_args
+                    }))
+                } else {
+                    call_tool(tool_name, arguments)
+                };
                 id.map(|req_id| match res {
                     Ok(val) => {
                         let formatted = serde_json::to_string_pretty(&val).unwrap_or_default();
@@ -877,6 +988,14 @@ mod tests {
         ] {
             assert!(names.contains(&expected), "Missing MCP tool {expected}");
         }
+
+        // Verify mail2rust_outlook_attach_extract is advertised as mutating (readOnlyHint: false)
+        let attach_extract_tool = tools
+            .iter()
+            .find(|t| t["name"] == "mail2rust_outlook_attach_extract")
+            .expect("mail2rust_outlook_attach_extract in manifest");
+        assert_eq!(attach_extract_tool["annotations"]["readOnlyHint"], false);
+        assert_eq!(attach_extract_tool["annotations"]["destructiveHint"], true);
     }
 
     #[test]
@@ -1138,5 +1257,200 @@ mod tests {
         }))
         .expect("Response expected");
         assert_eq!(unknown_tool["error"]["code"], -32601);
+
+        // 6. Verify PolicyMode::ReadOnlyOnly blocks all disk-writing legacy & attach_extract tools with -32003
+        let blocked_pst = temp_dir.path().join("blocked.pst");
+        let blocked_split = temp_dir.path().join("blocked_split");
+        let blocked_merge = temp_dir.path().join("blocked_merge.pst");
+        let blocked_csv = temp_dir.path().join("blocked.csv");
+        let blocked_att = temp_dir.path().join("blocked_att");
+        for (name, args) in [
+            (
+                "mail2rust_convert",
+                json!({ "source": sample_mbox.to_string_lossy(), "destination": blocked_pst.to_string_lossy(), "confirm_destructive": true }),
+            ),
+            (
+                "mail2rust_split",
+                json!({ "source": dest_pst.to_string_lossy(), "destination_dir": blocked_split.to_string_lossy(), "confirm_destructive": true }),
+            ),
+            (
+                "mail2rust_merge",
+                json!({ "sources": [dest_pst.to_string_lossy()], "destination": blocked_merge.to_string_lossy(), "confirm_destructive": true }),
+            ),
+            (
+                "mail2rust_audit",
+                json!({ "path": dest_pst.to_string_lossy(), "output_csv": blocked_csv.to_string_lossy(), "confirm_destructive": true }),
+            ),
+            (
+                "mail2rust_outlook_attach_extract",
+                json!({ "source": dest_pst.to_string_lossy(), "extract_dir": blocked_att.to_string_lossy(), "confirm_destructive": true }),
+            ),
+        ] {
+            let blocked = handle_jsonrpc_request(&json!({
+                "jsonrpc": "2.0",
+                "id": 200,
+                "method": "tools/call",
+                "params": { "name": name, "arguments": args }
+            }))
+            .unwrap();
+            assert_eq!(
+                blocked["error"]["code"], -32003,
+                "expected -32003 for {name}: {blocked}"
+            );
+        }
+        assert!(!blocked_pst.exists());
+        assert!(!blocked_split.exists());
+        assert!(!blocked_merge.exists());
+        assert!(!blocked_csv.exists());
+        assert!(!blocked_att.exists());
+
+        // Read-only audit WITHOUT output_csv (and with whitespace-only output_csv) succeeds under ReadOnlyOnly
+        for (req_id, args) in [
+            (201, json!({ "path": dest_pst.to_string_lossy() })),
+            (211, json!({ "path": dest_pst.to_string_lossy(), "output_csv": "   " })),
+        ] {
+            let ro_audit = handle_jsonrpc_request(&json!({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "method": "tools/call",
+                "params": {
+                    "name": "mail2rust_audit",
+                    "arguments": args
+                }
+            }))
+            .unwrap();
+            assert_eq!(ro_audit["result"]["isError"], false);
+        }
+
+        // DryRunOnly blocks non-dry-run (-32003) and allows dry_run=true preview without writing files
+        let dry_only_path = temp_dir.path().join("dry_only.pst");
+        let dry_only_blocked = handle_jsonrpc_request_with_policy(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 212,
+                "method": "tools/call",
+                "params": {
+                    "name": "mail2rust_convert",
+                    "arguments": {
+                        "source": sample_mbox.to_string_lossy(),
+                        "destination": dry_only_path.to_string_lossy(),
+                        "confirm_destructive": true
+                    }
+                }
+            }),
+            PolicyMode::DryRunOnly,
+        )
+        .unwrap();
+        assert_eq!(dry_only_blocked["error"]["code"], -32003);
+        assert!(!dry_only_path.exists());
+
+        let dry_only_ok = handle_jsonrpc_request_with_policy(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 213,
+                "method": "tools/call",
+                "params": {
+                    "name": "mail2rust_convert",
+                    "arguments": {
+                        "source": sample_mbox.to_string_lossy(),
+                        "destination": dry_only_path.to_string_lossy(),
+                        "dry_run": true,
+                        "confirm_destructive": true
+                    }
+                }
+            }),
+            PolicyMode::DryRunOnly,
+        )
+        .unwrap();
+        assert_eq!(dry_only_ok["result"]["isError"], false);
+        let dry_payload: Value =
+            serde_json::from_str(dry_only_ok["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(dry_payload["dry_run"], true);
+        assert_eq!(dry_payload["applied"], false);
+        assert!(dry_payload["arguments"].get("confirm_destructive").is_none());
+        assert!(!dry_only_path.exists());
+
+        // AllowMutating with dry_run=true (no confirm_destructive) previews without writing
+        let allow_dry = handle_jsonrpc_request_with_policy(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 214,
+                "method": "tools/call",
+                "params": {
+                    "name": "mail2rust_audit",
+                    "arguments": {
+                        "path": dest_pst.to_string_lossy(),
+                        "output_csv": blocked_csv.to_string_lossy(),
+                        "dry_run": true
+                    }
+                }
+            }),
+            PolicyMode::AllowMutating,
+        )
+        .unwrap();
+        assert_eq!(allow_dry["result"]["isError"], false);
+        assert!(!blocked_csv.exists());
+
+        // AllowMutating without confirm_destructive returns -32003, with confirm_destructive=true succeeds
+        let allowed_pst = temp_dir.path().join("allowed.pst");
+        let conv_no_confirm = handle_jsonrpc_request_with_policy(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 202,
+                "method": "tools/call",
+                "params": {
+                    "name": "mail2rust_convert",
+                    "arguments": {
+                        "source": sample_mbox.to_string_lossy(),
+                        "destination": allowed_pst.to_string_lossy()
+                    }
+                }
+            }),
+            PolicyMode::AllowMutating,
+        )
+        .unwrap();
+        assert_eq!(conv_no_confirm["error"]["code"], -32003);
+        assert!(!allowed_pst.exists());
+
+        let conv_ok = handle_jsonrpc_request_with_policy(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 203,
+                "method": "tools/call",
+                "params": {
+                    "name": "mail2rust_convert",
+                    "arguments": {
+                        "source": sample_mbox.to_string_lossy(),
+                        "destination": allowed_pst.to_string_lossy(),
+                        "confirm_destructive": true
+                    }
+                }
+            }),
+            PolicyMode::AllowMutating,
+        )
+        .unwrap();
+        assert_eq!(conv_ok["result"]["isError"], false);
+        assert!(allowed_pst.is_file());
+
+        // AllowMutating + confirm_destructive=true writes audit CSV
+        let audit_ok = handle_jsonrpc_request_with_policy(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 204,
+                "method": "tools/call",
+                "params": {
+                    "name": "mail2rust_audit",
+                    "arguments": {
+                        "path": dest_pst.to_string_lossy(),
+                        "output_csv": blocked_csv.to_string_lossy(),
+                        "confirm_destructive": true
+                    }
+                }
+            }),
+            PolicyMode::AllowMutating,
+        )
+        .unwrap();
+        assert_eq!(audit_ok["result"]["isError"], false);
+        assert!(blocked_csv.is_file());
     }
 }

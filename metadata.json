@@ -79,8 +79,8 @@
     },
     {
       "id": "mail2rust_outlook_attach_extract",
-      "readOnly": true,
-      "summary": "Bulk extract filtered attachments from PST/OST/MSG/MBOX/EML into a destination directory with SHA-256 custody manifest (read-only on source)."
+      "readOnly": false,
+      "summary": "Bulk extract filtered attachments from PST/OST/MSG/MBOX/EML into a destination directory with SHA-256 custody manifest (writes files to disk; requires AllowMutating + confirm_destructive=true)."
     },
     {
       "id": "mail2rust_outlook_attach_strip",

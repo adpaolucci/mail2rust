@@ -430,7 +430,7 @@ impl ActionCommand for OutlookAttachCommand {
     }
 }
 
-/// Read-only MCP `ActionCommand` for bulk extracting attachments (`mail2rust_outlook_attach_extract`).
+/// Mutating MCP `ActionCommand` for bulk extracting attachments to disk (`mail2rust_outlook_attach_extract`).
 pub struct OutlookAttachExtractCommand;
 
 impl ActionCommand for OutlookAttachExtractCommand {
@@ -439,11 +439,11 @@ impl ActionCommand for OutlookAttachExtractCommand {
     }
 
     fn description(&self) -> &'static str {
-        "Bulk extract filtered attachments from PST/OST/MSG/MBOX/EML into a destination directory with SHA-256 custody manifest (read-only on source)."
+        "Bulk extract filtered attachments from PST/OST/MSG/MBOX/EML into a destination directory with SHA-256 custody manifest (writes files to disk; requires AllowMutating + confirm_destructive=true)."
     }
 
     fn risk_level(&self) -> ActionRiskLevel {
-        ActionRiskLevel::ReadOnly
+        ActionRiskLevel::Mutating
     }
 
     fn input_schema(&self) -> Value {
