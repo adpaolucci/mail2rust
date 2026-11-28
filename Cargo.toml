@@ -50,7 +50,7 @@ ctrlc = "3.4"
 rfd = "0.18"
 arboard = "3.6"
 winsafe = { version = "0.0.29", features = ["gui", "shell"] }
-iced = { version = "0.14", features = ["wgpu", "tiny-skia", "tokio", "image-without-codecs"] }
+iced = { version = "0.14", default-features = false, features = ["tiny-skia", "crisp", "web-colors", "tokio", "image-without-codecs", "linux-theme-detection", "x11", "wayland"] }
 tempfile = "3.17"
 
 mail2rust-core = { path = "crates/mail2rust-core" }
