@@ -24,6 +24,17 @@ pub use oauth::{
 pub mod jmap;
 pub use jmap::{JmapClient, JmapError, JmapMailbox, JmapSession};
 
+/// Returns true strictly for loopback hosts (`127.0.0.1`, `localhost`, or `::1`).
+pub(crate) fn is_loopback_host(host: &str) -> bool {
+    let trimmed = host.trim().trim_start_matches('[').trim_end_matches(']');
+    trimmed.eq_ignore_ascii_case("localhost") || trimmed == "127.0.0.1" || trimmed == "::1"
+}
+
+/// Returns true if `s` contains ASCII control characters (`\r`, `\n`, `\0`, `< 0x20`, or `0x7F`).
+pub(crate) fn contains_control_chars(s: &str) -> bool {
+    s.bytes().any(|b| b < 0x20 || b == 0x7F)
+}
+
 #[derive(Debug)]
 pub enum ImapClientError {
     ConnectionFailed(String),
@@ -78,7 +89,7 @@ impl From<imap::Error> for ImapClientError {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ImapConfig {
     pub host: String,
     pub port: u16,
@@ -91,6 +102,24 @@ pub struct ImapConfig {
     pub since_date: Option<NaiveDate>,
     pub auth_method: ImapAuthMethod,
     pub oauth_token: Option<String>,
+}
+
+impl fmt::Debug for ImapConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ImapConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("password", &"<REDACTED>")
+            .field("use_tls", &self.use_tls)
+            .field("insecure_certs", &self.insecure_certs)
+            .field("folder_filter", &self.folder_filter)
+            .field("max_messages_per_folder", &self.max_messages_per_folder)
+            .field("since_date", &self.since_date)
+            .field("auth_method", &self.auth_method)
+            .field("oauth_token", &self.oauth_token.as_ref().map(|_| "<REDACTED>"))
+            .finish()
+    }
 }
 
 impl Default for ImapConfig {
@@ -176,9 +205,43 @@ impl ImapClient {
     }
 
     pub fn connect(&mut self) -> Result<(), ImapClientError> {
+        if self.config.host.is_empty() || self.config.host.bytes().any(|b| b <= 0x20 || b == 0x7F) {
+            return Err(ImapClientError::ProtocolError(
+                "Invalid IMAP host: must be non-empty and must not contain control characters or whitespace"
+                    .to_string(),
+            ));
+        }
+        if contains_control_chars(&self.config.username) {
+            return Err(ImapClientError::ProtocolError(
+                "Invalid IMAP username: must not contain control characters or CR/LF".to_string(),
+            ));
+        }
+        if contains_control_chars(&self.config.password) {
+            return Err(ImapClientError::ProtocolError(
+                "Invalid IMAP password: must not contain control characters or CR/LF".to_string(),
+            ));
+        }
+        if let Some(ref tok) = self.config.oauth_token
+            && contains_control_chars(tok)
+        {
+            return Err(ImapClientError::ProtocolError(
+                "Invalid IMAP OAuth token: must not contain control characters or CR/LF".to_string(),
+            ));
+        }
+        if !self.config.use_tls && !is_loopback_host(&self.config.host) {
+            return Err(ImapClientError::TlsError(format!(
+                "Refusing plaintext IMAP connection (use_tls=false) to non-loopback host '{}'; TLS is required off-loopback",
+                self.config.host
+            )));
+        }
+
         info!(host = %self.config.host, port = self.config.port, tls = self.config.use_tls, "Connecting to IMAP server");
 
-        let address = format!("{}:{}", self.config.host, self.config.port);
+        let address = if self.config.host.contains(':') && !self.config.host.starts_with('[') {
+            format!("[{}]:{}", self.config.host, self.config.port)
+        } else {
+            format!("{}:{}", self.config.host, self.config.port)
+        };
         let timeout = std::time::Duration::from_secs(15);
         use std::net::ToSocketAddrs;
         let socket_addr = address
@@ -362,6 +425,11 @@ impl ImapClient {
     where
         F: FnMut(EmailMessage, u64),
     {
+        if contains_control_chars(folder_name) {
+            return Err(ImapClientError::ProtocolError(
+                "Invalid IMAP folder name: must not contain control characters or CR/LF".to_string(),
+            ));
+        }
         let session = self
             .session
             .as_mut()
@@ -599,6 +667,11 @@ impl ImapClient {
     }
 
     pub fn create_folder(&mut self, folder: &str) -> Result<(), ImapClientError> {
+        if contains_control_chars(folder) {
+            return Err(ImapClientError::ProtocolError(
+                "Invalid IMAP folder name: must not contain control characters or CR/LF".to_string(),
+            ));
+        }
         let session = self
             .session
             .as_mut()
@@ -628,6 +701,11 @@ impl ImapClient {
         flags: &[Flag],
         date: Option<DateTime<FixedOffset>>,
     ) -> Result<(), ImapClientError> {
+        if contains_control_chars(folder) {
+            return Err(ImapClientError::ProtocolError(
+                "Invalid IMAP folder name: must not contain control characters or CR/LF".to_string(),
+            ));
+        }
         let session = self
             .session
             .as_mut()
@@ -652,6 +730,11 @@ impl ImapClient {
     where
         F: FnMut(&[u8], Vec<Flag>, Option<DateTime<FixedOffset>>, u64, Option<String>) -> Result<(), ImapClientError>,
     {
+        if contains_control_chars(folder_name) {
+            return Err(ImapClientError::ProtocolError(
+                "Invalid IMAP folder name: must not contain control characters or CR/LF".to_string(),
+            ));
+        }
         let session = self
             .session
             .as_mut()
@@ -1392,5 +1475,79 @@ mod tests {
         client.disconnect().expect("Disconnect failed");
 
         handle.join().expect("Mock thread panicked");
+    }
+
+    #[test]
+    fn test_imap_config_debug_redacts_secrets() {
+        let cfg = ImapConfig {
+            host: "imap.example.com".to_string(),
+            port: 993,
+            username: "alice@example.com".to_string(),
+            password: "super-secret-imap-password".to_string(),
+            oauth_token: Some("ya29.super-secret-oauth-token".to_string()),
+            ..Default::default()
+        };
+        let rendered = format!("{cfg:?}");
+        assert!(!rendered.contains("super-secret-imap-password"));
+        assert!(!rendered.contains("ya29.super-secret-oauth-token"));
+        assert!(rendered.contains("<REDACTED>"));
+        assert!(rendered.contains("imap.example.com"));
+        assert!(rendered.contains("alice@example.com"));
+    }
+
+    #[test]
+    fn test_imap_refuses_plaintext_off_loopback() {
+        let cfg = ImapConfig {
+            host: "imap.example.com".to_string(),
+            port: 143,
+            username: "alice@example.com".to_string(),
+            password: "secret".to_string(),
+            use_tls: false,
+            ..Default::default()
+        };
+        let mut client = ImapClient::new(cfg);
+        let err = client
+            .connect()
+            .expect_err("plaintext IMAP off-loopback must be rejected");
+        assert!(matches!(err, ImapClientError::TlsError(_)), "unexpected error: {err:?}");
+        assert!(err.to_string().contains("non-loopback"));
+    }
+
+    #[test]
+    fn test_imap_rejects_crlf_and_control_chars_in_credentials_and_host() {
+        let bad_configs = [
+            ImapConfig {
+                host: "127.0.0.1\r\nEvil".to_string(),
+                use_tls: false,
+                ..Default::default()
+            },
+            ImapConfig {
+                host: "127.0.0.1".to_string(),
+                username: "user\r\nLOGOUT".to_string(),
+                use_tls: false,
+                ..Default::default()
+            },
+            ImapConfig {
+                host: "127.0.0.1".to_string(),
+                password: "pass\nINJECT".to_string(),
+                use_tls: false,
+                ..Default::default()
+            },
+            ImapConfig {
+                host: "127.0.0.1".to_string(),
+                oauth_token: Some("tok\r\nX-Injected: 1".to_string()),
+                use_tls: false,
+                ..Default::default()
+            },
+        ];
+
+        for cfg in bad_configs {
+            let mut client = ImapClient::new(cfg);
+            let err = client.connect().expect_err("CRLF/control chars must be rejected");
+            assert!(
+                matches!(err, ImapClientError::ProtocolError(_)),
+                "expected ProtocolError, got {err:?}"
+            );
+        }
     }
 }

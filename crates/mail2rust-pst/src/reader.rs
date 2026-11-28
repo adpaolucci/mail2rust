@@ -148,7 +148,8 @@ impl<R: Read + Seek> PstReader<R> {
         }
 
         if bbt_is_btpage {
-            let _ = traverse_bbt(&mut reader, bbt_offset, &mut bbt_map, is_ansi);
+            let mut visited = HashSet::new();
+            traverse_bbt(&mut reader, bbt_offset, &mut bbt_map, is_ansi, &mut visited, 0)?;
         } else if bbt_offset > 0
             && bbt_bid > 0
             && bbt_offset < file_len
@@ -194,7 +195,8 @@ impl<R: Read + Seek> PstReader<R> {
         }
 
         if nbt_is_btpage {
-            let _ = traverse_nbt(&mut reader, nbt_offset, &mut nbt_nodes, is_ansi);
+            let mut visited = HashSet::new();
+            traverse_nbt(&mut reader, nbt_offset, &mut nbt_nodes, is_ansi, &mut visited, 0)?;
         } else if nbt_offset > 0
             && nbt_bid > 0
             && nbt_offset < file_len
@@ -1016,12 +1018,29 @@ impl PstReader<File> {
     }
 }
 
+const MAX_BTREE_DEPTH: usize = 64;
+
 fn traverse_bbt<R: Read + Seek>(
     reader: &mut R,
     page_offset: u64,
     bbt_map: &mut HashMap<u64, (u64, u32)>,
     is_ansi: bool,
+    visited: &mut HashSet<u64>,
+    depth: usize,
 ) -> io::Result<()> {
+    if depth > MAX_BTREE_DEPTH {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("PST BBT recursion depth exceeded limit ({})", MAX_BTREE_DEPTH),
+        ));
+    }
+    if !visited.insert(page_offset) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Cyclic PST BBT page reference detected at offset {:#x}", page_offset),
+        ));
+    }
+
     reader.seek(SeekFrom::Start(page_offset))?;
     let mut page = [0u8; PST_PAGE_SIZE];
     reader.read_exact(&mut page)?;
@@ -1033,51 +1052,109 @@ fn traverse_bbt<R: Read + Seek>(
 
     let c_ent = page[if is_ansi { 496 } else { 488 }] as usize;
     let raw_cb_ent = page[if is_ansi { 498 } else { 490 }] as usize;
-    let cb_ent = if raw_cb_ent == 0 {
-        if is_ansi { 12 } else { 24 }
-    } else {
-        raw_cb_ent
-    };
     let c_level = page[if is_ansi { 499 } else { 491 }];
+    let max_entries_bytes = if is_ansi { PST_PAGE_DATA_SIZE } else { 488 };
 
     if c_level == 0 {
+        let min_ent = if is_ansi { 12 } else { 24 };
+        let cb_ent = if raw_cb_ent == 0 { min_ent } else { raw_cb_ent };
+        if cb_ent < min_ent {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Malformed PST BBT leaf page: cb_ent ({}) < minimum ({})",
+                    cb_ent, min_ent
+                ),
+            ));
+        }
+        let required_bytes = c_ent
+            .checked_mul(cb_ent)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "PST BBT leaf entry span overflow"))?;
+        if required_bytes > max_entries_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Malformed PST BBT leaf page: {} entries * {} bytes exceeds page capacity ({})",
+                    c_ent, cb_ent, max_entries_bytes
+                ),
+            ));
+        }
+
         for i in 0..c_ent {
             let base = i * cb_ent;
-            if is_ansi && base + 12 <= PST_PAGE_DATA_SIZE {
-                let bid = u32::from_le_bytes(page[base..base + 4].try_into().unwrap()) as u64;
-                let ib = u32::from_le_bytes(page[base + 4..base + 8].try_into().unwrap()) as u64;
-                let cb = u16::from_le_bytes(page[base + 8..base + 10].try_into().unwrap()) as u32;
+            if is_ansi {
+                let entry = page
+                    .get(base..base + 12)
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Truncated ANSI PST BBT leaf entry"))?;
+                let bid = u32::from_le_bytes(entry[0..4].try_into().unwrap()) as u64;
+                let ib = u32::from_le_bytes(entry[4..8].try_into().unwrap()) as u64;
+                let cb = u16::from_le_bytes(entry[8..10].try_into().unwrap()) as u32;
                 if bid > 0 && ib > 0 && cb > 0 {
                     bbt_map.insert(bid, (ib, cb));
                 }
-            } else if !is_ansi && base + 24 <= PST_PAGE_DATA_SIZE {
-                let bid = u64::from_le_bytes(page[base..base + 8].try_into().unwrap());
-                let ib = u64::from_le_bytes(page[base + 8..base + 16].try_into().unwrap());
-                let cb = u16::from_le_bytes(page[base + 16..base + 18].try_into().unwrap()) as u32;
+            } else {
+                let entry = page.get(base..base + 24).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "Truncated Unicode PST BBT leaf entry")
+                })?;
+                let bid = u64::from_le_bytes(entry[0..8].try_into().unwrap());
+                let ib = u64::from_le_bytes(entry[8..16].try_into().unwrap());
+                let cb = u16::from_le_bytes(entry[16..18].try_into().unwrap()) as u32;
                 if bid > 0 && ib > 0 && cb > 0 {
                     bbt_map.insert(bid, (ib, cb));
                 }
             }
         }
     } else {
-        let stride = if is_ansi { 12 } else { 24 };
+        let min_stride = if is_ansi { 12 } else { 24 };
+        let stride = if raw_cb_ent == 0 { min_stride } else { raw_cb_ent };
+        if stride < min_stride {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Malformed PST BBT intermediate page: cb_ent ({}) < minimum ({})",
+                    stride, min_stride
+                ),
+            ));
+        }
+        let required_bytes = c_ent
+            .checked_mul(stride)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "PST BBT intermediate entry span overflow"))?;
+        if required_bytes > max_entries_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Malformed PST BBT intermediate page: {} entries * {} bytes exceeds page capacity ({})",
+                    c_ent, stride, max_entries_bytes
+                ),
+            ));
+        }
+
         let mut child_offsets = Vec::with_capacity(c_ent);
         for i in 0..c_ent {
             let base = i * stride;
-            if is_ansi && base + 12 <= PST_PAGE_DATA_SIZE {
-                let child_ib = u32::from_le_bytes(page[base + 8..base + 12].try_into().unwrap()) as u64;
+            if is_ansi {
+                let entry = page.get(base..base + 12).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "Truncated ANSI PST BBT intermediate entry")
+                })?;
+                let child_ib = u32::from_le_bytes(entry[8..12].try_into().unwrap()) as u64;
                 if child_ib > 0 {
                     child_offsets.push(child_ib);
                 }
-            } else if !is_ansi && base + 24 <= PST_PAGE_DATA_SIZE {
-                let child_ib = u64::from_le_bytes(page[base + 16..base + 24].try_into().unwrap());
+            } else {
+                let entry = page.get(base..base + 24).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Truncated Unicode PST BBT intermediate entry",
+                    )
+                })?;
+                let child_ib = u64::from_le_bytes(entry[16..24].try_into().unwrap());
                 if child_ib > 0 {
                     child_offsets.push(child_ib);
                 }
             }
         }
         for child_ib in child_offsets {
-            traverse_bbt(reader, child_ib, bbt_map, is_ansi)?;
+            traverse_bbt(reader, child_ib, bbt_map, is_ansi, visited, depth + 1)?;
         }
     }
     Ok(())
@@ -1088,7 +1165,22 @@ fn traverse_nbt<R: Read + Seek>(
     page_offset: u64,
     nbt_nodes: &mut Vec<NbtNode>,
     is_ansi: bool,
+    visited: &mut HashSet<u64>,
+    depth: usize,
 ) -> io::Result<()> {
+    if depth > MAX_BTREE_DEPTH {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("PST NBT recursion depth exceeded limit ({})", MAX_BTREE_DEPTH),
+        ));
+    }
+    if !visited.insert(page_offset) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Cyclic PST NBT page reference detected at offset {:#x}", page_offset),
+        ));
+    }
+
     reader.seek(SeekFrom::Start(page_offset))?;
     let mut page = [0u8; PST_PAGE_SIZE];
     reader.read_exact(&mut page)?;
@@ -1100,21 +1192,45 @@ fn traverse_nbt<R: Read + Seek>(
 
     let c_ent = page[if is_ansi { 496 } else { 488 }] as usize;
     let raw_cb_ent = page[if is_ansi { 498 } else { 490 }] as usize;
-    let cb_ent = if raw_cb_ent == 0 {
-        if is_ansi { 16 } else { 32 }
-    } else {
-        raw_cb_ent
-    };
     let c_level = page[if is_ansi { 499 } else { 491 }];
+    let max_entries_bytes = if is_ansi { PST_PAGE_DATA_SIZE } else { 488 };
 
     if c_level == 0 {
+        let min_ent = if is_ansi { 16 } else { 24 };
+        let default_ent = if is_ansi { 16 } else { 32 };
+        let cb_ent = if raw_cb_ent == 0 { default_ent } else { raw_cb_ent };
+        if cb_ent < min_ent {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Malformed PST NBT leaf page: cb_ent ({}) < minimum ({})",
+                    cb_ent, min_ent
+                ),
+            ));
+        }
+        let required_bytes = c_ent
+            .checked_mul(cb_ent)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "PST NBT leaf entry span overflow"))?;
+        if required_bytes > max_entries_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Malformed PST NBT leaf page: {} entries * {} bytes exceeds page capacity ({})",
+                    c_ent, cb_ent, max_entries_bytes
+                ),
+            ));
+        }
+
         for i in 0..c_ent {
             let base = i * cb_ent;
-            if is_ansi && base + 16 <= PST_PAGE_DATA_SIZE {
-                let nid = u32::from_le_bytes(page[base..base + 4].try_into().unwrap());
-                let bid_data = u32::from_le_bytes(page[base + 4..base + 8].try_into().unwrap()) as u64;
-                let bid_sub = u32::from_le_bytes(page[base + 8..base + 12].try_into().unwrap()) as u64;
-                let nid_parent = u32::from_le_bytes(page[base + 12..base + 16].try_into().unwrap());
+            if is_ansi {
+                let entry = page
+                    .get(base..base + 16)
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Truncated ANSI PST NBT leaf entry"))?;
+                let nid = u32::from_le_bytes(entry[0..4].try_into().unwrap());
+                let bid_data = u32::from_le_bytes(entry[4..8].try_into().unwrap()) as u64;
+                let bid_sub = u32::from_le_bytes(entry[8..12].try_into().unwrap()) as u64;
+                let nid_parent = u32::from_le_bytes(entry[12..16].try_into().unwrap());
                 if nid > 0 && bid_data > 0 && nid != 0x47474747 {
                     nbt_nodes.push(NbtNode {
                         nid,
@@ -1123,12 +1239,15 @@ fn traverse_nbt<R: Read + Seek>(
                         nid_parent,
                     });
                 }
-            } else if !is_ansi && base + cb_ent <= PST_PAGE_DATA_SIZE {
-                let nid = u64::from_le_bytes(page[base..base + 8].try_into().unwrap()) as u32;
-                let bid_data = u64::from_le_bytes(page[base + 8..base + 16].try_into().unwrap());
-                let bid_sub = u64::from_le_bytes(page[base + 16..base + 24].try_into().unwrap());
+            } else {
+                let entry = page.get(base..base + cb_ent).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "Truncated Unicode PST NBT leaf entry")
+                })?;
+                let nid = u64::from_le_bytes(entry[0..8].try_into().unwrap()) as u32;
+                let bid_data = u64::from_le_bytes(entry[8..16].try_into().unwrap());
+                let bid_sub = u64::from_le_bytes(entry[16..24].try_into().unwrap());
                 let nid_parent = if cb_ent >= 28 {
-                    u32::from_le_bytes(page[base + 24..base + 28].try_into().unwrap())
+                    u32::from_le_bytes(entry[24..28].try_into().unwrap())
                 } else {
                     bid_sub as u32
                 };
@@ -1143,25 +1262,187 @@ fn traverse_nbt<R: Read + Seek>(
             }
         }
     } else {
-        let stride = if is_ansi { 12 } else { 24 };
+        let min_stride = if is_ansi { 12 } else { 24 };
+        let stride = if raw_cb_ent == 0 { min_stride } else { raw_cb_ent };
+        if stride < min_stride {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Malformed PST NBT intermediate page: cb_ent ({}) < minimum ({})",
+                    stride, min_stride
+                ),
+            ));
+        }
+        let required_bytes = c_ent
+            .checked_mul(stride)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "PST NBT intermediate entry span overflow"))?;
+        if required_bytes > max_entries_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Malformed PST NBT intermediate page: {} entries * {} bytes exceeds page capacity ({})",
+                    c_ent, stride, max_entries_bytes
+                ),
+            ));
+        }
+
         let mut child_offsets = Vec::with_capacity(c_ent);
         for i in 0..c_ent {
             let base = i * stride;
-            if is_ansi && base + 12 <= PST_PAGE_DATA_SIZE {
-                let child_ib = u32::from_le_bytes(page[base + 8..base + 12].try_into().unwrap()) as u64;
+            if is_ansi {
+                let entry = page.get(base..base + 12).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "Truncated ANSI PST NBT intermediate entry")
+                })?;
+                let child_ib = u32::from_le_bytes(entry[8..12].try_into().unwrap()) as u64;
                 if child_ib > 0 {
                     child_offsets.push(child_ib);
                 }
-            } else if !is_ansi && base + 24 <= PST_PAGE_DATA_SIZE {
-                let child_ib = u64::from_le_bytes(page[base + 16..base + 24].try_into().unwrap());
+            } else {
+                let entry = page.get(base..base + 24).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Truncated Unicode PST NBT intermediate entry",
+                    )
+                })?;
+                let child_ib = u64::from_le_bytes(entry[16..24].try_into().unwrap());
                 if child_ib > 0 {
                     child_offsets.push(child_ib);
                 }
             }
         }
         for child_ib in child_offsets {
-            traverse_nbt(reader, child_ib, nbt_nodes, is_ansi)?;
+            traverse_nbt(reader, child_ib, nbt_nodes, is_ansi, visited, depth + 1)?;
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn make_unicode_btpage(ptype: u8, c_ent: u8, cb_ent: u8, c_level: u8) -> [u8; PST_PAGE_SIZE] {
+        let mut page = [0u8; PST_PAGE_SIZE];
+        page[488] = c_ent;
+        page[489] = 20;
+        page[490] = cb_ent;
+        page[491] = c_level;
+        page[496] = ptype;
+        page[497] = ptype;
+        page
+    }
+
+    #[test]
+    fn test_traverse_bbt_rejects_cyclic_page() {
+        let mut buf = vec![0u8; PST_PAGE_SIZE * 2];
+        let mut page = make_unicode_btpage(PTYPE_BBT, 1, 24, 1);
+        // Point child_ib back to self (offset 512)
+        page[16..24].copy_from_slice(&(PST_PAGE_SIZE as u64).to_le_bytes());
+        buf[PST_PAGE_SIZE..PST_PAGE_SIZE * 2].copy_from_slice(&page);
+
+        let mut cursor = Cursor::new(buf);
+        let mut bbt_map = HashMap::new();
+        let mut visited = HashSet::new();
+        let err = traverse_bbt(&mut cursor, PST_PAGE_SIZE as u64, &mut bbt_map, false, &mut visited, 0)
+            .expect_err("cyclic BBT must return error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("Cyclic PST BBT"));
+    }
+
+    #[test]
+    fn test_traverse_nbt_rejects_cyclic_page() {
+        let mut buf = vec![0u8; PST_PAGE_SIZE * 3];
+        let mut page1 = make_unicode_btpage(PTYPE_NBT, 1, 24, 1);
+        page1[16..24].copy_from_slice(&((PST_PAGE_SIZE * 2) as u64).to_le_bytes());
+        let mut page2 = make_unicode_btpage(PTYPE_NBT, 1, 24, 1);
+        page2[16..24].copy_from_slice(&(PST_PAGE_SIZE as u64).to_le_bytes());
+
+        buf[PST_PAGE_SIZE..PST_PAGE_SIZE * 2].copy_from_slice(&page1);
+        buf[PST_PAGE_SIZE * 2..PST_PAGE_SIZE * 3].copy_from_slice(&page2);
+
+        let mut cursor = Cursor::new(buf);
+        let mut nodes = Vec::new();
+        let mut visited = HashSet::new();
+        let err = traverse_nbt(&mut cursor, PST_PAGE_SIZE as u64, &mut nodes, false, &mut visited, 0)
+            .expect_err("cyclic NBT must return error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("Cyclic PST NBT"));
+    }
+
+    #[test]
+    fn test_traverse_nbt_rejects_excessive_recursion_depth() {
+        let total_pages = MAX_BTREE_DEPTH + 3;
+        let mut buf = vec![0u8; PST_PAGE_SIZE * total_pages];
+        for idx in 1..total_pages {
+            let mut page = make_unicode_btpage(PTYPE_NBT, 1, 24, 1);
+            let next_off = ((idx + 1) * PST_PAGE_SIZE) as u64;
+            page[16..24].copy_from_slice(&next_off.to_le_bytes());
+            buf[idx * PST_PAGE_SIZE..(idx + 1) * PST_PAGE_SIZE].copy_from_slice(&page);
+        }
+
+        let mut cursor = Cursor::new(buf);
+        let mut nodes = Vec::new();
+        let mut visited = HashSet::new();
+        let err = traverse_nbt(&mut cursor, PST_PAGE_SIZE as u64, &mut nodes, false, &mut visited, 0)
+            .expect_err("overly deep NBT must return error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("recursion depth"));
+    }
+
+    #[test]
+    fn test_traverse_rejects_malformed_cb_ent_below_24_and_oob() {
+        // 1. Unicode NBT leaf with cb_ent = 8 (< 24)
+        let mut buf = vec![0u8; PST_PAGE_SIZE * 2];
+        let bad_nbt = make_unicode_btpage(PTYPE_NBT, 1, 8, 0);
+        buf[PST_PAGE_SIZE..PST_PAGE_SIZE * 2].copy_from_slice(&bad_nbt);
+
+        let mut cursor = Cursor::new(buf);
+        let mut nodes = Vec::new();
+        let mut visited = HashSet::new();
+        let err = traverse_nbt(&mut cursor, PST_PAGE_SIZE as u64, &mut nodes, false, &mut visited, 0)
+            .expect_err("NBT leaf with cb_ent < 24 must fail");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("cb_ent"));
+
+        // 2. Unicode BBT leaf with cb_ent = 16 (< 24)
+        let mut buf_bbt = vec![0u8; PST_PAGE_SIZE * 2];
+        let bad_bbt = make_unicode_btpage(PTYPE_BBT, 1, 16, 0);
+        buf_bbt[PST_PAGE_SIZE..PST_PAGE_SIZE * 2].copy_from_slice(&bad_bbt);
+
+        let mut cursor_bbt = Cursor::new(buf_bbt);
+        let mut bbt_map = HashMap::new();
+        let mut visited_bbt = HashSet::new();
+        let err_bbt = traverse_bbt(
+            &mut cursor_bbt,
+            PST_PAGE_SIZE as u64,
+            &mut bbt_map,
+            false,
+            &mut visited_bbt,
+            0,
+        )
+        .expect_err("BBT leaf with cb_ent < 24 must fail");
+        assert_eq!(err_bbt.kind(), io::ErrorKind::InvalidData);
+        assert!(err_bbt.to_string().contains("cb_ent"));
+
+        // 3. Unicode NBT leaf with out-of-bounds c_ent * cb_ent > 488
+        let mut buf_oob = vec![0u8; PST_PAGE_SIZE * 2];
+        let oob_nbt = make_unicode_btpage(PTYPE_NBT, 200, 32, 0);
+        buf_oob[PST_PAGE_SIZE..PST_PAGE_SIZE * 2].copy_from_slice(&oob_nbt);
+
+        let mut cursor_oob = Cursor::new(buf_oob);
+        let mut nodes_oob = Vec::new();
+        let mut visited_oob = HashSet::new();
+        let err_oob = traverse_nbt(
+            &mut cursor_oob,
+            PST_PAGE_SIZE as u64,
+            &mut nodes_oob,
+            false,
+            &mut visited_oob,
+            0,
+        )
+        .expect_err("NBT leaf with out-of-bounds c_ent must fail");
+        assert_eq!(err_oob.kind(), io::ErrorKind::InvalidData);
+        assert!(err_oob.to_string().contains("exceeds page capacity"));
+    }
 }

@@ -138,12 +138,26 @@ pub struct JmapAttachmentPart {
     pub name: Option<String>,
 }
 
+/// Maximum HTTP response payload accepted by the JMAP client (64 MiB).
+pub const MAX_HTTP_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+
 /// Pure-Rust client for the modern IETF JSON Meta Application Protocol (JMAP, RFC 8620 / 8621).
 pub struct JmapClient {
     pub session_url: String,
     pub token: String,
     session: Option<JmapSession>,
     account_id: Option<String>,
+}
+
+impl fmt::Debug for JmapClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JmapClient")
+            .field("session_url", &self.session_url)
+            .field("token", &"<REDACTED>")
+            .field("session", &self.session)
+            .field("account_id", &self.account_id)
+            .finish()
+    }
 }
 
 impl JmapClient {
@@ -174,6 +188,10 @@ impl JmapClient {
 
         let session: JmapSession = serde_json::from_str(&body)
             .map_err(|e| JmapError::SessionError(format!("Failed to parse session JSON: {} (Body: {})", e, body)))?;
+
+        // Validate discovered apiUrl before storing session so hostile redirects fail fast.
+        parse_and_validate_http_request("POST", &session.api_url, Some(&self.token))
+            .map_err(|e| JmapError::SessionError(format!("Invalid apiUrl in JMAP session: {}", e)))?;
 
         // Resolve primary mail account id
         let primary_id = session
@@ -618,13 +636,36 @@ pub fn jmap_item_to_email_message(item: JmapEmailItem, mailbox_map: &HashMap<Str
     }
 }
 
-/// Minimal, zero-external-dependency HTTP/HTTPS client supporting JSON payloads and basic chunking.
-fn http_request(
+struct ValidatedHttpTarget<'a> {
+    is_https: bool,
+    host: &'a str,
+    port: u16,
+    path: &'a str,
+    host_header: String,
+    connect_addr: String,
+}
+
+fn parse_and_validate_http_request<'a>(
     method: &str,
-    url_str: &str,
+    url_str: &'a str,
     auth_bearer: Option<&str>,
-    json_body: Option<&str>,
-) -> Result<(u16, String), Box<dyn std::error::Error>> {
+) -> Result<ValidatedHttpTarget<'a>, Box<dyn std::error::Error>> {
+    if method.is_empty()
+        || !method
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err("Invalid HTTP method: must be a non-empty ASCII token without whitespace or control chars".into());
+    }
+    if url_str.bytes().any(|b| b <= 0x20 || b == 0x7F) {
+        return Err("Invalid URL: must not contain control characters, CR/LF, or whitespace".into());
+    }
+    if let Some(token) = auth_bearer
+        && crate::contains_control_chars(token)
+    {
+        return Err("Invalid Bearer token: must not contain control characters or CR/LF".into());
+    }
+
     let (is_https, without_proto) = if let Some(p) = url_str.strip_prefix("https://") {
         (true, p)
     } else if let Some(p) = url_str.strip_prefix("http://") {
@@ -638,24 +679,138 @@ fn http_request(
         None => (without_proto, "/"),
     };
 
-    let (host, port) = if let Some(colon) = host_port.find(':') {
+    let (host, port, is_ipv6_bracketed) = if let Some(rest) = host_port.strip_prefix('[') {
+        let end = rest
+            .find(']')
+            .ok_or_else(|| "Invalid IPv6 host in URL: missing closing ']'".to_string())?;
+        let h = &rest[..end];
+        let after = &rest[end + 1..];
+        let p: u16 = if let Some(port_str) = after.strip_prefix(':') {
+            port_str.parse().map_err(|e| format!("Invalid port in URL: {}", e))?
+        } else if after.is_empty() {
+            if is_https { 443 } else { 80 }
+        } else {
+            return Err("Invalid host/port syntax in URL".into());
+        };
+        (h, p, true)
+    } else if let Some(colon) = host_port.find(':') {
         let h = &host_port[..colon];
         let p: u16 = host_port[colon + 1..]
             .parse()
             .map_err(|e| format!("Invalid port in URL: {}", e))?;
-        (h, p)
+        (h, p, false)
     } else {
-        (host_port, if is_https { 443 } else { 80 })
+        (host_port, if is_https { 443 } else { 80 }, false)
     };
 
-    let addr = format!("{}:{}", host, port);
-    let tcp_stream = TcpStream::connect(&addr)?;
+    if host.is_empty() {
+        return Err("Invalid URL: empty host".into());
+    }
+
+    if !is_https && !crate::is_loopback_host(host) {
+        return Err(format!(
+            "Refusing plaintext http:// JMAP request (with Bearer auth) to non-loopback host '{}'; use https://",
+            host
+        )
+        .into());
+    }
+
+    let (host_header, connect_addr) = if is_ipv6_bracketed || host.contains(':') {
+        (format!("[{}]", host), format!("[{}]:{}", host, port))
+    } else {
+        (host.to_string(), format!("{}:{}", host, port))
+    };
+
+    Ok(ValidatedHttpTarget {
+        is_https,
+        host,
+        port,
+        path,
+        host_header,
+        connect_addr,
+    })
+}
+
+fn read_http_response<R: Read>(stream: &mut R, max_bytes: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut raw_response = Vec::new();
+    let mut buf = [0u8; 4096];
+    let mut expected_total_len = None;
+    let mut is_chunked = false;
+
+    loop {
+        let n = stream.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        if raw_response.len().saturating_add(n) > max_bytes {
+            return Err(format!("HTTP response exceeded maximum allowed size of {} bytes", max_bytes).into());
+        }
+        raw_response.extend_from_slice(&buf[..n]);
+
+        if expected_total_len.is_none() {
+            let header_split = find_subsequence(&raw_response, b"\r\n\r\n")
+                .map(|idx| (idx, 4usize))
+                .or_else(|| find_subsequence(&raw_response, b"\n\n").map(|idx| (idx, 2usize)));
+
+            if let Some((header_end, sep_len)) = header_split {
+                let header_part = String::from_utf8_lossy(&raw_response[..header_end]);
+                for line in header_part.lines() {
+                    let lower = line.to_ascii_lowercase();
+                    if lower.starts_with("content-length:") {
+                        if let Some(val_str) = line.split(':').nth(1)
+                            && let Ok(cl) = val_str.trim().parse::<usize>()
+                        {
+                            let total = header_end
+                                .checked_add(sep_len)
+                                .and_then(|v| v.checked_add(cl))
+                                .ok_or_else(|| "HTTP Content-Length overflow".to_string())?;
+                            if total > max_bytes {
+                                return Err(format!(
+                                    "HTTP response Content-Length ({} bytes total) exceeds maximum allowed size of {} bytes",
+                                    total, max_bytes
+                                )
+                                .into());
+                            }
+                            expected_total_len = Some(total);
+                        }
+                    } else if lower.contains("transfer-encoding: chunked") {
+                        is_chunked = true;
+                    }
+                }
+            }
+        }
+
+        if let Some(expected) = expected_total_len
+            && raw_response.len() >= expected
+        {
+            break;
+        }
+
+        if is_chunked && raw_response.ends_with(b"0\r\n\r\n") {
+            break;
+        }
+    }
+
+    Ok(raw_response)
+}
+
+/// Minimal, zero-external-dependency HTTP/HTTPS client supporting JSON payloads and basic chunking.
+fn http_request(
+    method: &str,
+    url_str: &str,
+    auth_bearer: Option<&str>,
+    json_body: Option<&str>,
+) -> Result<(u16, String), Box<dyn std::error::Error>> {
+    let target = parse_and_validate_http_request(method, url_str, auth_bearer)?;
+    let _ = target.port;
+
+    let tcp_stream = TcpStream::connect(&target.connect_addr)?;
     tcp_stream.set_read_timeout(Some(std::time::Duration::from_secs(20)))?;
     tcp_stream.set_write_timeout(Some(std::time::Duration::from_secs(20)))?;
 
-    let mut stream: Box<dyn ReadWrite> = if is_https {
+    let mut stream: Box<dyn ReadWrite> = if target.is_https {
         let connector = TlsConnector::builder().build()?;
-        let tls_stream = connector.connect(host, tcp_stream)?;
+        let tls_stream = connector.connect(target.host, tcp_stream)?;
         Box::new(tls_stream)
     } else {
         Box::new(tcp_stream)
@@ -677,8 +832,8 @@ fn http_request(
          Connection: close\r\n\r\n\
          {}",
         method,
-        path,
-        host,
+        target.path,
+        target.host_header,
         env!("CARGO_PKG_VERSION"),
         auth_header,
         body_str.len(),
@@ -688,60 +843,7 @@ fn http_request(
     stream.write_all(req.as_bytes())?;
     stream.flush()?;
 
-    let mut raw_response = Vec::new();
-    let mut buf = [0u8; 4096];
-    let mut expected_total_len = None;
-    let mut is_chunked = false;
-
-    loop {
-        let n = stream.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        raw_response.extend_from_slice(&buf[..n]);
-
-        if expected_total_len.is_none() {
-            if let Some(header_end) = find_subsequence(&raw_response, b"\r\n\r\n") {
-                let header_part = String::from_utf8_lossy(&raw_response[..header_end]);
-                for line in header_part.lines() {
-                    let lower = line.to_ascii_lowercase();
-                    if lower.starts_with("content-length:") {
-                        if let Some(val_str) = line.split(':').nth(1)
-                            && let Ok(cl) = val_str.trim().parse::<usize>()
-                        {
-                            expected_total_len = Some(header_end + 4 + cl);
-                        }
-                    } else if lower.contains("transfer-encoding: chunked") {
-                        is_chunked = true;
-                    }
-                }
-            } else if let Some(header_end) = find_subsequence(&raw_response, b"\n\n") {
-                let header_part = String::from_utf8_lossy(&raw_response[..header_end]);
-                for line in header_part.lines() {
-                    let lower = line.to_ascii_lowercase();
-                    if lower.starts_with("content-length:") {
-                        if let Some(val_str) = line.split(':').nth(1)
-                            && let Ok(cl) = val_str.trim().parse::<usize>()
-                        {
-                            expected_total_len = Some(header_end + 2 + cl);
-                        }
-                    } else if lower.contains("transfer-encoding: chunked") {
-                        is_chunked = true;
-                    }
-                }
-            }
-        }
-
-        if let Some(expected) = expected_total_len
-            && raw_response.len() >= expected
-        {
-            break;
-        }
-
-        if is_chunked && raw_response.ends_with(b"0\r\n\r\n") {
-            break;
-        }
-    }
+    let raw_response = read_http_response(&mut stream, MAX_HTTP_RESPONSE_BYTES)?;
 
     let resp_str = String::from_utf8_lossy(&raw_response);
     let (header_part, body_part) = match resp_str.find("\r\n\r\n") {
@@ -1076,5 +1178,79 @@ mod tests {
         assert!(msg.flags.read);
         assert!(msg.flags.flagged);
         assert_eq!(msg.source_format, "JMAP");
+    }
+
+    #[test]
+    fn test_jmap_refuses_plaintext_http_off_loopback() {
+        let mut client = JmapClient::new("http://api.fastmail.com/jmap/session", "fmu1-secret-token");
+        let err = client
+            .connect()
+            .expect_err("plaintext http:// off-loopback must be rejected");
+        assert!(err.to_string().contains("non-loopback"), "unexpected error: {}", err);
+
+        // Verify loopback hosts are accepted by URL validator while spoofing is rejected.
+        assert!(parse_and_validate_http_request("GET", "http://127.0.0.1:8080/jmap/session", Some("tok")).is_ok());
+        assert!(parse_and_validate_http_request("GET", "http://localhost:8080/jmap/session", Some("tok")).is_ok());
+        assert!(parse_and_validate_http_request("GET", "http://[::1]:8080/jmap/session", Some("tok")).is_ok());
+        assert!(parse_and_validate_http_request("GET", "https://api.fastmail.com/jmap/session", Some("tok")).is_ok());
+        assert!(parse_and_validate_http_request("GET", "http://localhost.evil.com/jmap", Some("tok")).is_err());
+        assert!(parse_and_validate_http_request("GET", "http://127.0.0.1.evil.com/jmap", Some("tok")).is_err());
+    }
+
+    #[test]
+    fn test_jmap_rejects_crlf_and_control_chars() {
+        assert!(
+            http_request(
+                "GET",
+                "https://api.fastmail.com/jmap/session\r\nX-Injected: 1",
+                Some("tok"),
+                None
+            )
+            .is_err()
+        );
+        assert!(
+            http_request(
+                "GET",
+                "https://api.fastmail.com/jmap/session",
+                Some("tok\r\nX-Evil: yes"),
+                None
+            )
+            .is_err()
+        );
+        assert!(
+            http_request(
+                "GET\r\nX: 1",
+                "https://api.fastmail.com/jmap/session",
+                Some("tok"),
+                None
+            )
+            .is_err()
+        );
+        assert!(http_request("GET", "https://api.fastmail.com/jmap\x00/session", Some("tok"), None).is_err());
+    }
+
+    #[test]
+    fn test_jmap_bounds_http_response_size() {
+        // 1. Streaming payload exceeding cap without Content-Length
+        let mut oversized = b"HTTP/1.1 200 OK\r\n\r\n".to_vec();
+        oversized.extend(std::iter::repeat_n(b'A', 2048));
+        let mut cursor = std::io::Cursor::new(oversized);
+        let err = read_http_response(&mut cursor, 1024).expect_err("oversized response must be rejected");
+        assert!(err.to_string().contains("exceeded maximum allowed size"));
+
+        // 2. Hostile Content-Length header exceeding cap
+        let huge_cl = b"HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\n\r\nhi";
+        let mut cursor2 = std::io::Cursor::new(huge_cl.as_slice());
+        let err2 = read_http_response(&mut cursor2, 1024).expect_err("huge Content-Length must be rejected");
+        assert!(err2.to_string().contains("exceeds maximum allowed size"));
+    }
+
+    #[test]
+    fn test_jmap_client_debug_redacts_token() {
+        let client = JmapClient::new("https://api.fastmail.com/jmap/session", "fmu1-top-secret-jmap-token");
+        let rendered = format!("{client:?}");
+        assert!(!rendered.contains("fmu1-top-secret-jmap-token"));
+        assert!(rendered.contains("<REDACTED>"));
+        assert!(rendered.contains("https://api.fastmail.com/jmap/session"));
     }
 }

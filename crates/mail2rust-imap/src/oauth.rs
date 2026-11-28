@@ -49,6 +49,15 @@ pub struct XOAuth2Authenticator {
     pub access_token: String,
 }
 
+impl fmt::Debug for XOAuth2Authenticator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("XOAuth2Authenticator")
+            .field("username", &self.username)
+            .field("access_token", &"<REDACTED>")
+            .finish()
+    }
+}
+
 impl imap::Authenticator for XOAuth2Authenticator {
     type Response = Vec<u8>;
 
@@ -64,6 +73,17 @@ pub struct OAuthBearerAuthenticator {
     pub host: String,
     pub port: u16,
     pub access_token: String,
+}
+
+impl fmt::Debug for OAuthBearerAuthenticator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthBearerAuthenticator")
+            .field("username", &self.username)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("access_token", &"<REDACTED>")
+            .finish()
+    }
 }
 
 impl imap::Authenticator for OAuthBearerAuthenticator {
@@ -253,13 +273,25 @@ impl OAuthProvider {
 }
 
 /// Represents the response returned by an OAuth 2.0 token endpoint.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OAuthTokenResponse {
     pub access_token: String,
     pub token_type: String,
     pub expires_in: Option<u64>,
     pub refresh_token: Option<String>,
     pub scope: Option<String>,
+}
+
+impl fmt::Debug for OAuthTokenResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthTokenResponse")
+            .field("access_token", &"<REDACTED>")
+            .field("token_type", &self.token_type)
+            .field("expires_in", &self.expires_in)
+            .field("refresh_token", &self.refresh_token.as_ref().map(|_| "<REDACTED>"))
+            .field("scope", &self.scope)
+            .finish()
+    }
 }
 
 impl OAuthTokenResponse {
@@ -333,6 +365,10 @@ pub fn refresh_access_token(
 
 /// Lightweight, zero-external-dependency HTTPS POST form-urlencoded client using `native-tls`.
 fn https_post_form(url_str: &str, params: &[(&str, &str)]) -> Result<String, Box<dyn std::error::Error>> {
+    if url_str.bytes().any(|b| b <= 0x20 || b == 0x7F) {
+        return Err("Invalid OAuth URL: must not contain control characters or whitespace".into());
+    }
+
     // Parse URL (e.g. "https://oauth2.googleapis.com/token")
     let without_proto = url_str
         .strip_prefix("https://")
@@ -380,12 +416,22 @@ fn https_post_form(url_str: &str, params: &[(&str, &str)]) -> Result<String, Box
     tls_stream.write_all(request.as_bytes())?;
     tls_stream.flush()?;
 
+    const MAX_OAUTH_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
     let mut response_bytes = Vec::new();
     let mut buf = [0u8; 4096];
     loop {
         match tls_stream.read(&mut buf) {
             Ok(0) => break,
-            Ok(n) => response_bytes.extend_from_slice(&buf[..n]),
+            Ok(n) => {
+                if response_bytes.len().saturating_add(n) > MAX_OAUTH_RESPONSE_BYTES {
+                    return Err(format!(
+                        "OAuth HTTP response exceeded maximum allowed size of {} bytes",
+                        MAX_OAUTH_RESPONSE_BYTES
+                    )
+                    .into());
+                }
+                response_bytes.extend_from_slice(&buf[..n]);
+            }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => break,
             Err(e) => return Err(Box::new(e)),
         }
@@ -522,5 +568,36 @@ mod tests {
         assert!(msg.contains("DIAGNOSTIC ADVICE FOR GOOGLE"));
         assert!(msg.contains("App Passwords"));
         assert!(msg.contains("XOAUTH2"));
+    }
+
+    #[test]
+    fn test_oauth_debug_redacts_secrets() {
+        let resp = OAuthTokenResponse {
+            access_token: "secret-access-token".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_in: Some(3600),
+            refresh_token: Some("secret-refresh-token".to_string()),
+            scope: Some("mail".to_string()),
+        };
+        let rendered = format!("{resp:?}");
+        assert!(!rendered.contains("secret-access-token"));
+        assert!(!rendered.contains("secret-refresh-token"));
+        assert!(rendered.contains("<REDACTED>"));
+
+        let xoauth = XOAuth2Authenticator {
+            username: "u@example.com".to_string(),
+            access_token: "secret-xoauth-tok".to_string(),
+        };
+        assert!(!format!("{xoauth:?}").contains("secret-xoauth-tok"));
+        assert!(format!("{xoauth:?}").contains("<REDACTED>"));
+
+        let bearer = OAuthBearerAuthenticator {
+            username: "u@example.com".to_string(),
+            host: "imap.example.com".to_string(),
+            port: 993,
+            access_token: "secret-bearer-tok".to_string(),
+        };
+        assert!(!format!("{bearer:?}").contains("secret-bearer-tok"));
+        assert!(format!("{bearer:?}").contains("<REDACTED>"));
     }
 }
