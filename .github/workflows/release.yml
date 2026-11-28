@@ -15,7 +15,11 @@ on:
       draft:
         description: "Draft release"
         type: boolean
-        default: false
+        default: true
+      sandbox_review_id:
+        description: "Approved Plane 1 Windows Sandbox review run ID (from bun run factory sandbox-approve)"
+        required: false
+        default: ""
       prerelease:
         description: "Prerelease"
         type: boolean
@@ -143,6 +147,7 @@ jobs:
     name: Publish GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    environment: release-approval
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -182,12 +187,26 @@ jobs:
           python3 scripts/packaging_hashes.py --repo mail2rust --version "$VERSION" --assets-dir dist
           zip -r dist/packaging-manifests-ready.zip packaging
 
+      - name: Record Plane 1 Sandbox Review Gate
+        run: |
+          REVIEW_ID="${{ inputs.sandbox_review_id }}"
+          if [ -z "$REVIEW_ID" ]; then
+            REVIEW_ID="pending-draft-review"
+          fi
+          {
+            echo "## Plane 1 Sandbox Review Gate"
+            echo "- Tag: ${{ steps.get_tag.outputs.tag }}"
+            echo "- Commit SHA: ${{ github.sha }}"
+            echo "- Sandbox Review ID: $REVIEW_ID"
+            echo "- Draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == false && 'false' || 'true' }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.get_tag.outputs.tag }}
           name: Mail2rust ${{ steps.get_tag.outputs.tag }}
-          draft: ${{ github.event.inputs.draft || false }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == false && 'false' || 'true' }}
           prerelease: ${{ github.event.inputs.prerelease || false }}
           files: |
             dist/*
