@@ -106,11 +106,11 @@ class TestAnsiPstExtraction(unittest.TestCase):
 class TestUnicodePstExtraction(unittest.TestCase):
     """Full-fidelity extraction from a genuine Unicode PST with real mail."""
 
-    SAMPLE = Path(r"C:\Users\andre\Documents\Outlook Files\backup.pst")
+    SAMPLE = Path(os.environ["MAIL2RUST_UNICODE_PST_SAMPLE"]) if os.environ.get("MAIL2RUST_UNICODE_PST_SAMPLE") else None
 
     def test_unicode_message_with_html_body(self):
-        if not self.SAMPLE.is_file():
-            self.skipTest("Unicode PST sample not present")
+        if self.SAMPLE is None or not self.SAMPLE.is_file():
+            self.skipTest("Unicode PST sample not present (set MAIL2RUST_UNICODE_PST_SAMPLE)")
         binary = Path(__file__).resolve().parents[1] / "target" / "debug" / "mail2rust.exe"
         if not binary.is_file():
             self.skipTest("mail2rust CLI binary not built")

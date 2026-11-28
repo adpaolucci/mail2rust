@@ -13,6 +13,7 @@
 - [MCP Server Guide](MCP-Server-Guide)
 - [Reports & Forensic Exports](Reports-and-Forensic-Exports)
 - [Validation Rules & Status Codes](Validation-Rules-and-Status-Codes)
+- [Outlook NK2, Attachments & Office Add-Ins](Outlook-NK2-Attachments-and-Office-Addins)
 
 ### Provider Limits & Protocols
 - [IMAP Rate Limits & Quotas](IMAP-Rate-Limits-and-Provider-Quotas)

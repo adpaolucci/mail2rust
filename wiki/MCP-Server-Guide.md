@@ -36,12 +36,14 @@ mail2rust mcp --tools
 - `initialize` — Negotiates protocol version `2024-11-05`, server capabilities (`tools`), and `serverInfo` (`mail2rust-mcp` `v3.5.0`).
 - `ping` — Health check returning `{}`.
 - `notifications/initialized` / `notifications/cancelled` — Handled silently with no response frame.
-- `tools/list` — Returns the JSON Schema definitions for all 6 tools.
+- `tools/list` — Returns the JSON Schema definitions for all 15 tools.
 - `tools/call` — Dispatches tool execution and wraps structured JSON results inside `content: [{ "type": "text", "text": "..." }]` with `isError`.
 
 ---
 
-## 3. Exposed MCP Tools (6 Total)
+## 3. Exposed MCP Tools (15 Total)
+
+### Core Mailbox & Custody Tools (6)
 
 | Tool Name | Required Inputs | Optional Inputs | Description |
 | :--- | :--- | :--- | :--- |
@@ -51,3 +53,19 @@ mail2rust mcp --tools
 | **`mail2rust_audit`** | `path` | `case_number`, `examiner`, `bates_prefix`, `output_csv` | Performs cryptographic eDiscovery auditing: computes SHA-256 Merkle root, applies sequential Bates stamps, and writes a forensic CSV manifest. |
 | **`mail2rust_split`** | `source`, `destination_dir` | `max_volume_mb`, `strategy` (`size` \| `year`), `target_format` | Splits oversized archives (>20 GB / >50 GB) into multi-volume PST, MBOX, or EML parts while clustering conversation threads. |
 | **`mail2rust_merge`** | `sources` (array), `destination` | `dedup` | Consolidates multiple disparate mailbox archives into a single container with cross-archive SHA-256 deduplication. |
+
+### Outlook Forensics, NK2 & Office Add-Ins (`mail2rust-outlook`, 9 Tools)
+
+Mutating endpoints (`[MUT]`) enforce `guap-mcp` policy gating and refuse execution in default read-only mode unless explicitly enabled and confirmed.
+
+| Tool Name | Mode | Description |
+| :--- | :---: | :--- |
+| **`mail2rust_nk2_inspect`** | Read-Only | Parse Outlook `.NK2` or `Stream_Autocomplete_*.dat` AutoComplete records |
+| **`mail2rust_nk2_edit`** | `[MUT]` | Add, remove, sort, or normalize AutoComplete entries (dry-run preview supported) |
+| **`mail2rust_outlook_attach`** | Read-Only | List attachments with sizes, MIME types, and SHA-256 metadata across PST/OST/MSG/MBOX/EML |
+| **`mail2rust_outlook_attach_extract`** | Read-Only | Safely extract attachments to a target output directory |
+| **`mail2rust_outlook_attach_strip`** | `[MUT]` | Policy-gated stripping of attachments from mailbox containers |
+| **`mail2rust_outlook_stats`** | Read-Only | Sent/received communication statistics grouped by correspondent, domain, folder, or month |
+| **`mail2rust_outlook_contacts`** | Read-Only | Decode contacts and distribution lists from PST/OST, OAB, `.NK2`, or vCard stores |
+| **`mail2rust_office_addins`** | Read-Only | Inspect registered COM, VSTO, XLL, WLL, DOTM, and OTM Office/Outlook add-ins |
+| **`mail2rust_office_addins_toggle`** | `[MUT]` | Toggle add-in load behavior (`LoadBehavior`) under explicit mutating policy gates |

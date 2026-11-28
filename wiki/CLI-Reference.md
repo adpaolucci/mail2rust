@@ -36,7 +36,7 @@ All global flags can be passed before or after any subcommand:
 
 ---
 
-## 2. Subcommands (19 Total)
+## 2. Subcommands (22 Total)
 
 ### 1. `convert` — Universal Auto-Detect Converter
 ```bash
@@ -159,4 +159,22 @@ mail2rust gui [PATH] [--iced] [--sample]
 ### 19. `mcp` — JSON-RPC 2.0 `stdio` MCP Server
 ```bash
 mail2rust mcp [--tools]
+```
+
+### 20. `nk2` — Outlook AutoComplete (`.NK2` / `Stream_Autocomplete_*.dat`)
+```bash
+mail2rust nk2 inspect [OPTIONS] <PATH>
+mail2rust nk2 edit [OPTIONS] <PATH>    # Mutating: requires -y/--allow-mutating or --dry-run
+```
+
+### 21. `outlook` — Attachments, Correspondent Stats & Contacts
+```bash
+mail2rust outlook attach [OPTIONS] <PATH>     # Enumerate, extract, or policy-gated strip attachments
+mail2rust outlook stats [OPTIONS] <PATH>      # Sent/received aggregation by correspondent, domain, folder, month
+mail2rust outlook contacts [OPTIONS] <PATH>   # Decode PST/OST, OAB, NK2, or vCard contacts & distribution lists
+```
+
+### 22. `office` — Microsoft Office / Outlook Add-Ins
+```bash
+mail2rust office addins [OPTIONS]   # List or toggle COM/VSTO/XLL/WLL/DOTM/OTM add-ins (live Registry or offline regf)
 ```

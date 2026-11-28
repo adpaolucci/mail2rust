@@ -12,15 +12,16 @@ Welcome to the official documentation hub for **`mail2rust` (`v3.5.0`)** — a *
 ## `*2rust` Architecture & Tooling Reference
 
 ### Getting Started & Architecture
-* **[Workspace Architecture](Architecture)**: 12-crate dependency graph, streaming ingestion pipeline, `[MS-PST]` NDB/LTP engine, and dual-GUI structure.
+* **[Workspace Architecture](Architecture)**: 13-crate dependency graph (`mail2rust-outlook` + `guap-kit`), streaming ingestion pipeline, `[MS-PST]` NDB/LTP engine, and dual-GUI structure.
 * **[Building, Testing & CI/CD](Building-Testing-and-CI-CD)**: Rust `1.88+` toolchain setup, platform dependencies, workspace test suites, `cargo-deny`, and GitHub Actions CI/Release workflows.
 
 ### Desktop GUIs, Security & Reference
 * **[Dual-GUI Guide (Win32 & Iced)](Dual-GUI-Guide)**: Native Win32 (`mail2rust-win32` on `winsafe 0.0.29`) and cross-platform Iced (`mail2rust-iced` on `iced 0.14`) feature walkthrough.
 * **[GUI Framework Decision & Comparison](GUI-Framework-Decision-and-Comparison)**: Tradeoffs between WinSafe Win32 and Iced 0.14 for elevated/RDP stability and cross-platform UI parity.
 * **[Security & Stability Considerations](Security-and-Stability)**: `#![forbid(unsafe_code)]` across core/domain crates, archive traversal protection, OAuth2 PKCE loopback handling, and MSVC binary hardening.
-* **[CLI Reference](CLI-Reference)**: Global flags, two-stage `Ctrl+C` handler, and all 19 `mail2rust` subcommands.
-* **[MCP Server Guide](MCP-Server-Guide)**: JSON-RPC 2.0 `stdio` setup (`mcp.json`, Smithery) and all 6 MCP tools (plus **[Model Context Protocol Deep Dive](Model-Context-Protocol-MCP)**).
+* **[CLI Reference](CLI-Reference)**: Global flags, two-stage `Ctrl+C` handler, and all 22 `mail2rust` subcommands.
+* **[MCP Server Guide](MCP-Server-Guide)**: JSON-RPC 2.0 `stdio` setup (`mcp.json`, Smithery) and all 15 MCP tools (plus **[Model Context Protocol Deep Dive](Model-Context-Protocol-MCP)**).
+* **[Outlook NK2, Attachments & Office Add-Ins](Outlook-NK2-Attachments-and-Office-Addins)**: `.NK2` / `Stream_Autocomplete_*.dat` inspection & policy-gated editing, `outlook attach`/`stats`/`contacts`, and COM/VSTO/XLL Office add-in inspection.
 * **[Reports & Forensic Exports](Reports-and-Forensic-Exports)**: CSV/JSON chain-of-custody manifests, Bates numbering, RFC 6234 Merkle root verification, and air-gapped HTML deliverable indexes.
 * **[Validation Rules & Status Codes](Validation-Rules-and-Status-Codes)**: `[MS-PST]` NDB/LTP structural validator checks (`!BDN`, CRC-32, NBT/BBT roots) and deterministic CLI exit codes.
 

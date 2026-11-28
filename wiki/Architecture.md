@@ -1,6 +1,6 @@
 # Workspace Architecture (`mail2rust`)
 
-`mail2rust` is structured as a modular **12-crate Cargo workspace** (`edition = "2024"`, MSRV `1.88`, resolver `2`), separating RFC/MAPI binary parsing and cryptographic forensics from the CLI, MCP server, and Dual-GUI surfaces.
+`mail2rust` is structured as a modular **13-crate Cargo workspace** (`edition = "2024"`, MSRV `1.88`, resolver `2`), integrating shared `guap-kit` infrastructure (`guap-table`, `guap-export`, `guap-mcp`, `guap-gui-*`) while separating RFC/MAPI binary parsing and cryptographic forensics from the CLI, MCP server, and Dual-GUI surfaces.
 
 ```mermaid
 flowchart LR
@@ -12,8 +12,9 @@ flowchart LR
     FORENSICS["mail2rust-forensics<br/>ForensicEngine, SHA-256/MD5 Merkle Root,<br/>Bates Stamping & Chain-of-Custody"]
     SYNC["mail2rust-sync<br/>CheckpointManager, ACID JSON/JSONL State,<br/>Folder High-Watermarks & Delta Sync"]
     IMAP["mail2rust-imap<br/>Direct IMAP/TLS Client, BODY.PEEK[],<br/>Server-to-Server Sync, OAuth2 & JMAP"]
-    MCP["mail2rust-mcp<br/>JSON-RPC 2.0 stdio Server<br/>(7 Agent Tools)"]
-    CLI["mail2rust-cli<br/>19 Subcommands + Dual-GUI Launcher"]
+    OUTLOOK["mail2rust-outlook<br/>NK2/Stream_Autocomplete, Attach/Stats/Contacts,<br/>Office/Outlook COM/VSTO/XLL Add-Ins"]
+    MCP["mail2rust-mcp<br/>JSON-RPC 2.0 stdio Server<br/>(15 Agent Tools)"]
+    CLI["mail2rust-cli<br/>22 Subcommands + Dual-GUI Launcher"]
     WIN32["mail2rust-win32<br/>Native WinSafe 0.0.29 GUI<br/>(Windows Default)"]
     ICED["mail2rust-iced<br/>Iced 0.14 Cross-Platform GUI<br/>(Linux, macOS, Windows)"]
 
@@ -24,6 +25,7 @@ flowchart LR
     FORENSICS --> CORE
     SYNC --> CORE
     IMAP --> CORE
+    OUTLOOK --> CORE
     MCP --> CORE
     MCP --> PST
     MCP --> EML
@@ -31,6 +33,7 @@ flowchart LR
     MCP --> FILTER
     MCP --> FORENSICS
     MCP --> SYNC
+    MCP --> OUTLOOK
     CLI --> CORE
     CLI --> PST
     CLI --> EML
@@ -39,6 +42,7 @@ flowchart LR
     CLI --> FORENSICS
     CLI --> SYNC
     CLI --> IMAP
+    CLI --> OUTLOOK
     CLI --> MCP
     WIN32 --> CORE
     WIN32 --> PST
@@ -48,6 +52,7 @@ flowchart LR
     WIN32 --> FORENSICS
     WIN32 --> SYNC
     WIN32 --> IMAP
+    WIN32 --> OUTLOOK
     ICED --> CORE
     ICED --> PST
     ICED --> EML
@@ -56,6 +61,7 @@ flowchart LR
     ICED --> FORENSICS
     ICED --> SYNC
     ICED --> IMAP
+    ICED --> OUTLOOK
 ```
 
 ---
@@ -83,16 +89,17 @@ flowchart LR
 
 ## 2. User & Agent Interface Crates
 
-- **`mail2rust-cli`**: Unified 19-subcommand binary (`mail2rust`) with two-stage `Ctrl+C` graceful checkpoint shutdown and native GUI dispatching.
+- **`mail2rust-outlook`**: Pure-Rust `.NK2` / `Stream_Autocomplete_*.dat` AutoComplete parser/editor, attachment extractor/stripper, correspondent statistics, OAB/vCard/PST contacts decoder, and COM/VSTO/XLL/WLL/DOTM/OTM Office add-ins inspector (`guap-table` + `guap-export` backed).
+- **`mail2rust-cli`**: Unified 22-subcommand binary (`mail2rust`) with two-stage `Ctrl+C` graceful checkpoint shutdown and native GUI dispatching.
 - **`mail2rust-win32`**: Native Windows desktop GUI built on **WinSafe `0.0.29`** (Win32 Common Controls v6, zero GPU/WebView2 overhead).
 - **`mail2rust-iced`**: Cross-platform pure-Rust GUI built on **Iced `0.14`** (`wgpu` + `tiny-skia` software fallback) for Linux, macOS, and Windows (`mail2rust gui --iced`).
-- **`mail2rust-mcp`**: JSON-RPC 2.0 `stdio` Model Context Protocol server (`2024-11-05`) exposing 7 structured email migration, PST validation, search, and forensic tools.
+- **`mail2rust-mcp`**: JSON-RPC 2.0 `stdio` Model Context Protocol server (`2024-11-05`) exposing 15 structured email migration, PST validation, Outlook/NK2/Office, search, and forensic tools.
 
 ---
 
 ## 3. Memory-Safety Boundary (`#![forbid(unsafe_code)]`)
 
-Eleven of the twelve workspace crates enforce `#![forbid(unsafe_code)]` at the crate root:
+Twelve of the thirteen workspace crates enforce `#![forbid(unsafe_code)]` at the crate root:
 
 | Crate | `unsafe_code` Policy | Role |
 | :--- | :--- | :--- |
@@ -104,6 +111,7 @@ Eleven of the twelve workspace crates enforce `#![forbid(unsafe_code)]` at the c
 | `mail2rust-forensics` | `#![forbid(unsafe_code)]` | SHA-256/MD5 Merkle root, Bates numbering & audit certificates |
 | `mail2rust-sync` | `#![forbid(unsafe_code)]` | Cross-engine checkpoint state & delta calculation |
 | `mail2rust-imap` | `#![forbid(unsafe_code)]` | IMAP/TLS streaming, server-to-server sync, OAuth2 & JMAP client |
+| `mail2rust-outlook` | `#![forbid(unsafe_code)]` | NK2/AutoComplete, Outlook attachments/stats/contacts & Office add-ins |
 | `mail2rust-mcp` | `#![forbid(unsafe_code)]` | JSON-RPC 2.0 `stdio` MCP server |
 | `mail2rust-cli` | `#![forbid(unsafe_code)]` | Command-line interface & two-stage signal handler |
 | `mail2rust-iced` | `#![forbid(unsafe_code)]` | Cross-platform Iced 0.14 desktop studio |

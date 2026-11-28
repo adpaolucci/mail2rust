@@ -21,7 +21,9 @@ flowchart LR
     B --> H["mail2rust_merge"]
 ```
 
-### Available Tools (6 Total)
+### Available Tools (15 Total: 6 Core + 9 Outlook/NK2/Office Extensions)
+
+> See **[MCP Server Guide](MCP-Server-Guide)** for the complete 15-tool reference covering the 6 core migration tools plus `mail2rust_nk2_*`, `mail2rust_outlook_*`, and `mail2rust_office_*`.
 
 | Tool Name | Purpose | Parameters | Output Schema |
 | :--- | :--- | :--- | :--- |

@@ -13,6 +13,7 @@
 | **Multi-Format Merger** | Multi-archive source list with `combine` / `prefix` / `flatten` folder strategies and cross-source deduplication | Interactive Merger modal consolidating PST, MBOX, Maildir, EML, EMLX, MSG, OLM, VCF, and ICS |
 | **Live IMAP & Server-to-Server Sync** | One-click provider presets (**Gmail**, **Outlook**, **Yahoo**, **Proton Bridge**, **iCloud**, **Fastmail**) and IMAP-to-IMAP sync | Live IMAP ingestion modal and zero-disk IMAP-to-IMAP account migration modal |
 | **Forensics & Bates Stamping** | eDiscovery Audit modal with Case Number, Examiner, Bates Prefix/Start, SHA-256 Merkle root, and CSV/JSON certificate export | Forensic Chain-of-Custody modal with Bates numbering and compliance certificate generation |
+| **Outlook Extensions (`mail2rust-outlook`)** | Virtualized `guap-gui-win32` views & 7-format `guap-export` integration for NK2 AutoComplete, Attachments/Stats/Contacts, and Office Add-Ins | Cross-platform `guap-gui-iced` `IcedDataGrid` panels for NK2, Outlook Attachments/Stats/Contacts, and Office Add-Ins |
 
 ---
 

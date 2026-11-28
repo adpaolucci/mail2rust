@@ -48,7 +48,7 @@ Part of the **GUAP** Ecosystem (`guap.ca`) • [**Project Hub & Web Documentatio
 | :---: | :---: |
 | ![Forensics Modal](docs/screenshots/forensics-modal.png) | ![Compliance Report](docs/screenshots/export-report-modal.png) |
 
-| Rust Workspace Architecture (12 Crates) | |
+| Rust Workspace Architecture (13 Crates) | |
 | :---: | :---: |
 | ![Rust Codebase](docs/screenshots/rust-codebase-modal.png) | |
 
